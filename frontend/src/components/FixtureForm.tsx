@@ -1,0 +1,95 @@
+import { FormEvent, useState } from "react";
+import { FixtureChannel } from "@lightbridgedmx/shared";
+import { fixtureTemplates, FixtureTemplateKey } from "../lib/fixtureTemplates";
+
+type FixtureFormState = {
+  name: string;
+  address: number;
+  universe: number;
+  template: FixtureTemplateKey;
+};
+
+type FixtureFormProps = {
+  onSubmit: (payload: { name: string; address: number; universe: number; channels: FixtureChannel[] }) => Promise<void> | void;
+  isLoading: boolean;
+  error?: Error | null;
+};
+
+const initialForm: FixtureFormState = {
+  name: "",
+  address: 1,
+  universe: 0,
+  template: "rgb"
+};
+
+export const FixtureForm = ({ onSubmit, isLoading, error }: FixtureFormProps) => {
+  const [form, setForm] = useState<FixtureFormState>(initialForm);
+
+  const handleSubmit = async (evt: FormEvent) => {
+    evt.preventDefault();
+    const template = fixtureTemplates[form.template];
+    if (!template) return;
+
+    try {
+      await onSubmit({
+        name: form.name || `Fixture ${form.address}`,
+        address: Number(form.address),
+        universe: Number(form.universe),
+        channels: template.channels
+      });
+      setForm(initialForm);
+    } catch {
+      // Error handled upstream via mutation state.
+    }
+  };
+
+  return (
+    <form className="form" onSubmit={handleSubmit}>
+      <label>
+        Name
+        <input
+          required
+          value={form.name}
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          placeholder="Back truss RGB"
+        />
+      </label>
+      <label>
+        Start address
+        <input
+          type="number"
+          min={1}
+          max={512}
+          value={form.address}
+          onChange={(e) => setForm((f) => ({ ...f, address: Number(e.target.value) }))}
+        />
+      </label>
+      <label>
+        Universe
+        <input
+          type="number"
+          min={0}
+          value={form.universe}
+          onChange={(e) => setForm((f) => ({ ...f, universe: Number(e.target.value) }))}
+        />
+      </label>
+      <label>
+        Template
+        <select
+          value={form.template}
+          onChange={(e) => setForm((f) => ({ ...f, template: e.target.value as FixtureTemplateKey }))}
+        >
+          {Object.entries(fixtureTemplates).map(([key, tpl]) => (
+            <option key={key} value={key}>
+              {tpl.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit" disabled={isLoading}>
+        {isLoading ? "Adding…" : "Add fixture"}
+      </button>
+      {error ? <small>Failed: {error.message}</small> : null}
+    </form>
+  );
+};

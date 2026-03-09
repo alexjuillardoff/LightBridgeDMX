@@ -1,0 +1,40 @@
+{
+  "name": "@lightbridgedmx/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only --require tsconfig-paths/register src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint 'src/**/*.{ts,tsx}'",
+    "format": "prettier --write 'src/**/*.{ts,tsx}'",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lightbridgedmx/shared": "workspace:*",
+    "adm-zip": "^0.5.16",
+    "artnet": "^1.4.0",
+    "dmx-ts": "^0.4.0",
+    "fast-xml-parser": "^5.3.2",
+    "fastify": "^4.25.2",
+    "hap-nodejs": "^1.2.0",
+    "pino": "^8.15.0",
+    "serialport": "^12.0.0",
+    "tsconfig-paths": "^4.2.0",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0",
+    "zod": "^3.22.2"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^20.10.1",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "eslint": "^8.54.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.15"
+  }
+}

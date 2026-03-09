@@ -1,0 +1,12 @@
+node_modules
+.env
+.env.*
+dist
+build
+.DS_Store
+.idea
+.vscode
+coverage
+backend/data
+backend/.homekit/
+logs/
