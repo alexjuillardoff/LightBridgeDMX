@@ -13,7 +13,7 @@ export const registerSceneRoutes = (app: FastifyInstance, ctx: RouteContext, han
   app.post("/api/scenes", async (request, reply) => {
     try {
       const parsed = sceneInputSchema.parse(request.body);
-      const scene = ctx.store.createScene(parsed);
+      const scene = await ctx.store.createScene(parsed);
       reply.code(201).send(scene);
     } catch (err) {
       handleError(err, reply);
@@ -23,14 +23,14 @@ export const registerSceneRoutes = (app: FastifyInstance, ctx: RouteContext, han
   app.post("/api/scenes/:id/activate", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
-      const scene = ctx.store.getScene(id);
+      const scene = await ctx.store.getScene(id);
       if (!scene) return reply.code(404).send({ message: "Scene not found" });
 
-      scene.steps.forEach((step) => {
-        const fixture = ctx.store.getFixture(step.fixtureId);
-        if (!fixture) return;
+      for (const step of scene.steps) {
+        const fixture = await ctx.store.getFixture(step.fixtureId);
+        if (!fixture) continue;
         ctx.dmx.applyWrite({ address: fixture.address, values: step.values });
-      });
+      }
 
       ctx.broadcast({ type: "scene_activated", data: scene });
       reply.send({ ok: true });

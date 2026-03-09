@@ -32,11 +32,12 @@ export const createWebsocketManager = ({ logger, store, dmx }: WebsocketDeps) =>
 
   const attach = (server: Server) => {
     const wss = new WebSocketServer({ server, path: "/ws" });
-    wss.on("connection", (socket: WebSocket) => {
+    wss.on("connection", async (socket: WebSocket) => {
       wsClients.add(socket);
       const now = new Date().toISOString();
       sendSafe(socket, { type: "universe_tick", data: dmx.getState() });
-      store.listFixtures().forEach((fixture) => {
+      const fixtures = await store.listFixtures();
+      fixtures.forEach((fixture) => {
         sendSafe(socket, { type: "fixture_updated", data: fixture });
       });
       sendSafe(socket, { type: "log", data: { level: "info", message: "connected", timestamp: now } });

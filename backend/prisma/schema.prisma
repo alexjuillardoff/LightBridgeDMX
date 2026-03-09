@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Fixture {
+  id        String  @id
+  name      String
+  address   Int
+  universe  Int
+  channels  String  // JSON: FixtureChannel[]
+  createdAt String
+  profile   String? // JSON: { source, manufacturer, model, mode }
+  homekit   String? // JSON: FixtureHomeKit
+}
+
+model Scene {
+  id    String @id
+  name  String
+  steps String // JSON: { fixtureId, values }[]
+}
+
+model Preset {
+  id      String @id
+  name    String
+  payload String // JSON: Record<string, number>
+}

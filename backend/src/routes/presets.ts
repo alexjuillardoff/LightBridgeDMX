@@ -13,7 +13,7 @@ export const registerPresetRoutes = (app: FastifyInstance, ctx: RouteContext, ha
   app.post("/api/presets", async (request, reply) => {
     try {
       const parsed = presetInputSchema.parse(request.body);
-      const preset = ctx.store.createPreset(parsed);
+      const preset = await ctx.store.createPreset(parsed);
       reply.code(201).send(preset);
     } catch (err) {
       handleError(err, reply);
@@ -23,7 +23,8 @@ export const registerPresetRoutes = (app: FastifyInstance, ctx: RouteContext, ha
   app.post("/api/presets/:id/apply", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
-      const preset = ctx.store.listPresets().find((p) => p.id === id);
+      const presets = await ctx.store.listPresets();
+      const preset = presets.find((p) => p.id === id);
       if (!preset) return reply.code(404).send({ message: "Preset not found" });
 
       Object.entries(preset.payload).forEach(([channelStr, value]) => {

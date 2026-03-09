@@ -1,3 +1,4 @@
+import "dotenv/config";
 import path from "node:path";
 import Fastify from "fastify";
 import { registerRoutes } from "./routes";
@@ -58,12 +59,14 @@ dmx.on("tick", (state) => {
 app.addHook("onClose", async () => {
   await dmx.stop();
   await homekit.stop();
+  await store.disconnect();
 });
 
 const start = async () => {
   try {
+    await store.connect();
     await dmx.start();
-    await homekit.start(store.listFixtures());
+    await homekit.start(await store.listFixtures());
     await app.listen({ port: PORT, host: "0.0.0.0" });
 
     websocket.attach(app.server);

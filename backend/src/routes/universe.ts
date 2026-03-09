@@ -9,7 +9,7 @@ export const registerUniverseRoutes = (app: FastifyInstance, ctx: RouteContext, 
   app.post("/api/test/fixtures/:id", async (request, reply) => {
     try {
       const parsed = testBodySchema.parse(request.body);
-      const fixture = ctx.store.getFixture((request.params as { id: string }).id);
+      const fixture = await ctx.store.getFixture((request.params as { id: string }).id);
       if (!fixture) return reply.code(404).send({ message: "Fixture not found" });
 
       ctx.dmx.applyWrite({ address: fixture.address, values: parsed.values });
