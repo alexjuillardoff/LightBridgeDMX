@@ -36,6 +36,7 @@ Tu as des projecteurs DMX (PAR LED, lyres, dimmers…) que tu veux contrôler de
 
 - Il lit la configuration de tes projecteurs (adresses DMX, types de canaux)
 - Il expose chaque projecteur RGB comme une **ampoule HomeKit** (Hue/Saturation/Luminosité)
+- Il expose chaque lyre comme un **accessory HomeKit multi-contrôles** (dimmer, pan, tilt, roue couleur, gobo)
 - Il envoie les commandes de couleur en **DMX réel** vers tes projecteurs via le protocole Art-Net
 - Il fournit un **tableau de bord web** pour monitorer et contrôler en direct les 512 canaux DMX
 
@@ -90,7 +91,7 @@ iPhone/iPad (App Maison)
 
 3. **QLC+** : Ce logiciel libre reçoit le flux Art-Net et le retransmet sur l'interface DMX physique (câble USB Enttec → XLR → projecteurs).
 
-4. **Pont HomeKit** : Utilise la bibliothèque `hap-nodejs` pour créer un pont domotique. Chaque projecteur RGB devient une ampoule dans l'app Maison. Les changements de couleur/luminosité sont convertis HSB→RGB et appliqués sur les canaux DMX correspondants.
+4. **Pont HomeKit** : Utilise la bibliothèque `hap-nodejs` pour créer un pont domotique. Chaque projecteur RGB devient une ampoule dans l'app Maison. Chaque lyre devient un accessory avec des contrôles pan/tilt/couleur/gobo. Les changements sont appliqués en temps réel sur les canaux DMX correspondants.
 
 5. **Frontend React** : Tableau de bord web avec actualisation en temps réel via WebSocket. Permet de voir les 512 canaux avec des sliders, d'importer des projecteurs depuis la bibliothèque QXF, et de surveiller l'état du pont HomeKit.
 
@@ -354,42 +355,77 @@ Si HomeKit est activé :
 
 ### Quels projecteurs sont exposés ?
 
-Seuls les projecteurs **RGB** sont exposés dans HomeKit. Un projecteur est considéré comme RGB s'il possède :
-- Des canaux avec les capabilities `r`, `g`, et `b` dans sa configuration, **OU**
-- Un mapping explicite `homekit.dmxChannels: { r: X, g: Y, b: Z }`
+Deux types de fixtures sont exposées dans HomeKit, détectés automatiquement :
 
-### Contrôle depuis HomeKit
+| Type | Critère de détection | Accessory HomeKit |
+|------|---------------------|-------------------|
+| **Projecteur RGB** | Capabilities `r` + `g` + `b`, ou `homekit.dmxChannels` explicite | `Lightbulb` (On, Luminosité, Teinte, Saturation) |
+| **Lyre / Moving head** | Capability `pan` ou `tilt` présente | Multi-services (voir ci-dessous) |
 
-Une fois couplé, chaque projecteur RGB apparaît comme une **ampoule** dans l'app Maison :
+> Une fixture avec `pan` ou `tilt` est **toujours** traitée comme lyre, même si elle a aussi des canaux RGB.
+
+### Contrôle des projecteurs RGB
+
+Chaque projecteur RGB apparaît comme une **ampoule** dans l'app Maison :
 - **On/Off** : allume/éteint (force RGB à 0 si Off)
 - **Luminosité** (0–100%) → mappée sur les valeurs DMX
 - **Couleur** (Teinte/Saturation) → convertie en R/G/B DMX via l'algorithme HSB→RGB
 
-Les changements sont **bidirectionnels** : si tu modifies un canal DMX depuis le tableau de bord ou via une scène, l'app Maison se met à jour automatiquement.
+### Contrôle des lyres (Moving Heads)
 
-### Exemple de configuration manuelle d'une fixture HomeKit
+Chaque lyre apparaît comme un **accessory unique** avec plusieurs contrôles dans l'app Maison, selon les canaux présents dans son profil QXF :
 
-Si tu crées une fixture manuellement (sans QXF), tu peux spécifier le mapping HomeKit :
+| Contrôle HomeKit | Type de service | Canal DMX |
+|-----------------|----------------|-----------|
+| Dimmer (On + Luminosité) | `Lightbulb` | `intensity` |
+| Shutter (ouverture via On/Off) | `Lightbulb` | `strobe` |
+| Pan (slider 0–100%) | `Lightbulb` nommé "Pan" | `pan` |
+| Tilt (slider 0–100%) | `Lightbulb` nommé "Tilt" | `tilt` |
+| Roue couleur (slider 0–100%) | `Lightbulb` nommé "Color Wheel" | `color` |
+| Gobo (slider 0–100%) | `Lightbulb` nommé "Gobo" | `gobo` |
 
+Les sliders 0–100% de HomeKit sont convertis linéairement en DMX 0–255.
+
+### Bidirectionnel pour tous les types
+
+Les changements sont **bidirectionnels** pour les deux types : si tu modifies un canal DMX depuis le tableau de bord, via une scène ou un preset, l'app Maison se met à jour automatiquement.
+
+### Overrides de canaux HomeKit
+
+Par défaut, les canaux sont déduits automatiquement du profil QXF. Tu peux les surcharger via le champ `homekit` de la fixture :
+
+**Fixture RGB — override des canaux :**
 ```json
 {
-  "name": "PAR RGB Scène",
-  "address": 1,
-  "universe": 0,
-  "channels": [
-    { "channel": 1, "capability": "r", "name": "Rouge" },
-    { "channel": 2, "capability": "g", "name": "Vert" },
-    { "channel": 3, "capability": "b", "name": "Bleu" }
-  ],
   "homekit": {
     "enabled": true,
     "deviceId": "par-rgb-scene",
-    "name": "PAR RGB Scène"
+    "name": "PAR RGB Scène",
+    "dmxChannels": { "r": 1, "g": 2, "b": 3 }
   }
 }
 ```
 
-> Le `deviceId` est important : il stabilise l'identité HomeKit du projecteur. Si tu le changes, HomeKit considère que c'est un nouvel accessoire.
+**Lyre — override des canaux (numéros relatifs à l'adresse de la fixture) :**
+```json
+{
+  "homekit": {
+    "enabled": true,
+    "deviceId": "mh-x20-gauche",
+    "name": "MH-X20 Gauche",
+    "movingHeadChannels": {
+      "dimmerChannel": 8,
+      "shutterChannel": 7,
+      "panChannel": 1,
+      "tiltChannel": 3,
+      "colorChannel": 5,
+      "goboChannel": 6
+    }
+  }
+}
+```
+
+> Le `deviceId` stabilise l'identité HomeKit. Si tu le changes, HomeKit considère que c'est un nouvel accessoire.
 
 ---
 
@@ -688,13 +724,13 @@ Si tu observes des scintillements ou un comportement instable :
 
 Les fonctionnalités suivantes sont prévues :
 
-- **Persistance des données** : migration de l'état en mémoire vers SQLite (Prisma ou Drizzle ORM)
 - **Éditeur de scènes** : interface UI pour créer/modifier des scènes directement depuis le tableau de bord
 - **Contrôles presets** : panneau UI pour gérer et appliquer les presets
 - **Authentification** : auth basique pour sécuriser l'interface si exposée hors LAN
 - **Multi-univers** : support de plusieurs univers DMX simultanément
 - **Timeline / Chase** : séquences automatiques avec timing
 - **DMX Input** : lecture de signaux DMX entrants pour enregistrer des scènes
+- **Pan/Tilt fine** : support des canaux 16-bit (pan fine, tilt fine) pour les lyres haute résolution
 
 ---
 

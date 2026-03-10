@@ -4,7 +4,7 @@
 - Monorepo pnpm : backend Fastify/TypeScript + frontend React/Vite + package partagé de types/schemas.
 - Backend écoute en **HTTP+WS sur 5000** (forcé), publie DMX en **Art-Net** vers QLC+ qui bridge vers l’interface DMX.
 - Frontend dev sur **5173** (Vite) avec proxy `/api` et `/ws` vers le backend.
-- État applicatif en mémoire (fixtures, presets, scènes). HomeKit via hap-nodejs (pont DMX RGB ↔︎ ampoules HomeKit).
+- État persisté en **SQLite via Prisma** (`backend/data/lightbridge.db`). HomeKit via hap-nodejs : ampoules RGB + lyres (WindowCovering pan/tilt/color/gobo + Lightbulb dimmer).
 
 ## Flux runtime (prod/dev)
 1) Frontend appelle l’API REST (`/api/...`) et le WS (`/ws`) du backend.  
@@ -28,11 +28,11 @@
 - `tsconfig.json` : compilation CJS vers `dist/`.
 - `src/index.ts` : point d’entrée Fastify. Routes REST (fixtures, scènes, presets, test DMX, QXF library), websocket `/ws`, broadcast DMX tick, démarrage DMX + pont HomeKit RGB, port 5000 verrouillé.
 - `src/services/dmx.ts` : service DMX (dmx-ts), modes Art-Net/Enttec, timer FPS, simulation fallback.
-- `src/services/homekit.ts` : pont HomeKit (hap-nodejs) : bridge `Lightbulb` Hue/Saturation/Brightness → canaux DMX R/G/B, synchro descendante + remontée depuis le tick DMX.
+- `src/services/homekit.ts` : pont HomeKit (hap-nodejs). Deux types d'accessories : `Lightbulb` RGB (Hue/Saturation/Brightness ↔ canaux R/G/B) et lyres multi-services (`Lightbulb` dimmer + `WindowCovering` pan/tilt/color/gobo). Synchro bidirectionnelle via le tick DMX.
 - `routes/homekit.ts` : endpoint `GET /api/homekit` pour récupérer l’état du bridge (setup URI, fixtures exportées).
 - `src/services/qxf.ts` : parsing XML QXF, construction de fixtures depuis la bibliothèque.
 - `src/services/qxf-library.ts` : téléchargement/cache de la librairie QLC+, lecture des fichiers QXF.
-- `src/state/store.ts` : stockage en mémoire des fixtures/scènes/presets, validation, erreurs métier.
+- `src/state/store.ts` : stockage SQLite/Prisma des fixtures/scènes/presets, validation, erreurs métier.
 - `dist/**` : sortie JS compilée (CJS) pour le runtime.
 
 ### Frontend (`frontend/`)

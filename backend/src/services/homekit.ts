@@ -15,14 +15,13 @@ import {
 } from "hap-nodejs";
 import { DmxService } from "./dmx";
 import {
-  DmxRgbMapping,
-  HsbColor,
-  HomeKitLight,
-  RgbColor,
+  ChannelFixtureChannels,
+  HomeKitChannelFixture,
+  HomeKitMovingHead,
+  MovingHeadChannels,
   clamp,
-  collectHomeKitLights,
-  hsbToRgb,
-  rgbToHsb
+  collectHomeKitChannelFixtures,
+  collectHomeKitMovingHeads
 } from "./homekit-utils";
 
 type HomeKitOptions = {
@@ -35,30 +34,35 @@ type HomeKitOptions = {
   storagePath: string;
 };
 
-type ManagedLight = {
-  light: HomeKitLight;
+type ManagedChannelSlot = {
   accessory: Accessory;
   service: Service;
-  state: LightState;
+  value: number; // 0-100 %
 };
 
-type LightState = HsbColor & {
-  on: boolean;
-  lastNonZeroBrightness: number;
-  lastAppliedRgb: RgbColor;
+type ManagedChannelFixture = {
+  cf: HomeKitChannelFixture;
+  slots: Map<keyof ChannelFixtureChannels, ManagedChannelSlot>;
+};
+
+type ManagedMovingHeadSlot = {
+  accessory: Accessory;
+  service: Service;
+  value: number; // 0-100 %
+};
+
+type ManagedMovingHead = {
+  mh: HomeKitMovingHead;
+  slots: Map<keyof MovingHeadChannels, ManagedMovingHeadSlot>;
+  dimmerOn: boolean;
+  lastNonZeroDimmer: number;
 };
 
 export type HomeKitFixtureStatus = {
   fixtureId: string;
   name: string;
-  source: DmxRgbMapping["source"];
-  mapping: {
-    r: number;
-    g: number;
-    b: number;
-    universe: number;
-    address: number;
-  };
+  universe: number;
+  channels: Partial<Record<keyof ChannelFixtureChannels, number>>;
 };
 
 export type HomeKitStatus = {
@@ -81,7 +85,8 @@ export class HomeKitBridge {
   private readonly options: HomeKitOptions;
   private bridge: Bridge | null = null;
   private started = false;
-  private lights = new Map<string, ManagedLight>();
+  private channelFixtures = new Map<string, ManagedChannelFixture>();
+  private movingHeads = new Map<string, ManagedMovingHead>();
   private cachedFixtures: Fixture[] = [];
   private dmxListener?: (state: UniverseState) => void;
 
@@ -134,7 +139,7 @@ export class HomeKitBridge {
 
       this.started = true;
       this.logger.info(
-        { pin: this.options.pin, username: this.options.username, accessories: this.lights.size },
+        { pin: this.options.pin, username: this.options.username, accessories: this.channelFixtures.size },
         "HomeKit bridge started"
       );
     } catch (err) {
@@ -143,7 +148,7 @@ export class HomeKitBridge {
         this.dmx.off("tick", this.dmxListener);
         this.dmxListener = undefined;
       }
-      this.lights.clear();
+      this.channelFixtures.clear();
       this.bridge?.unpublish();
       this.bridge?.destroy();
       this.bridge = null;
@@ -156,7 +161,8 @@ export class HomeKitBridge {
       this.dmx.off("tick", this.dmxListener);
       this.dmxListener = undefined;
     }
-    this.lights.clear();
+    this.channelFixtures.clear();
+    this.movingHeads.clear();
     this.bridge?.unpublish();
     this.bridge?.destroy();
     this.bridge = null;
@@ -167,32 +173,8 @@ export class HomeKitBridge {
   async syncFixtures(fixtures: Fixture[]) {
     this.cachedFixtures = fixtures;
     if (!this.options.enabled || !this.bridge) return;
-
-    const { lights, skipped } = collectHomeKitLights(fixtures);
-    skipped.forEach((item) => {
-      this.logger.debug({ fixtureId: item.fixtureId, reason: item.reason }, "Skipping fixture for HomeKit");
-    });
-
-    const incomingIds = new Set(lights.map((light) => light.fixture.id));
-    for (const [fixtureId, managed] of this.lights.entries()) {
-      if (!incomingIds.has(fixtureId)) {
-        this.bridge.removeBridgedAccessory(managed.accessory);
-        this.lights.delete(fixtureId);
-        this.logger.info({ fixtureId }, "Removed HomeKit accessory");
-      }
-    }
-
-    lights.forEach((light) => {
-      const existing = this.lights.get(light.fixture.id);
-      if (existing) {
-        this.updateManagedLight(existing, light);
-      } else {
-        const managed = this.buildAccessory(light);
-        this.bridge?.addBridgedAccessory(managed.accessory);
-        this.lights.set(light.fixture.id, managed);
-        this.logger.info({ fixtureId: light.fixture.id, name: light.name }, "Added HomeKit accessory");
-      }
-    });
+    this.syncChannelFixtures(fixtures);
+    this.syncMovingHeads(fixtures);
   }
 
   async updateFixtureState(fixture: Fixture) {
@@ -200,17 +182,13 @@ export class HomeKitBridge {
   }
 
   getStatus(): HomeKitStatus {
-    const fixtures: HomeKitFixtureStatus[] = Array.from(this.lights.values()).map(({ light }) => ({
-      fixtureId: light.fixture.id,
-      name: light.name,
-      source: light.mapping.source,
-      mapping: {
-        r: light.mapping.r,
-        g: light.mapping.g,
-        b: light.mapping.b,
-        universe: light.mapping.universe,
-        address: light.mapping.address
-      }
+    const fixtures: HomeKitFixtureStatus[] = Array.from(this.channelFixtures.values()).map(({ cf }) => ({
+      fixtureId: cf.fixture.id,
+      name: cf.name,
+      universe: cf.universe,
+      channels: Object.fromEntries(
+        Object.entries(cf.channels).filter(([, v]) => v !== undefined)
+      ) as Partial<Record<keyof ChannelFixtureChannels, number>>
     }));
     const started = this.started && Boolean(this.bridge);
     const setupUri = started && typeof this.bridge?.setupURI === "function" ? this.bridge?.setupURI() : null;
@@ -247,173 +225,342 @@ export class HomeKitBridge {
     this.dmx.on("tick", this.dmxListener);
   }
 
-  private handleDmxTick(state: UniverseState) {
+  private handleDmxTick(universeState: UniverseState) {
     if (!this.options.enabled) return;
-    for (const managed of this.lights.values()) {
-      const { mapping } = managed.light;
-      if (state.universe !== mapping.universe) continue;
+    this.mirrorChannelFixtures(universeState);
+    this.mirrorMovingHeads(universeState);
+  }
 
-      const next = this.readRgbFromUniverse(state, mapping);
-      if (!next) continue;
-      const hsb = rgbToHsb(next);
-      const isOn = hsb.brightness > 0;
+  // ─── Channel Fixtures (one accessory per channel) ─────────────────────────
 
-      const changed =
-        isOn !== managed.state.on ||
-        Math.round(hsb.hue) !== Math.round(managed.state.hue) ||
-        hsb.saturation !== Math.round(managed.state.saturation) ||
-        hsb.brightness !== Math.round(managed.state.brightness);
+  private syncChannelFixtures(fixtures: Fixture[]) {
+    if (!this.options.enabled || !this.bridge) return;
 
-      if (!changed) continue;
+    const { channelFixtures, skipped } = collectHomeKitChannelFixtures(fixtures);
+    skipped.forEach((item) => {
+      this.logger.debug({ fixtureId: item.fixtureId, reason: item.reason }, "Skipping fixture for HomeKit");
+    });
 
-      managed.state.hue = hsb.hue;
-      managed.state.saturation = hsb.saturation;
-      managed.state.brightness = hsb.brightness;
-      managed.state.on = isOn;
-      if (hsb.brightness > 0) {
-        managed.state.lastNonZeroBrightness = hsb.brightness;
+    const incomingIds = new Set(channelFixtures.map((cf) => cf.fixture.id));
+    for (const [fixtureId, managed] of this.channelFixtures.entries()) {
+      if (!incomingIds.has(fixtureId)) {
+        for (const slot of managed.slots.values()) {
+          this.bridge.removeBridgedAccessory(slot.accessory);
+        }
+        this.channelFixtures.delete(fixtureId);
+        this.logger.info({ fixtureId }, "Removed HomeKit channel fixture accessories");
       }
-      managed.state.lastAppliedRgb = next;
-      this.pushStateToHomeKit(managed);
+    }
+
+    channelFixtures.forEach((cf) => {
+      const existing = this.channelFixtures.get(cf.fixture.id);
+      if (existing) {
+        this.updateManagedChannelFixture(existing, cf);
+      } else {
+        const managed = this.buildChannelFixtureAccessories(cf);
+        for (const slot of managed.slots.values()) {
+          this.bridge?.addBridgedAccessory(slot.accessory);
+        }
+        this.channelFixtures.set(cf.fixture.id, managed);
+        this.logger.info({ fixtureId: cf.fixture.id, name: cf.name, count: managed.slots.size }, "Added HomeKit channel fixture accessories");
+      }
+    });
+  }
+
+  private buildChannelFixtureAccessories(cf: HomeKitChannelFixture): ManagedChannelFixture {
+    const universeState = this.dmx.getState();
+    const dmxValues = universeState.universe === cf.universe ? universeState.values : new Array(512).fill(0);
+    const readPct = (ch: number) => Math.round(((dmxValues[ch - 1] as number) ?? 0) / 255 * 100);
+
+    const channelDefs: Array<[keyof ChannelFixtureChannels, string]> = [
+      ["intensity", cf.name],
+      ["r", `${cf.name} Red`],
+      ["g", `${cf.name} Green`],
+      ["b", `${cf.name} Blue`],
+      ["w", `${cf.name} White`]
+    ];
+
+    const slots = new Map<keyof ChannelFixtureChannels, ManagedChannelSlot>();
+
+    for (const [key, label] of channelDefs) {
+      const ch = cf.channels[key];
+      if (ch === undefined) continue;
+
+      const acc = new Accessory(label, uuid.generate(`lightbridgedmx:fixture:${cf.deviceId}:${key}`));
+      acc
+        .getService(Service.AccessoryInformation)
+        ?.setCharacteristic(Characteristic.Manufacturer, "LightBridgeDMX")
+        .setCharacteristic(Characteristic.Model, "DMX Channel")
+        .setCharacteristic(Characteristic.SerialNumber, `${cf.deviceId}-${key}`);
+
+      const svc = acc.addService(Service.Lightbulb);
+      const value = readPct(ch);
+      const slot: ManagedChannelSlot = { accessory: acc, service: svc, value };
+
+      svc
+        .getCharacteristic(Characteristic.On)
+        .onGet(() => slot.value > 0)
+        .onSet((v: CharacteristicValue) => {
+          if (!v) {
+            slot.value = 0;
+            this.dmx.setChannel(ch, 0);
+            svc.updateCharacteristic(Characteristic.Brightness, 0);
+          }
+        });
+
+      svc
+        .getCharacteristic(Characteristic.Brightness)
+        .onGet(() => slot.value)
+        .onSet((v: CharacteristicValue) => {
+          const pct = clamp(Number(v), 0, 100);
+          slot.value = pct;
+          this.dmx.setChannel(ch, Math.round((pct / 100) * 255));
+          svc.updateCharacteristic(Characteristic.On, pct > 0);
+        });
+
+      svc.updateCharacteristic(Characteristic.On, value > 0);
+      svc.updateCharacteristic(Characteristic.Brightness, value);
+
+      slots.set(key, slot);
+    }
+
+    return { cf, slots };
+  }
+
+  private updateManagedChannelFixture(existing: ManagedChannelFixture, cf: HomeKitChannelFixture) {
+    const channelsChanged =
+      existing.cf.deviceId !== cf.deviceId ||
+      JSON.stringify(existing.cf.channels) !== JSON.stringify(cf.channels);
+
+    if (channelsChanged) {
+      for (const slot of existing.slots.values()) {
+        this.bridge?.removeBridgedAccessory(slot.accessory);
+      }
+      this.channelFixtures.delete(existing.cf.fixture.id);
+      const managed = this.buildChannelFixtureAccessories(cf);
+      for (const slot of managed.slots.values()) {
+        this.bridge?.addBridgedAccessory(slot.accessory);
+      }
+      this.channelFixtures.set(cf.fixture.id, managed);
+      this.logger.info({ fixtureId: cf.fixture.id }, "Recreated HomeKit channel fixture accessories");
+      return;
+    }
+
+    existing.cf = cf;
+    const labels: Record<keyof ChannelFixtureChannels, string> = {
+      intensity: cf.name,
+      r: `${cf.name} Red`,
+      g: `${cf.name} Green`,
+      b: `${cf.name} Blue`,
+      w: `${cf.name} White`
+    };
+    for (const [key, slot] of existing.slots.entries()) {
+      slot.accessory.displayName = labels[key];
     }
   }
 
-  private readRgbFromUniverse(state: UniverseState, mapping: DmxRgbMapping): RgbColor | null {
-    const values = state.values;
-    const r = values[mapping.r - 1];
-    const g = values[mapping.g - 1];
-    const b = values[mapping.b - 1];
-    if ([r, g, b].some((v) => typeof v !== "number")) return null;
-    return { r, g, b };
+  private mirrorChannelFixtures(universeState: UniverseState) {
+    for (const managed of this.channelFixtures.values()) {
+      if (universeState.universe !== managed.cf.universe) continue;
+      const readPct = (ch: number) =>
+        Math.round(((universeState.values[ch - 1] as number) ?? 0) / 255 * 100);
+
+      for (const [key, slot] of managed.slots.entries()) {
+        const ch = managed.cf.channels[key];
+        if (ch === undefined) continue;
+        const newValue = readPct(ch);
+        if (newValue === slot.value) continue;
+        slot.value = newValue;
+        slot.service.updateCharacteristic(Characteristic.On, newValue > 0);
+        slot.service.updateCharacteristic(Characteristic.Brightness, newValue);
+      }
+    }
   }
 
-  private buildAccessory(light: HomeKitLight): ManagedLight {
-    const accessory = new Accessory(light.name, uuid.generate(`lightbridgedmx:fixture:${light.deviceId}`));
+  // ─── Moving Head (one accessory per channel) ──────────────────────────────
 
-    accessory
-      .getService(Service.AccessoryInformation)
-      ?.setCharacteristic(Characteristic.Manufacturer, "LightBridgeDMX")
-      .setCharacteristic(Characteristic.Model, "DMX RGB Fixture")
-      .setCharacteristic(Characteristic.SerialNumber, light.deviceId);
+  private syncMovingHeads(fixtures: Fixture[]) {
+    if (!this.options.enabled || !this.bridge) return;
 
-    const service = accessory.addService(Service.Lightbulb, light.name);
-    const initialRgb = this.readRgbFromUniverse(this.dmx.getState(), light.mapping) ?? { r: 0, g: 0, b: 0 };
-    const initialHsb = rgbToHsb(initialRgb);
-    const state: LightState = {
-      hue: initialHsb.hue,
-      saturation: initialHsb.saturation,
-      brightness: initialHsb.brightness,
-      on: initialHsb.brightness > 0,
-      lastNonZeroBrightness: initialHsb.brightness || 100,
-      lastAppliedRgb: initialRgb
+    const { movingHeads, skipped } = collectHomeKitMovingHeads(fixtures);
+    skipped.forEach((item) => {
+      this.logger.debug({ fixtureId: item.fixtureId, reason: item.reason }, "Skipping moving head for HomeKit");
+    });
+
+    const incomingIds = new Set(movingHeads.map((mh) => mh.fixture.id));
+    for (const [fixtureId, managed] of this.movingHeads.entries()) {
+      if (!incomingIds.has(fixtureId)) {
+        for (const slot of managed.slots.values()) {
+          this.bridge.removeBridgedAccessory(slot.accessory);
+        }
+        this.movingHeads.delete(fixtureId);
+        this.logger.info({ fixtureId }, "Removed HomeKit moving head accessories");
+      }
+    }
+
+    movingHeads.forEach((mh) => {
+      const existing = this.movingHeads.get(mh.fixture.id);
+      if (existing) {
+        this.updateManagedMovingHead(existing, mh);
+      } else {
+        const managed = this.buildMovingHeadAccessories(mh);
+        for (const slot of managed.slots.values()) {
+          this.bridge?.addBridgedAccessory(slot.accessory);
+        }
+        this.movingHeads.set(mh.fixture.id, managed);
+        this.logger.info({ fixtureId: mh.fixture.id, name: mh.name, count: managed.slots.size }, "Added HomeKit moving head accessories");
+      }
+    });
+  }
+
+  private buildMovingHeadAccessories(mh: HomeKitMovingHead): ManagedMovingHead {
+    const universeState = this.dmx.getState();
+    const dmxValues = universeState.universe === mh.universe ? universeState.values : new Array(512).fill(0);
+    const readPct = (ch: number) => Math.round(((dmxValues[ch - 1] as number) ?? 0) / 255 * 100);
+
+    const initialDimmer = mh.channels.dimmer !== undefined ? readPct(mh.channels.dimmer) : 0;
+    const managed: ManagedMovingHead = {
+      mh,
+      slots: new Map(),
+      dimmerOn: initialDimmer > 0,
+      lastNonZeroDimmer: initialDimmer || 100
     };
 
-    const managed: ManagedLight = { accessory, service, light, state };
-    this.registerHandlers(managed);
-    this.pushStateToHomeKit(managed);
+    const channelDefs: Array<[keyof MovingHeadChannels, string]> = [
+      ["dimmer", mh.name],
+      ["shutter", `${mh.name} Shutter`],
+      ["pan", `${mh.name} Pan`],
+      ["tilt", `${mh.name} Tilt`],
+      ["color", `${mh.name} Color Wheel`],
+      ["gobo", `${mh.name} Gobo`]
+    ];
+
+    for (const [key, label] of channelDefs) {
+      const ch = mh.channels[key];
+      if (ch === undefined) continue;
+
+      const acc = new Accessory(label, uuid.generate(`lightbridgedmx:mh:${mh.deviceId}:${key}`));
+      acc
+        .getService(Service.AccessoryInformation)
+        ?.setCharacteristic(Characteristic.Manufacturer, "LightBridgeDMX")
+        .setCharacteristic(Characteristic.Model, "DMX Moving Head")
+        .setCharacteristic(Characteristic.SerialNumber, `${mh.deviceId}-${key}`);
+
+      const svc = acc.addService(Service.Lightbulb);
+      const value = readPct(ch);
+      const slot: ManagedMovingHeadSlot = { accessory: acc, service: svc, value };
+
+      if (key === "dimmer") {
+        svc
+          .getCharacteristic(Characteristic.On)
+          .onGet(() => managed.dimmerOn)
+          .onSet((v: CharacteristicValue) => {
+            managed.dimmerOn = Boolean(v);
+            const target = managed.dimmerOn ? slot.value || managed.lastNonZeroDimmer : 0;
+            if (managed.dimmerOn && slot.value === 0) slot.value = managed.lastNonZeroDimmer;
+            this.dmx.setChannel(ch, Math.round(target / 100 * 255));
+            svc.updateCharacteristic(Characteristic.Brightness, slot.value);
+          });
+
+        svc
+          .getCharacteristic(Characteristic.Brightness)
+          .onGet(() => slot.value)
+          .onSet((v: CharacteristicValue) => {
+            const pct = clamp(Number(v), 0, 100);
+            slot.value = pct;
+            if (pct > 0) { managed.lastNonZeroDimmer = pct; managed.dimmerOn = true; }
+            else { managed.dimmerOn = false; }
+            this.dmx.setChannel(ch, Math.round(pct / 100 * 255));
+            svc.updateCharacteristic(Characteristic.On, managed.dimmerOn);
+          });
+
+        svc.updateCharacteristic(Characteristic.On, managed.dimmerOn);
+      } else {
+        svc
+          .getCharacteristic(Characteristic.On)
+          .onGet(() => slot.value > 0)
+          .onSet((v: CharacteristicValue) => {
+            if (!v) {
+              slot.value = 0;
+              this.dmx.setChannel(ch, 0);
+              svc.updateCharacteristic(Characteristic.Brightness, 0);
+            }
+          });
+
+        svc
+          .getCharacteristic(Characteristic.Brightness)
+          .onGet(() => slot.value)
+          .onSet((v: CharacteristicValue) => {
+            const pct = clamp(Number(v), 0, 100);
+            slot.value = pct;
+            this.dmx.setChannel(ch, Math.round(pct / 100 * 255));
+            svc.updateCharacteristic(Characteristic.On, pct > 0);
+          });
+
+        svc.updateCharacteristic(Characteristic.On, value > 0);
+      }
+
+      svc.updateCharacteristic(Characteristic.Brightness, value);
+      managed.slots.set(key, slot);
+    }
 
     return managed;
   }
 
-  private updateManagedLight(existing: ManagedLight, light: HomeKitLight) {
-    const needsRecreate =
-      existing.light.deviceId !== light.deviceId ||
-      existing.light.mapping.r !== light.mapping.r ||
-      existing.light.mapping.g !== light.mapping.g ||
-      existing.light.mapping.b !== light.mapping.b;
+  private updateManagedMovingHead(existing: ManagedMovingHead, mh: HomeKitMovingHead) {
+    const channelsChanged =
+      existing.mh.deviceId !== mh.deviceId ||
+      JSON.stringify(existing.mh.channels) !== JSON.stringify(mh.channels);
 
-    if (needsRecreate) {
-      this.bridge?.removeBridgedAccessory(existing.accessory);
-      this.lights.delete(existing.light.fixture.id);
-      const managed = this.buildAccessory(light);
-      this.bridge?.addBridgedAccessory(managed.accessory);
-      this.lights.set(light.fixture.id, managed);
-      this.logger.info({ fixtureId: light.fixture.id }, "Recreated HomeKit accessory after config change");
+    if (channelsChanged) {
+      for (const slot of existing.slots.values()) {
+        this.bridge?.removeBridgedAccessory(slot.accessory);
+      }
+      this.movingHeads.delete(existing.mh.fixture.id);
+      const managed = this.buildMovingHeadAccessories(mh);
+      for (const slot of managed.slots.values()) {
+        this.bridge?.addBridgedAccessory(slot.accessory);
+      }
+      this.movingHeads.set(mh.fixture.id, managed);
+      this.logger.info({ fixtureId: mh.fixture.id }, "Recreated HomeKit moving head accessories");
       return;
     }
 
-    existing.light = light;
-    existing.service.updateCharacteristic(Characteristic.Name, light.name);
-    existing.accessory.displayName = light.name;
-    existing.accessory
-      .getService(Service.AccessoryInformation)
-      ?.updateCharacteristic(Characteristic.Name, light.name)
-      .updateCharacteristic(Characteristic.SerialNumber, light.deviceId);
+    existing.mh = mh;
+    const labels: Record<keyof MovingHeadChannels, string> = {
+      dimmer: mh.name,
+      shutter: `${mh.name} Shutter`,
+      pan: `${mh.name} Pan`,
+      tilt: `${mh.name} Tilt`,
+      color: `${mh.name} Color Wheel`,
+      gobo: `${mh.name} Gobo`
+    };
+    for (const [key, slot] of existing.slots.entries()) {
+      slot.accessory.displayName = labels[key];
+    }
   }
 
-  private registerHandlers(managed: ManagedLight) {
-    const { service, light, state } = managed;
+  private mirrorMovingHeads(universeState: UniverseState) {
+    for (const managed of this.movingHeads.values()) {
+      if (universeState.universe !== managed.mh.universe) continue;
+      const readPct = (ch: number) =>
+        Math.round(((universeState.values[ch - 1] as number) ?? 0) / 255 * 100);
 
-    service
-      .getCharacteristic(Characteristic.On)
-      .onGet(() => state.on)
-      .onSet((value: CharacteristicValue) => {
-        const requested = Boolean(value);
-        state.on = requested;
-        if (state.on && state.brightness === 0) {
-          state.brightness = state.lastNonZeroBrightness || 100;
-          state.lastNonZeroBrightness = state.brightness;
-        }
-        this.applyStateToDmx(light.mapping, state);
-        this.pushStateToHomeKit(managed, false);
-      });
-
-    service
-      .getCharacteristic(Characteristic.Brightness)
-      .onGet(() => state.brightness)
-      .onSet((value: CharacteristicValue) => {
-        const brightness = clamp(Number(value), 0, 100);
-        state.brightness = brightness;
-        if (brightness > 0) {
-          state.lastNonZeroBrightness = brightness;
-          state.on = true;
+      for (const [key, slot] of managed.slots.entries()) {
+        const ch = managed.mh.channels[key];
+        if (ch === undefined) continue;
+        const newValue = readPct(ch);
+        if (newValue === slot.value) continue;
+        slot.value = newValue;
+        if (key === "dimmer") {
+          managed.dimmerOn = newValue > 0;
+          if (newValue > 0) managed.lastNonZeroDimmer = newValue;
+          slot.service.updateCharacteristic(Characteristic.On, managed.dimmerOn);
         } else {
-          state.on = false;
+          slot.service.updateCharacteristic(Characteristic.On, newValue > 0);
         }
-        this.applyStateToDmx(light.mapping, state);
-        this.pushStateToHomeKit(managed, false);
-      });
-
-    service
-      .getCharacteristic(Characteristic.Hue)
-      .onGet(() => state.hue)
-      .onSet((value: CharacteristicValue) => {
-        state.hue = clamp(Number(value), 0, 360);
-        this.applyStateToDmx(light.mapping, state);
-        this.pushStateToHomeKit(managed, false);
-      });
-
-    service
-      .getCharacteristic(Characteristic.Saturation)
-      .onGet(() => state.saturation)
-      .onSet((value: CharacteristicValue) => {
-        state.saturation = clamp(Number(value), 0, 100);
-        this.applyStateToDmx(light.mapping, state);
-        this.pushStateToHomeKit(managed, false);
-      });
-  }
-
-  private applyStateToDmx(mapping: DmxRgbMapping, state: LightState) {
-    const brightness = state.on ? state.brightness || state.lastNonZeroBrightness || 100 : 0;
-    const rgb = hsbToRgb({
-      hue: state.hue,
-      saturation: state.saturation,
-      brightness
-    });
-    state.lastAppliedRgb = rgb;
-    this.dmx.setChannel(mapping.r, rgb.r);
-    this.dmx.setChannel(mapping.g, rgb.g);
-    this.dmx.setChannel(mapping.b, rgb.b);
-  }
-
-  private pushStateToHomeKit(managed: ManagedLight, pushName = true) {
-    const { service, state } = managed;
-    service.updateCharacteristic(Characteristic.On, state.on);
-    service.updateCharacteristic(Characteristic.Brightness, state.brightness);
-    service.updateCharacteristic(Characteristic.Hue, state.hue);
-    service.updateCharacteristic(Characteristic.Saturation, state.saturation);
-    if (pushName) {
-      service.updateCharacteristic(Characteristic.Name, managed.light.name);
+        slot.service.updateCharacteristic(Characteristic.Brightness, newValue);
+      }
     }
   }
 

@@ -34,11 +34,23 @@ export const FixtureHomeKitDmxSchema = z.object({
 
 export type FixtureHomeKitDmx = z.infer<typeof FixtureHomeKitDmxSchema>;
 
+export const FixtureHomeKitMovingHeadChannelsSchema = z.object({
+  dimmerChannel: z.number().int().min(1).optional(),
+  shutterChannel: z.number().int().min(1).optional(),
+  panChannel: z.number().int().min(1).optional(),
+  tiltChannel: z.number().int().min(1).optional(),
+  colorChannel: z.number().int().min(1).optional(),
+  goboChannel: z.number().int().min(1).optional()
+});
+
+export type FixtureHomeKitMovingHeadChannels = z.infer<typeof FixtureHomeKitMovingHeadChannelsSchema>;
+
 export const FixtureHomeKitSchema = z.object({
   enabled: z.boolean().default(true).optional(),
   name: z.string().min(1).optional(),
   deviceId: z.string().min(1).optional(),
-  dmxChannels: FixtureHomeKitDmxSchema.optional()
+  dmxChannels: FixtureHomeKitDmxSchema.optional(),
+  movingHeadChannels: FixtureHomeKitMovingHeadChannelsSchema.optional()
 });
 
 export type FixtureHomeKit = z.infer<typeof FixtureHomeKitSchema>;

@@ -1,4 +1,4 @@
-import { Fixture } from "@lightbridgedmx/shared";
+import { Fixture, FixtureHomeKitMovingHeadChannels } from "@lightbridgedmx/shared";
 
 export type HsbColor = {
   hue: number;
@@ -109,9 +109,16 @@ export const rgbToHsb = ({ r, g, b }: RgbColor): HsbColor => {
   };
 };
 
+export const isMovingHead = (fixture: Fixture): boolean =>
+  fixture.channels.some((ch) => ch.capability === "pan" || ch.capability === "tilt");
+
 export const resolveHomeKitLight = (fixture: Fixture): HomeKitLightResolution => {
   if (fixture.homekit?.enabled === false) {
     return { reason: "HomeKit disabled in fixture config" };
+  }
+
+  if (isMovingHead(fixture)) {
+    return { reason: "Moving head — handled by moving head service" };
   }
 
   const inferred = resolveRgbChannels(fixture);
@@ -187,3 +194,148 @@ const toAbsoluteChannels = (
 };
 
 const toAbsolute = (address: number, channel: number) => address + channel - 1;
+
+// ─── Channel Fixture (per-channel RGB/W/Master) ──────────────────────────────
+
+export type ChannelFixtureChannels = {
+  r?: number;       // absolute DMX channel (1-512)
+  g?: number;
+  b?: number;
+  w?: number;
+  intensity?: number;
+};
+
+export type HomeKitChannelFixture = {
+  fixture: Fixture;
+  name: string;
+  deviceId: string;
+  channels: ChannelFixtureChannels;
+  universe: number;
+};
+
+type HomeKitChannelFixtureResolution =
+  | { cf: HomeKitChannelFixture; reason?: undefined }
+  | { cf?: undefined; reason: string };
+
+const resolveChannelFixture = (fixture: Fixture): HomeKitChannelFixtureResolution => {
+  if (fixture.homekit?.enabled === false) {
+    return { reason: "HomeKit disabled in fixture config" };
+  }
+
+  if (isMovingHead(fixture)) {
+    return { reason: "Moving head — handled by moving head service" };
+  }
+
+  const resolve = (cap: string): number | undefined => {
+    const ch = fixture.channels.find((c) => c.capability === cap);
+    return ch ? toAbsolute(fixture.address, ch.channel) : undefined;
+  };
+
+  const r = resolve("r");
+  const g = resolve("g");
+  const b = resolve("b");
+  const w = resolve("w");
+  const intensity = resolve("intensity");
+
+  if (!r && !g && !b && !w && !intensity) {
+    return { reason: "No controllable channels (r/g/b/w/intensity) found" };
+  }
+
+  const channels: ChannelFixtureChannels = { r, g, b, w, intensity };
+  const deviceId = fixture.homekit?.deviceId?.trim() || fixture.id;
+  const name = fixture.homekit?.name?.trim() || fixture.name;
+
+  return { cf: { fixture, name, deviceId, channels, universe: fixture.universe } };
+};
+
+export const collectHomeKitChannelFixtures = (fixtures: Fixture[]) => {
+  const channelFixtures: HomeKitChannelFixture[] = [];
+  const skipped: Array<{ fixtureId: string; reason: string }> = [];
+
+  fixtures.forEach((fixture) => {
+    if (isMovingHead(fixture)) return;
+    const resolution = resolveChannelFixture(fixture);
+    if (resolution.cf) {
+      channelFixtures.push(resolution.cf);
+    } else if (resolution.reason) {
+      skipped.push({ fixtureId: fixture.id, reason: resolution.reason });
+    }
+  });
+
+  return { channelFixtures, skipped };
+};
+
+// ─── Moving Head ────────────────────────────────────────────────────────────
+
+export type MovingHeadChannels = {
+  dimmer?: number; // absolute DMX channel (1-512)
+  shutter?: number;
+  pan?: number;
+  tilt?: number;
+  color?: number;
+  gobo?: number;
+};
+
+export type HomeKitMovingHead = {
+  fixture: Fixture;
+  name: string;
+  deviceId: string;
+  channels: MovingHeadChannels;
+  universe: number;
+};
+
+type HomeKitMovingHeadResolution =
+  | { mh: HomeKitMovingHead; reason?: undefined }
+  | { mh?: undefined; reason: string };
+
+const resolveMovingHead = (fixture: Fixture): HomeKitMovingHeadResolution => {
+  if (fixture.homekit?.enabled === false) {
+    return { reason: "HomeKit disabled in fixture config" };
+  }
+
+  const overrides: Partial<FixtureHomeKitMovingHeadChannels> = fixture.homekit?.movingHeadChannels ?? {};
+
+  const resolveAbsolute = (cap: string, override?: number): number | undefined => {
+    if (override !== undefined) return toAbsolute(fixture.address, override);
+    const ch = fixture.channels.find((c) => c.capability === cap);
+    return ch ? toAbsolute(fixture.address, ch.channel) : undefined;
+  };
+
+  const pan = resolveAbsolute("pan", overrides.panChannel);
+  const tilt = resolveAbsolute("tilt", overrides.tiltChannel);
+
+  if (!pan && !tilt) {
+    return { reason: "No pan/tilt channels found" };
+  }
+
+  const channels: MovingHeadChannels = {
+    dimmer: resolveAbsolute("intensity", overrides.dimmerChannel),
+    shutter: resolveAbsolute("strobe", overrides.shutterChannel),
+    pan,
+    tilt,
+    color: resolveAbsolute("color", overrides.colorChannel),
+    gobo: resolveAbsolute("gobo", overrides.goboChannel)
+  };
+
+  const deviceId = fixture.homekit?.deviceId?.trim() || fixture.id;
+  const name = fixture.homekit?.name?.trim() || fixture.name;
+
+  return { mh: { fixture, name, deviceId, channels, universe: fixture.universe } };
+};
+
+export const collectHomeKitMovingHeads = (fixtures: Fixture[]) => {
+  const movingHeads: HomeKitMovingHead[] = [];
+  const skipped: Array<{ fixtureId: string; reason: string }> = [];
+
+  fixtures.forEach((fixture) => {
+    if (!isMovingHead(fixture)) return;
+    const resolution = resolveMovingHead(fixture);
+    if (resolution.mh) {
+      movingHeads.push(resolution.mh);
+    } else {
+      skipped.push({ fixtureId: fixture.id, reason: resolution.reason });
+    }
+  });
+
+  return { movingHeads, skipped };
+};
