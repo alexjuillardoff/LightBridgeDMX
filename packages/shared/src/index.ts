@@ -40,7 +40,9 @@ export const FixtureHomeKitMovingHeadChannelsSchema = z.object({
   panChannel: z.number().int().min(1).optional(),
   tiltChannel: z.number().int().min(1).optional(),
   colorChannel: z.number().int().min(1).optional(),
-  goboChannel: z.number().int().min(1).optional()
+  goboChannel: z.number().int().min(1).optional(),
+  panDefault: z.number().int().min(0).max(255).optional(),
+  tiltDefault: z.number().int().min(0).max(255).optional()
 });
 
 export type FixtureHomeKitMovingHeadChannels = z.infer<typeof FixtureHomeKitMovingHeadChannelsSchema>;

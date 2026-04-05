@@ -276,12 +276,28 @@ export type MovingHeadChannels = {
   gobo?: number;
 };
 
+export type MovingHeadDefaults = {
+  pan?: number;  // DMX value 0-255
+  tilt?: number; // DMX value 0-255
+};
+
 export type HomeKitMovingHead = {
   fixture: Fixture;
   name: string;
   deviceId: string;
   channels: MovingHeadChannels;
+  defaults: MovingHeadDefaults;
   universe: number;
+};
+
+/** Convert HomeKit 0-100% to DMX value, mapping 0% to defaultDmx and 100% to 255 */
+export const pctToDmxDefault = (pct: number, defaultDmx: number = 0): number =>
+  Math.round(defaultDmx + (clamp(pct, 0, 100) / 100) * (255 - defaultDmx));
+
+/** Convert DMX value to HomeKit 0-100%, mapping defaultDmx to 0% and 255 to 100% */
+export const dmxToPctDefault = (dmx: number, defaultDmx: number = 0): number => {
+  if (defaultDmx >= 255) return 0;
+  return clamp(Math.round(((dmx - defaultDmx) / (255 - defaultDmx)) * 100), 0, 100);
 };
 
 type HomeKitMovingHeadResolution =
@@ -317,10 +333,15 @@ const resolveMovingHead = (fixture: Fixture): HomeKitMovingHeadResolution => {
     gobo: resolveAbsolute("gobo", overrides.goboChannel)
   };
 
+  const defaults: MovingHeadDefaults = {
+    pan: overrides.panDefault,
+    tilt: overrides.tiltDefault
+  };
+
   const deviceId = fixture.homekit?.deviceId?.trim() || fixture.id;
   const name = fixture.homekit?.name?.trim() || fixture.name;
 
-  return { mh: { fixture, name, deviceId, channels, universe: fixture.universe } };
+  return { mh: { fixture, name, deviceId, channels, defaults, universe: fixture.universe } };
 };
 
 export const collectHomeKitMovingHeads = (fixtures: Fixture[]) => {
