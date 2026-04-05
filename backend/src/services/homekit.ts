@@ -21,9 +21,7 @@ import {
   MovingHeadChannels,
   clamp,
   collectHomeKitChannelFixtures,
-  collectHomeKitMovingHeads,
-  dmxToPctDefault,
-  pctToDmxDefault
+  collectHomeKitMovingHeads
 } from "./homekit-utils";
 
 type HomeKitOptions = {
@@ -425,10 +423,6 @@ export class HomeKitBridge {
     const universeState = this.dmx.getState();
     const dmxValues = universeState.universe === mh.universe ? universeState.values : new Array(512).fill(0);
     const readPct = (ch: number) => Math.round(((dmxValues[ch - 1] as number) ?? 0) / 255 * 100);
-    const readPctFor = (ch: number, key: keyof MovingHeadChannels) => {
-      const dmx = (dmxValues[ch - 1] as number) ?? 0;
-      return dmxToPctDefault(dmx, this.getDefaultDmx(mh, key));
-    };
 
     const initialDimmer = mh.channels.dimmer !== undefined ? readPct(mh.channels.dimmer) : 0;
     const managed: ManagedMovingHead = {
@@ -460,7 +454,7 @@ export class HomeKitBridge {
 
       const svc = acc.addService(Service.Lightbulb);
       const defaultDmx = this.getDefaultDmx(mh, key);
-      const value = defaultDmx ? readPctFor(ch, key) : readPct(ch);
+      const value = readPct(ch);
       const slot: ManagedMovingHeadSlot = { accessory: acc, service: svc, value };
 
       if (key === "dimmer") {
@@ -506,7 +500,7 @@ export class HomeKitBridge {
           .onSet((v: CharacteristicValue) => {
             const pct = clamp(Number(v), 0, 100);
             slot.value = pct;
-            this.dmx.setChannel(ch, pctToDmxDefault(pct, defaultDmx));
+            this.dmx.setChannel(ch, Math.round((pct / 100) * 255));
             svc.updateCharacteristic(Characteristic.On, pct > 0);
           });
 
@@ -516,10 +510,10 @@ export class HomeKitBridge {
       svc.updateCharacteristic(Characteristic.Brightness, value);
       managed.slots.set(key, slot);
 
-      // Enforce default DMX value on channels that are below their default
+      // Apply default home position only when DMX is at 0 (rest)
       if (defaultDmx > 0) {
         const currentDmx = (dmxValues[ch - 1] as number) ?? 0;
-        if (currentDmx < defaultDmx) {
+        if (currentDmx === 0) {
           this.dmx.setChannel(ch, defaultDmx);
         }
       }
@@ -570,10 +564,7 @@ export class HomeKitBridge {
       for (const [key, slot] of managed.slots.entries()) {
         const ch = managed.mh.channels[key];
         if (ch === undefined) continue;
-        const defaultDmx = this.getDefaultDmx(managed.mh, key);
-        const newValue = defaultDmx
-          ? dmxToPctDefault((universeState.values[ch - 1] as number) ?? 0, defaultDmx)
-          : readPct(ch);
+        const newValue = readPct(ch);
         if (newValue === slot.value) continue;
         slot.value = newValue;
         if (key === "dimmer") {
