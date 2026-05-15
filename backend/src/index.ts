@@ -3,6 +3,7 @@ import path from "node:path";
 import Fastify from "fastify";
 import { registerRoutes } from "./routes";
 import { createErrorHandler } from "./routes/errors";
+import { DanceService } from "./services/dance";
 import { DmxService } from "./services/dmx";
 import { HomeKitBridge } from "./services/homekit";
 import { createWebsocketManager } from "./websocket";
@@ -48,15 +49,21 @@ const homekit = new HomeKitBridge(app.log, dmx, {
   storagePath: HOMEKIT_STORAGE
 });
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });
+const dance = new DanceService(app.log, dmx, store);
 const handleError = createErrorHandler(app.log);
 
-registerRoutes(app, { store, dmx, homekit, broadcast: websocket.broadcast }, handleError);
+registerRoutes(app, { store, dmx, homekit, dance, broadcast: websocket.broadcast }, handleError);
 
 dmx.on("tick", (state) => {
   websocket.broadcast({ type: "universe_tick", data: state });
 });
 
+dance.on("state", (state) => {
+  websocket.broadcast({ type: "dance_state", data: state });
+});
+
 app.addHook("onClose", async () => {
+  await dance.stop();
   await dmx.stop();
   await homekit.stop();
   await store.disconnect();
@@ -67,6 +74,7 @@ const start = async () => {
     await store.connect();
     await dmx.start();
     await homekit.start(await store.listFixtures());
+    await dance.init();
     await app.listen({ port: PORT, host: "0.0.0.0" });
 
     websocket.attach(app.server);

@@ -1,4 +1,4 @@
-import { Fixture, QxfLibraryFixture, Scene } from "@lightbridgedmx/shared";
+import { DanceConfig, DanceState, Fixture, QxfLibraryFixture, Scene } from "@lightbridgedmx/shared";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -70,6 +70,16 @@ export const api = {
   },
   homekit: {
     status: () => fetchJSON<HomeKitStatus>("/api/homekit")
+  },
+  rooms: {
+    list: () => fetchJSON<string[]>("/api/rooms")
+  },
+  dance: {
+    state: () => fetchJSON<DanceState>("/api/dance/state"),
+    updateConfig: (patch: Partial<DanceConfig>) =>
+      fetchJSON<DanceState>("/api/dance/config", { method: "PUT", body: JSON.stringify(patch) }),
+    start: () => fetchJSON<DanceState>("/api/dance/start", { method: "POST" }),
+    stop: () => fetchJSON<DanceState>("/api/dance/stop", { method: "POST" })
   }
 };
 

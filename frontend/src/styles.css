@@ -305,6 +305,58 @@ input[readonly] {
   gap: 12px;
 }
 
+.badge-on {
+  color: #6ee7a8;
+  border-color: rgba(110, 231, 168, 0.4);
+  background: rgba(110, 231, 168, 0.08);
+}
+
+.btn-primary {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(110, 231, 168, 0.5);
+  background: rgba(110, 231, 168, 0.18);
+  color: #6ee7a8;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.18);
+  color: #fda4af;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-danger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pill {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pill-active {
+  border-color: rgba(99, 165, 255, 0.7);
+  color: #cfe1ff;
+  background: rgba(99, 165, 255, 0.18);
+}
+
 @media (max-width: 720px) {
   .header {
     flex-direction: column;

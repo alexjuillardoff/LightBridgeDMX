@@ -117,6 +117,10 @@ export class DmxService extends EventEmitter {
     this.universe[channel - 1] = clampValue(value);
   }
 
+  getUniverseSnapshot(): number[] {
+    return [...this.universe];
+  }
+
   getState(): UniverseState {
     const now = Date.now();
     const delta = now - this.lastTick;

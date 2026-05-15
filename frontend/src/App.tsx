@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fixture, QxfLibraryFixture, Scene } from "@lightbridgedmx/shared";
 import { ChannelGrid } from "./components/ChannelGrid";
+import { DancePanel } from "./components/DancePanel";
 import { FixtureForm } from "./components/FixtureForm";
 import { FixturesTable } from "./components/FixturesTable";
 import { HomeKitCard } from "./components/HomeKitCard";
@@ -198,6 +199,14 @@ function App() {
             homekitEnabled={homekitStatusQuery.data?.enabled ?? false}
           />
         </div>
+      </div>
+
+      <div className="section-title">
+        <h2>Mode Dance</h2>
+        <span className="muted">Strobe coordonné par pièce avec patterns spatiaux</span>
+      </div>
+      <div className="grid">
+        <DancePanel />
       </div>
 
       <ChannelGrid

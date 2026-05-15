@@ -82,10 +82,89 @@ export const FixtureSchema = z.object({
   universe: z.number().int().min(0).default(0),
   createdAt: z.string().datetime(),
   profile: FixtureProfileSchema.optional(),
-  homekit: FixtureHomeKitSchema.optional()
+  homekit: FixtureHomeKitSchema.optional(),
+  room: z.string().min(1).optional()
 });
 
 export type Fixture = z.infer<typeof FixtureSchema>;
+
+export const DancePatternIds = [
+  "chase",
+  "reverseChase",
+  "pingPong",
+  "waveLR",
+  "waveRL",
+  "alternate",
+  "pairs",
+  "randomSubset",
+  "allHit",
+  "strobeSync",
+  "bookendIn",
+  "bookendOut"
+] as const;
+
+export const DancePatternIdSchema = z.enum(DancePatternIds);
+export type DancePatternId = z.infer<typeof DancePatternIdSchema>;
+
+export const DanceLyrePositionSchema = z.object({
+  fixtureId: z.string().uuid(),
+  pan: z.number().int().min(0).max(255),
+  tilt: z.number().int().min(0).max(255)
+});
+
+export type DanceLyrePosition = z.infer<typeof DanceLyrePositionSchema>;
+
+export const DanceFreeAnchorSchema = z.object({
+  pan: z.number().int().min(0).max(255),
+  tilt: z.number().int().min(0).max(255)
+});
+
+export type DanceFreeAnchor = z.infer<typeof DanceFreeAnchorSchema>;
+
+export const DanceLyreModeSchema = z.object({
+  enabled: z.boolean(),
+  shutterOpenValue: z.number().int().min(0).max(255),
+  dimmerOnValue: z.number().int().min(0).max(255),
+  followChase: z.boolean(),
+  positions: z.array(DanceLyrePositionSchema),
+  // Wall edge to the right of the rightmost fixture in the visual chain. Used as an
+  // additional anchor for piecewise interpolation/extrapolation beyond the last fixture.
+  wallEdgeRight: DanceFreeAnchorSchema.nullable(),
+  // DMX value written to the lyre's "speed" capability channel (response speed).
+  // For Stairville MH-X20: 0 = fastest movement, 251 = slowest (255 = vector modes).
+  speedValue: z.number().int().min(0).max(255),
+  // Time the lyre needs to traverse 1 DMX unit of pan or tilt, in ms. Used to compute
+  // the per-move duration based on distance — and to black out the dimmer + close the
+  // shutter while the lyre is in transit (a lyre flashing mid-flight looks bad).
+  // For Stairville MH-X20 at speed=0: ~40 ms/unit (Lava→Café = 10 units ≈ 400 ms).
+  msPerPanUnit: z.number().int().min(1).max(500)
+});
+
+export type DanceLyreMode = z.infer<typeof DanceLyreModeSchema>;
+
+export const DanceConfigSchema = z.object({
+  enabled: z.boolean(),
+  rooms: z.array(z.string().min(1)),
+  intervalMinMs: z.number().int().min(1).max(2000),
+  intervalMaxMs: z.number().int().min(1).max(2000),
+  patterns: z.array(DancePatternIdSchema),
+  excludePanTilt: z.boolean(),
+  excludeCapabilities: z.array(CapabilitySchema),
+  lyre: DanceLyreModeSchema,
+  updatedAt: z.string().datetime()
+});
+
+export type DanceConfig = z.infer<typeof DanceConfigSchema>;
+
+export const DanceStateSchema = z.object({
+  config: DanceConfigSchema,
+  running: z.boolean(),
+  activeFixtureIds: z.array(z.string().uuid()),
+  currentPattern: z.string().nullable(),
+  phasesSent: z.number().int().nonnegative()
+});
+
+export type DanceState = z.infer<typeof DanceStateSchema>;
 
 export const SceneStepSchema = z.object({
   fixtureId: z.string().uuid(),
@@ -131,7 +210,8 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("universe_tick"), data: UniverseStateSchema }),
   z.object({ type: z.literal("fixture_updated"), data: FixtureSchema }),
   z.object({ type: z.literal("scene_activated"), data: SceneSchema }),
-  z.object({ type: z.literal("log"), data: LogEventSchema })
+  z.object({ type: z.literal("log"), data: LogEventSchema }),
+  z.object({ type: z.literal("dance_state"), data: DanceStateSchema })
 ]);
 
 export type WsEvent = z.infer<typeof WsEventSchema>;

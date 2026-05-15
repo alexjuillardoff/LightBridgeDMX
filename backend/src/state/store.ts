@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import {
+  DanceConfig,
+  DanceConfigSchema,
   Fixture,
   FixtureSchema,
   Preset,
@@ -27,6 +29,7 @@ type DbFixture = {
   createdAt: string;
   profile: string | null;
   homekit: string | null;
+  room: string | null;
 };
 
 function deserializeFixture(row: DbFixture): Fixture {
@@ -38,9 +41,41 @@ function deserializeFixture(row: DbFixture): Fixture {
     channels: JSON.parse(row.channels),
     createdAt: row.createdAt,
     ...(row.profile ? { profile: JSON.parse(row.profile) } : {}),
-    ...(row.homekit ? { homekit: JSON.parse(row.homekit) } : {})
+    ...(row.homekit ? { homekit: JSON.parse(row.homekit) } : {}),
+    ...(row.room ? { room: row.room } : {})
   });
 }
+
+const DEFAULT_DANCE_CONFIG: Omit<DanceConfig, "updatedAt"> = {
+  enabled: false,
+  rooms: [],
+  intervalMinMs: 55,
+  intervalMaxMs: 140,
+  patterns: [
+    "chase",
+    "reverseChase",
+    "pingPong",
+    "waveLR",
+    "waveRL",
+    "alternate",
+    "pairs",
+    "randomSubset",
+    "allHit",
+    "strobeSync"
+  ],
+  excludePanTilt: true,
+  excludeCapabilities: [],
+  lyre: {
+    enabled: false,
+    shutterOpenValue: 255,
+    dimmerOnValue: 255,
+    followChase: false,
+    positions: [],
+    wallEdgeRight: { pan: 20, tilt: 9 },
+    speedValue: 0,
+    msPerPanUnit: 40
+  }
+};
 
 export class Store {
   private prisma = new PrismaClient();
@@ -81,7 +116,8 @@ export class Store {
         channels: JSON.stringify(parsed.channels),
         createdAt: parsed.createdAt,
         profile: parsed.profile ? JSON.stringify(parsed.profile) : null,
-        homekit: parsed.homekit ? JSON.stringify(parsed.homekit) : null
+        homekit: parsed.homekit ? JSON.stringify(parsed.homekit) : null,
+        room: parsed.room ?? null
       }
     });
     return parsed;
@@ -101,7 +137,8 @@ export class Store {
         universe: parsed.universe,
         channels: JSON.stringify(parsed.channels),
         profile: parsed.profile ? JSON.stringify(parsed.profile) : null,
-        homekit: parsed.homekit ? JSON.stringify(parsed.homekit) : null
+        homekit: parsed.homekit ? JSON.stringify(parsed.homekit) : null,
+        room: parsed.room ?? null
       }
     });
     return parsed;
@@ -150,6 +187,65 @@ export class Store {
 
   async deletePreset(id: string): Promise<void> {
     await this.prisma.preset.delete({ where: { id } }).catch(() => {});
+  }
+
+  async getDanceConfig(): Promise<DanceConfig> {
+    const row = await this.prisma.danceConfig.findUnique({ where: { id: "singleton" } });
+    if (!row) {
+      const seeded = await this.saveDanceConfig({
+        ...DEFAULT_DANCE_CONFIG,
+        updatedAt: new Date().toISOString()
+      });
+      return seeded;
+    }
+    return DanceConfigSchema.parse({
+      enabled: row.enabled,
+      rooms: JSON.parse(row.rooms),
+      intervalMinMs: row.intervalMinMs,
+      intervalMaxMs: row.intervalMaxMs,
+      patterns: JSON.parse(row.patterns),
+      excludePanTilt: row.excludePanTilt,
+      excludeCapabilities: JSON.parse(row.excludeCapabilities),
+      lyre: JSON.parse(row.lyre),
+      updatedAt: row.updatedAt
+    });
+  }
+
+  async saveDanceConfig(config: DanceConfig): Promise<DanceConfig> {
+    const parsed = DanceConfigSchema.parse({
+      ...config,
+      updatedAt: new Date().toISOString()
+    });
+    if (parsed.intervalMinMs > parsed.intervalMaxMs) {
+      throw new StoreError("intervalMinMs must be <= intervalMaxMs", 400);
+    }
+    const data = {
+      enabled: parsed.enabled,
+      rooms: JSON.stringify(parsed.rooms),
+      intervalMinMs: parsed.intervalMinMs,
+      intervalMaxMs: parsed.intervalMaxMs,
+      patterns: JSON.stringify(parsed.patterns),
+      excludePanTilt: parsed.excludePanTilt,
+      excludeCapabilities: JSON.stringify(parsed.excludeCapabilities),
+      lyre: JSON.stringify(parsed.lyre),
+      updatedAt: parsed.updatedAt
+    };
+    await this.prisma.danceConfig.upsert({
+      where: { id: "singleton" },
+      create: { id: "singleton", ...data },
+      update: data
+    });
+    return parsed;
+  }
+
+  async listRooms(): Promise<string[]> {
+    const rows = await this.prisma.fixture.findMany({
+      where: { room: { not: null } },
+      select: { room: true }
+    });
+    const set = new Set<string>();
+    for (const r of rows) if (r.room) set.add(r.room);
+    return [...set].sort();
   }
 
   private async assertChannelAvailability(fixture: FixtureInput, ignoreId?: string): Promise<void> {
