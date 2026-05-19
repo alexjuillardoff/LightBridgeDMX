@@ -60,8 +60,38 @@ registerRoutes(
   handleError
 );
 
+// Persist the universe values at most once per second, and only when they
+// have actually changed since the last snapshot. Restored at startup so
+// projectors keep their state across backend restarts.
+const UNIVERSE_SAVE_INTERVAL_MS = 1000;
+let lastSavedValues: number[] | null = null;
+let pendingSave: NodeJS.Timeout | null = null;
+
+const valuesEqual = (a: number[] | null, b: number[]) => {
+  if (!a || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
+const scheduleUniverseSnapshot = (values: number[]) => {
+  if (pendingSave) return;
+  if (valuesEqual(lastSavedValues, values)) return;
+  pendingSave = setTimeout(async () => {
+    pendingSave = null;
+    const snapshot = dmx.getUniverseSnapshot();
+    if (valuesEqual(lastSavedValues, snapshot)) return;
+    try {
+      await store.saveUniverseSnapshot(snapshot);
+      lastSavedValues = snapshot;
+    } catch (err) {
+      app.log.warn({ err }, "Failed to persist universe snapshot");
+    }
+  }, UNIVERSE_SAVE_INTERVAL_MS);
+};
+
 dmx.on("tick", (state) => {
   websocket.broadcast({ type: "universe_tick", data: state });
+  scheduleUniverseSnapshot(state.values);
 });
 
 dance.on("state", (state) => {
@@ -73,6 +103,13 @@ smartLights.on("light_updated", (light) => {
 });
 
 app.addHook("onClose", async () => {
+  if (pendingSave) clearTimeout(pendingSave);
+  // Best-effort final snapshot so the most recent state survives shutdown.
+  try {
+    await store.saveUniverseSnapshot(dmx.getUniverseSnapshot());
+  } catch (err) {
+    app.log.warn({ err }, "Failed to persist final universe snapshot");
+  }
   await dance.stop();
   await smartLights.stop();
   await dmx.stop();
@@ -83,6 +120,19 @@ app.addHook("onClose", async () => {
 const start = async () => {
   try {
     await store.connect();
+    // Restore the previously-persisted universe BEFORE starting the DMX
+    // service, so the first Art-Net frame already carries those values.
+    try {
+      const snapshot = await store.loadUniverseSnapshot();
+      if (snapshot) {
+        dmx.restoreUniverse(snapshot);
+        lastSavedValues = snapshot;
+        const nonZero = snapshot.filter((v) => v > 0).length;
+        app.log.info({ nonZero }, "Restored universe snapshot from store");
+      }
+    } catch (err) {
+      app.log.warn({ err }, "Failed to load universe snapshot, starting from zero");
+    }
     await dmx.start();
     await homekit.start(await store.listFixtures());
     await dance.init();

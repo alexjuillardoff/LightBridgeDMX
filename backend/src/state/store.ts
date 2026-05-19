@@ -345,6 +345,31 @@ export class Store {
     return [...set].sort();
   }
 
+  async loadUniverseSnapshot(universe = 0): Promise<number[] | null> {
+    const row = await this.prisma.universeSnapshot.findUnique({ where: { universe } });
+    if (!row) return null;
+    const buf = Buffer.from(row.values);
+    const out = new Array<number>(512).fill(0);
+    for (let i = 0; i < Math.min(buf.length, 512); i++) {
+      out[i] = buf[i];
+    }
+    return out;
+  }
+
+  async saveUniverseSnapshot(values: number[], universe = 0): Promise<void> {
+    const buf = Buffer.alloc(512);
+    for (let i = 0; i < Math.min(values.length, 512); i++) {
+      const v = values[i];
+      buf[i] = Number.isFinite(v) ? Math.max(0, Math.min(255, Math.round(v))) : 0;
+    }
+    const updatedAt = new Date().toISOString();
+    await this.prisma.universeSnapshot.upsert({
+      where: { universe },
+      create: { universe, values: buf, updatedAt },
+      update: { values: buf, updatedAt }
+    });
+  }
+
   private async assertChannelAvailability(fixture: FixtureInput, ignoreId?: string): Promise<void> {
     const all = await this.listFixtures();
     const ranges = this.computeRanges(fixture);

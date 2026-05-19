@@ -56,3 +56,11 @@ model SmartLight {
   currentEffect String? // JSON: SmartLightEffectConfig | null
   createdAt     String
 }
+
+// Last known DMX universe values, restored at backend startup so projectors
+// keep their state across restarts. Singleton row per universe id.
+model UniverseSnapshot {
+  universe  Int    @id
+  values    Bytes  // 512 bytes, channel 1 at index 0
+  updatedAt String
+}

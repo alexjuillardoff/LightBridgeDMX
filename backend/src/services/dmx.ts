@@ -121,6 +121,16 @@ export class DmxService extends EventEmitter {
     return [...this.universe];
   }
 
+  // Apply previously-persisted values to the universe buffer. Safe to call
+  // before start() so the first emitted Art-Net frame already carries the
+  // restored state — projectors keep their last on-state across backend
+  // restarts.
+  restoreUniverse(values: number[]) {
+    for (let i = 0; i < Math.min(values.length, this.universe.length); i++) {
+      this.universe[i] = clampValue(values[i]);
+    }
+  }
+
   getState(): UniverseState {
     const now = Date.now();
     const delta = now - this.lastTick;

@@ -27,15 +27,15 @@
 ### Backend (`backend/`)
 - `package.json` : scripts (`dev` via ts-node-dev, `build` via tsc), dépendances Fastify, ws, dmx-ts, hap-nodejs, @prisma/client, bonjour-service.
 - `tsconfig.json` : compilation CJS vers `dist/`.
-- `prisma/schema.prisma` : modèles SQLite — `Fixture`, `Scene`, `Preset`, `DanceConfig`, `SmartLight`.
+- `prisma/schema.prisma` : modèles SQLite — `Fixture`, `Scene`, `Preset`, `DanceConfig`, `SmartLight`, `UniverseSnapshot` (dernier état DMX persisté, 512 bytes par universe).
 - `vitest.config.ts` : config tests (Vitest, projet `homekit-utils`).
 - `src/index.ts` : point d'entrée Fastify. Init des services (DMX, HomeKit, Dance, SmartLights), wire WS, broadcasts. Port 5000 verrouillé.
 - `src/websocket.ts` : gestionnaire WS broadcast (pas Socket.io, package `ws` natif).
-- `src/state/store.ts` : couche Prisma — CRUD fixtures / scènes / presets / smart lights / dance config, sérialisation JSON pour champs complexes.
+- `src/state/store.ts` : couche Prisma — CRUD fixtures / scènes / presets / smart lights / dance config, sérialisation JSON pour champs complexes. `loadUniverseSnapshot()` / `saveUniverseSnapshot()` pour persister/restaurer les 512 canaux DMX en `Bytes`.
 - `src/routes/` : enregistrement modulaire des endpoints
   - `fixtures.ts`, `scenes.ts`, `presets.ts`, `universe.ts`, `qxf.ts`, `homekit.ts`, `system.ts`, `dance.ts`
   - `smart-lights.ts` : CRUD + `/pair` + `/state` + `/streaming` + `/zones` + `/layout` + `/effect` + `/effects` + `/discover` + `/probe`
-- `src/services/dmx.ts` : DmxService (Art-Net / Enttec / simulation), timer FPS configurable, événement `tick`.
+- `src/services/dmx.ts` : DmxService (Art-Net / Enttec / simulation), timer FPS configurable, événement `tick`. Méthode `restoreUniverse(values)` pour appliquer un snapshot persisté avant `start()`.
 - `src/services/dance.ts` : DanceService — orchestration de strobes coordonnés par pièce avec patterns spatiaux.
 - `src/services/homekit.ts` : pont HomeKit (hap-nodejs). Accessories `Lightbulb` RGB + lyres multi-services (`Lightbulb` dimmer/shutter + `WindowCovering` pan/tilt/color/gobo). Synchro bidirectionnelle via le tick DMX.
 - `src/services/homekit-utils.ts` : conversions HSB↔RGB, résolution canaux RGB et moving head.
