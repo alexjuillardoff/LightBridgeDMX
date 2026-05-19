@@ -1,57 +1,142 @@
 # Architecture
 
-## Vue d’ensemble
+## Vue d'ensemble
 - Monorepo pnpm : backend Fastify/TypeScript + frontend React/Vite + package partagé de types/schemas.
-- Backend écoute en **HTTP+WS sur 5000** (forcé), publie DMX en **Art-Net** vers QLC+ qui bridge vers l’interface DMX.
+- Backend écoute en **HTTP+WS sur 5000** (forcé), publie DMX en **Art-Net** vers QLC+ qui bridge vers l'interface DMX.
 - Frontend dev sur **5173** (Vite) avec proxy `/api` et `/ws` vers le backend.
-- État persisté en **SQLite via Prisma** (`backend/data/lightbridge.db`). HomeKit via hap-nodejs : ampoules RGB + lyres (WindowCovering pan/tilt/color/gobo + Lightbulb dimmer).
+- État persisté en **SQLite via Prisma** (`backend/data/lightbridge.db`).
+- 3 systèmes d'éclairage coexistent : **DMX** (Art-Net → QLC+ → Enttec), **HomeKit** (hap-nodejs, expose fixtures comme accessoires), **Smart Lights WiFi** (Nanoleaf via HTTP OpenAPI + UDP extControl streaming).
 
 ## Flux runtime (prod/dev)
-1) Frontend appelle l’API REST (`/api/...`) et le WS (`/ws`) du backend.  
-2) Backend manipule l’état en mémoire et diffuse en temps réel via WS (`universe_tick`, `fixture_updated`).  
-3) Backend envoie le DMX en Art-Net (`DMX_OUTPUT=artnet`, `ARTNET_HOST=192.168.0.200`) → QLC+ → interface DMX.  
-4) Si aucune interface n’est disponible, le backend passe en simulation.
+1) Frontend appelle l'API REST (`/api/...`) et le WS (`/ws`) du backend.
+2) Backend manipule l'état en mémoire (registry SmartLightService + tableau 512 canaux DMX) et diffuse en temps réel via WS (`universe_tick`, `fixture_updated`, `dance_state`, `smart_light_updated`).
+3) Backend envoie le DMX en Art-Net (`DMX_OUTPUT=artnet`, `ARTNET_HOST=192.168.0.200`) → QLC+ → interface DMX.
+4) Backend pilote les Nanoleaf via HTTP (coalesce 70 ms) ou UDP streaming (30 Hz, latence <15 ms) selon le toggle par lampe.
+5) Si aucune interface DMX n'est disponible, le backend passe en simulation.
 
 ## Arborescence et rôle des fichiers
 
 ### Racine
-- `package.json` / `pnpm-workspace.yaml` / `pnpm-lock.yaml` : scripts racine (`dev|build|lint|format|test`) et définition des workspaces.
+- `package.json` / `pnpm-workspace.yaml` / `pnpm-lock.yaml` : scripts racine (`dev|build|lint|format|test`) et workspaces.
 - `tsconfig.base.json` : options TypeScript communes (CJS, paths `@lightbridgedmx/shared`).
-- `README.md` : guide d’usage (ports, DMX Art-Net, launchd).
+- `DEVELOPMENT.md` : référence technique exhaustive (guide de développement).
+- `README.md` : guide utilisateur (FR).
 - `ARCHITECTURE.md` : ce document.
-- `TODO.md` : notes de travaux.
-- `node_modules/`, `ts-node-dev/` : dépendances/outils locaux.
 - `logs/` : sortie std/err des services launchd dev.
 
 ### Backend (`backend/`)
-- `package.json` : scripts (`dev` via ts-node-dev, `build` via tsc), dépendances Fastify/WS/DMX/HomeKit.
+- `package.json` : scripts (`dev` via ts-node-dev, `build` via tsc), dépendances Fastify, ws, dmx-ts, hap-nodejs, @prisma/client, bonjour-service.
 - `tsconfig.json` : compilation CJS vers `dist/`.
-- `src/index.ts` : point d’entrée Fastify. Routes REST (fixtures, scènes, presets, test DMX, QXF library), websocket `/ws`, broadcast DMX tick, démarrage DMX + pont HomeKit RGB, port 5000 verrouillé.
-- `src/services/dmx.ts` : service DMX (dmx-ts), modes Art-Net/Enttec, timer FPS, simulation fallback.
-- `src/services/homekit.ts` : pont HomeKit (hap-nodejs). Deux types d'accessories : `Lightbulb` RGB (Hue/Saturation/Brightness ↔ canaux R/G/B) et lyres multi-services (`Lightbulb` dimmer + `WindowCovering` pan/tilt/color/gobo). Synchro bidirectionnelle via le tick DMX.
-- `routes/homekit.ts` : endpoint `GET /api/homekit` pour récupérer l’état du bridge (setup URI, fixtures exportées).
-- `src/services/qxf.ts` : parsing XML QXF, construction de fixtures depuis la bibliothèque.
-- `src/services/qxf-library.ts` : téléchargement/cache de la librairie QLC+, lecture des fichiers QXF.
-- `src/state/store.ts` : stockage SQLite/Prisma des fixtures/scènes/presets, validation, erreurs métier.
-- `dist/**` : sortie JS compilée (CJS) pour le runtime.
+- `prisma/schema.prisma` : modèles SQLite — `Fixture`, `Scene`, `Preset`, `DanceConfig`, `SmartLight`.
+- `vitest.config.ts` : config tests (Vitest, projet `homekit-utils`).
+- `src/index.ts` : point d'entrée Fastify. Init des services (DMX, HomeKit, Dance, SmartLights), wire WS, broadcasts. Port 5000 verrouillé.
+- `src/websocket.ts` : gestionnaire WS broadcast (pas Socket.io, package `ws` natif).
+- `src/state/store.ts` : couche Prisma — CRUD fixtures / scènes / presets / smart lights / dance config, sérialisation JSON pour champs complexes.
+- `src/routes/` : enregistrement modulaire des endpoints
+  - `fixtures.ts`, `scenes.ts`, `presets.ts`, `universe.ts`, `qxf.ts`, `homekit.ts`, `system.ts`, `dance.ts`
+  - `smart-lights.ts` : CRUD + `/pair` + `/state` + `/streaming` + `/zones` + `/layout` + `/effect` + `/effects` + `/discover` + `/probe`
+- `src/services/dmx.ts` : DmxService (Art-Net / Enttec / simulation), timer FPS configurable, événement `tick`.
+- `src/services/dance.ts` : DanceService — orchestration de strobes coordonnés par pièce avec patterns spatiaux.
+- `src/services/homekit.ts` : pont HomeKit (hap-nodejs). Accessories `Lightbulb` RGB + lyres multi-services (`Lightbulb` dimmer/shutter + `WindowCovering` pan/tilt/color/gobo). Synchro bidirectionnelle via le tick DMX.
+- `src/services/homekit-utils.ts` : conversions HSB↔RGB, résolution canaux RGB et moving head.
+- `src/services/qxf.ts` + `qxf-library.ts` : parser XML QXF + bibliothèque QLC+ téléchargée de GitHub.
+- `src/services/smart-lights/` : sous-package complet (voir section dédiée ci-dessous).
+
+### Smart Lights (`backend/src/services/smart-lights/`)
+
+Le **SmartLightService** est un registry de lampes WiFi avec deux paths de sortie, mirror DMX bidirectionnel et moteur d'effets position-aware.
+
+| Fichier | Rôle |
+|---------|------|
+| `index.ts` | SmartLightService — registry + 3 timers (flush HTTP 30 ms / stream UDP 33 ms / refresh device 5 s) + DMX tick listener + dispatch effet/streaming/HTTP |
+| `nanoleaf-client.ts` | Client HTTP OpenAPI Nanoleaf (port 16021) — pair, getInfo, setState (on/hue/sat/brightness/ct), listEffects, selectEffect, enableExtControl |
+| `nanoleaf-streamer.ts` | Streamer UDP extControl v2 (port 60222) — frame `[panelCount:u16BE]([panelId:u16BE][R][G][B][W][transition×100ms:u16BE])×N`, keepalive 250 ms |
+| `effect-engine.ts` | Pure function `evaluateEffect(config, layout, time) → RgbColor[]` — 5 effets (static / solid / gradient / chase / wave), spare zones forcées à noir |
+| `discovery.ts` | Scan mDNS via `bonjour-service` (`_nanoleafapi._tcp`), retourne IP + port + nom + modèle |
+
+**Priorité des paths de sortie** (dans `streamAll()` à 30 Hz) :
+1. `currentEffect` set + streaming actif → EffectEngine évalue contre `zoneLayout`, push frame per-zone
+2. `zonePalette` set (via `applyZones()`) sans effet → streamer push la palette telle quelle
+3. Streaming actif sans effet ni palette → couleur uniforme depuis `desired.hue/sat/brightness`
+4. Sinon → HTTP coalescé via `flushAll()` (rate-limit 1 push / 70 ms)
+
+**Données persistées par smart light** (table SQLite `smart_lights`) :
+- `config` (JSON discriminé par `type`) : host, port, token, deviceName
+- `dmxMirror` (JSON) : `{ rChannel?, gChannel?, bChannel?, briChannel? }` pour lier aux canaux DMX
+- `streaming` (JSON) : `{ enabled, zoneCount }` — toggle utilisateur + nombre de zones du strip
+- `zoneLayout` (JSON) : `{ mode, segments[], spareZones[], sides[] }` — disposition 3D des LEDs
+- `currentEffect` (JSON) : config d'effet active évaluée à chaque tick UDP
 
 ### Frontend (`frontend/`)
-- `package.json` : scripts Vite (`dev`, `build`, `preview`), deps React + React Query.
+- `package.json` : scripts Vite (`dev`, `build`, `preview`), deps React 18 + React Query + qrcode.react + three / @react-three/fiber v8 / @react-three/drei v9.
 - `vite.config.ts` : proxy API/WS vers `http://localhost:5000`, serveur dev `host: true`, port 5173.
-- `src/main.tsx` : bootstrap React/Vite.
-- `src/App.tsx` : vue principale (UI dashboard).
-- `src/lib/api.ts` : client API/WS (base URL, wsUrl, helpers fetch JSON).
-- `src/styles.css` : styles globaux.
-- `dist/` : build Vite (prod).
-- Fonctionnalités UI clés : import QXF, CRUD fixtures (suppression incluse, remet les canaux à zéro), regroupement couleur par projecteur dans Live DMX, grille 8×N scrollable, sliders verticaux élargis pour le tactile/mobile.
+- `src/main.tsx` : bootstrap React/Vite + QueryClient.
+- `src/App.tsx` : layout principal — Header, StatusCards, Fixtures section, SmartLights section, Dance section, ChannelGrid, Scenes section.
+- `src/lib/api.ts` : client REST (fetch JSON) + wsUrl + namespaces `fixtures` / `scenes` / `universe` / `qxf` / `homekit` / `dance` / `smartLights`.
+- `src/lib/fixtures.ts`, `fixtureTemplates.ts`, `math.ts` : helpers UI.
+- `src/hooks/useDmxWebsocket.ts` : hook WS — écoute `universe_tick`, `fixture_updated`, `smart_light_updated`, `dance_state`, `log`.
+- `src/components/` :
+  - `Header.tsx`, `StatusCards.tsx`, `FixtureForm.tsx`, `FixturesTable.tsx`, `ChannelGrid.tsx`, `QxfLibraryPanel.tsx`, `HomeKitCard.tsx`, `ScenesSection.tsx`, `DancePanel.tsx`
+  - `SmartLightsPanel.tsx` : section Smart Lights (PairCard + cartes par lampe + onglets Painter/Effets/Layout 3D)
+  - `smart-lights/ZonePainter.tsx` : 50 swatches paintable click+drag, brush color + spare, presets, fill all
+  - `smart-lights/EffectDesigner.tsx` : onglets solid/gradient/chase/wave + sliders live (chaque changement = PUT effet)
+  - `smart-lights/LayoutEditor3D.tsx` : éditeur 3D React Three Fiber (sphères draggables, OrbitControls, modes linked/unlinked, preset U-shape, hide spare)
+- `src/styles.css` : styles globaux (thème sombre, palette accent #1dd3b0 / #f39c12).
 
 ### Shared (`packages/shared/`)
-- `src/index.ts` : types et schémas Zod partagés (Fixture, Scene, Preset, WsEvent…).
-- `src/index.js` : build JS du package partagé.
+- `src/index.ts` : types et schémas Zod partagés. Sections :
+  - DMX : `Capability`, `FixtureChannel`, `FixtureHomeKit*`, `Fixture`, `Scene`, `SceneStep`, `Preset`, `UniverseState`, `LogEvent`, `WsEvent`
+  - Dance : `DanceLyrePosition`, `DanceLyreMode`, `DanceConfig`, `DanceState`, `DancePatternId`
+  - Smart Lights : `SmartLightBackendType`, `NanoleafHttpConfig`, `SmartLightDmxMirror`, `SmartLightStreaming`, `SmartLightStateInput`, `SmartLightZonePalette`, `NanoleafDiscovered`
+  - 3D Layout : `Point3D`, `ZoneSegment`, `SmartLightZoneLayout` (avec `spareZones[]` et `sides[]`)
+  - Effets : `RgbColor`, `EffectStatic/Solid/Gradient/Chase/Wave`, `SmartLightEffectConfig`
+  - Smart Light agrégé : `SmartLight`, `SmartLightInput`, `SmartLightPairInput`
+  - Helpers pure : `buildLinearLayout(zoneCount)`, `buildUShapeLayout(opts)` — réutilisés frontend + backend
+- `dist/index.js` + `dist/index.d.ts` : build CJS du package partagé.
 
 ## Ops / services persistants (macOS)
-- LaunchAgents :  
-  - `~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` → `pnpm -C backend dev` avec `DMX_OUTPUT=artnet ARTNET_HOST=192.168.0.200 ARTNET_UNIVERSE=0 DMX_FPS=30`.  
-  - `~/Library/LaunchAgents/com.lightbridgedmx.frontend.dev.plist` → `pnpm -C frontend dev`.  
+- LaunchAgents :
+  - `~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` → `pnpm -C backend dev` avec `DMX_OUTPUT=artnet ARTNET_HOST=192.168.0.200 ARTNET_UNIVERSE=0 DMX_FPS=30 DATABASE_URL=file:/Users/alex/LightBridgeDMX/backend/data/lightbridge.db`.
+  - `~/Library/LaunchAgents/com.lightbridgedmx.frontend.dev.plist` → `pnpm -C frontend dev`.
 - Logs : `logs/backend-dev.{out,err}.log`, `logs/frontend-dev.{out,err}.log`.
-- Commandes utiles : `launchctl kickstart -k gui/501/com.lightbridgedmx.backend.dev`, `launchctl bootout gui/501 ~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` (idem frontend), `lsof -i :5000|:5173` pour vérifier l’écoute.
+- Commandes utiles : `launchctl kickstart -k gui/501/com.lightbridgedmx.backend.dev`, `launchctl bootout gui/501 ~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` (idem frontend), `lsof -i :5000|:5173` pour vérifier l'écoute.
+
+## Schéma de flux complet
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                       FRONTEND (React 18 + Vite)                     │
+│  App.tsx → React Query → api.ts → fetch /api/*                      │
+│  useDmxWebsocket → ws://localhost:5000/ws                           │
+│  ChannelGrid (sliders DMX) → POST /api/universe/:channel            │
+│  SmartLightsPanel → POST /api/smart-lights/:id/{state,effect,zones} │
+│  LayoutEditor3D (lazy R3F) → POST /api/smart-lights/:id/layout      │
+└───────────┬─────────────────────────────────────────────────────────┘
+            │ HTTP REST + WebSocket
+┌───────────▼─────────────────────────────────────────────────────────┐
+│                         BACKEND (Fastify)                            │
+│  routes/ → store.ts (SQLite via Prisma)                             │
+│                                                                      │
+│  DmxService  →  Universe[512]  →  push @ N FPS  →  "tick" emit     │
+│  HomeKitBridge ↔ hap-nodejs ↔ Apple Home app (mirror via tick)      │
+│  DanceService → scheduler → grouped DMX writes                       │
+│  SmartLightService :                                                 │
+│    • DMX-tick listener (mirror R/G/B chans → desired)               │
+│    • flushAll  @ 30 ms → HTTP PUT /state (coalesce + rate-limit)    │
+│    • streamAll @ 33 ms → UDP extControl frame per zone              │
+│    • refreshAll @ 5 s if quiescent → GET device state               │
+│    • EffectEngine.evaluate(effect, layout, time) → RgbColor[50]     │
+│  WebSocket → broadcast universe_tick / smart_light_updated / …      │
+└──┬──────────────────────────────────────────────┬──────────────────┘
+   │ Art-Net UDP:6454                              │ HTTP :16021 + UDP :60222
+┌──▼─────────────────┐                  ┌──────────▼──────────────────┐
+│  QLC+ (externe)    │                  │  Nanoleaf NL72K3 Lightstrip  │
+│  Passthrough →     │                  │  Essentials — 50 zones,      │
+│  Enttec USB → DMX  │                  │  192.168.0.234, fw 4.0.11    │
+└──┬─────────────────┘                  └──────────────────────────────┘
+   │ DMX512                                              ▲
+┌──▼──────────────────────┐                              │ HAP
+│  Projecteurs DMX        │                  ┌───────────┴──────────┐
+│  PAR LED RGB, lyres…    │                  │  Apple Home app      │
+└─────────────────────────┘                  └──────────────────────┘
+```
