@@ -390,29 +390,51 @@ export function buildLinearLayout(zoneCount: number): SmartLightZoneLayout {
 /**
  * Build a U-shape layout around 4 sides of a rectangular room.
  *
- * Input: number of active zones per side (back / right / front / left) + dimensions.
+ * Input: number of active zones per side (back / left / front / right) + dimensions.
  * Coordinate system: X = left↔right (back/front edges), Z = back↔front (left/right edges), Y = floor.
- * The trace runs clockwise viewed from above: back-left → back-right → front-right → front-left.
  *
- * Total active = back + right + front + left. Remaining zones (totalZones - active) → auto-spare,
- * positioned in a hidden corner to keep the streaming frame well-formed.
+ * The strip is traced **counter-clockwise viewed from above**, entering at back-right and
+ * running: back-right → back-left → front-left → front-right → back-right. This matches the
+ * common case of a strip wrapped around a room with the controller at the back-right corner
+ * and the unused (spare) end of the strip dangling near the start.
+ *
+ * Total active = back + left + front + right. Remaining zones (totalZones - active) → auto-spare,
+ * placed either at the start (default — strip enters with spare LEDs near the controller)
+ * or at the end (set `spareAtStart: false`).
  */
 export function buildUShapeLayout(opts: {
   totalZones: number;
   backZones: number;
-  rightZones: number;
-  frontZones: number;
   leftZones: number;
-  width?: number;  // back/front edges length (default 4 m)
-  depth?: number;  // left/right edges length (default 3 m)
-  height?: number; // Y position of the strip (default 0)
+  frontZones: number;
+  rightZones: number;
+  width?: number;        // back/front edges length (default 4 m)
+  depth?: number;        // left/right edges length (default 3 m)
+  height?: number;       // Y position of the strip (default 0)
+  spareAtStart?: boolean; // default true — spare segments at indices 0..k-1
 }): SmartLightZoneLayout {
   const w = opts.width ?? 4;
   const d = opts.depth ?? 3;
   const y = opts.height ?? 0;
   const halfW = w / 2;
+  const spareAtStart = opts.spareAtStart ?? true;
+  const activeTotal = opts.backZones + opts.leftZones + opts.frontZones + opts.rightZones;
+  const spareCount = Math.max(0, opts.totalZones - activeTotal);
+
   const segments: ZoneSegment[] = [];
   const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
+  const spareZones: number[] = [];
+
+  const pushSpares = (n: number): void => {
+    for (let i = 0; i < n; i++) {
+      const idx = segments.length;
+      segments.push({
+        start: { x: -halfW - 0.2, y, z: -0.2 - i * 0.02 },
+        end:   { x: -halfW - 0.2, y, z: -0.2 - (i + 1) * 0.02 }
+      });
+      spareZones.push(idx);
+    }
+  };
 
   const pushSide = (
     label: string,
@@ -434,21 +456,19 @@ export function buildUShapeLayout(opts: {
     sides.push({ label, zoneStart: startIdx, zoneEnd: segments.length - 1, color });
   };
 
-  pushSide("back",  opts.backZones,  "#ffeb3b", { x: -halfW, y, z: 0 }, { x: +halfW, y, z: 0 });
-  pushSide("right", opts.rightZones, "#f44336", { x: +halfW, y, z: 0 }, { x: +halfW, y, z: d });
-  pushSide("front", opts.frontZones, "#2196f3", { x: +halfW, y, z: d }, { x: -halfW, y, z: d });
-  pushSide("left",  opts.leftZones,  "#4caf50", { x: -halfW, y, z: d }, { x: -halfW, y, z: 0 });
+  if (spareAtStart) pushSpares(spareCount);
 
-  // Pad with hidden spare zones up to totalZones.
-  const active = segments.length;
-  const spareZones: number[] = [];
-  for (let i = active; i < opts.totalZones; i++) {
-    segments.push({
-      start: { x: -halfW - 0.2, y, z: -0.2 - (i - active) * 0.02 },
-      end:   { x: -halfW - 0.2, y, z: -0.2 - (i - active + 1) * 0.02 }
-    });
-    spareZones.push(i);
-  }
+  // Counter-clockwise from above, entering at back-right corner:
+  //   back  : x=+halfW, z=0  →  x=-halfW, z=0
+  //   left  : x=-halfW, z=0  →  x=-halfW, z=d
+  //   front : x=-halfW, z=d  →  x=+halfW, z=d
+  //   right : x=+halfW, z=d  →  x=+halfW, z=0
+  pushSide("back",  opts.backZones,  "#ffeb3b", { x: +halfW, y, z: 0 }, { x: -halfW, y, z: 0 });
+  pushSide("left",  opts.leftZones,  "#4caf50", { x: -halfW, y, z: 0 }, { x: -halfW, y, z: d });
+  pushSide("front", opts.frontZones, "#2196f3", { x: -halfW, y, z: d }, { x: +halfW, y, z: d });
+  pushSide("right", opts.rightZones, "#f44336", { x: +halfW, y, z: d }, { x: +halfW, y, z: 0 });
+
+  if (!spareAtStart) pushSpares(spareCount);
 
   return { mode: "linked", segments, spareZones, sides };
 }

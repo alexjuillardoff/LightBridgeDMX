@@ -45,15 +45,17 @@ export const LayoutEditor3D = ({
   const [selectedZone, setSelectedZone] = useState<number | null>(null);
   const [hideSpare, setHideSpare] = useState(true);
 
-  // U-shape preset inputs (back/right/front/left counts + room dimensions)
+  // U-shape preset inputs (back/left/front/right counts in strip-traversal order +
+  // room dimensions). Spare zones default to the START of the strip (controller end).
   const totalActive = zoneCount - (layout.spareZones?.length ?? 0);
   const [showUForm, setShowUForm] = useState(false);
   const [uBack, setUBack] = useState(Math.floor(totalActive / 4));
-  const [uRight, setURight] = useState(Math.floor(totalActive / 4));
+  const [uLeft, setULeft] = useState(Math.floor(totalActive / 4));
   const [uFront, setUFront] = useState(Math.floor(totalActive / 4));
-  const [uLeft, setULeft] = useState(totalActive - 3 * Math.floor(totalActive / 4));
+  const [uRight, setURight] = useState(totalActive - 3 * Math.floor(totalActive / 4));
   const [uWidth, setUWidth] = useState(4);
   const [uDepth, setUDepth] = useState(3);
+  const [uSpareAtStart, setUSpareAtStart] = useState(true);
 
   const spareSet = useMemo(() => new Set(layout.spareZones ?? []), [layout.spareZones]);
 
@@ -94,16 +96,14 @@ export const LayoutEditor3D = ({
     const next = buildUShape({
       totalZones: zoneCount,
       backZones: uBack,
-      rightZones: uRight,
-      frontZones: uFront,
       leftZones: uLeft,
+      frontZones: uFront,
+      rightZones: uRight,
       width: uWidth,
-      depth: uDepth
+      depth: uDepth,
+      spareAtStart: uSpareAtStart
     });
-    // Merge user-provided spareZones if any (auto-generated spares from buildUShape are inferred,
-    // but user may have manually marked extras as spare via the painter).
-    const merged = new Set([...(layout.spareZones ?? []), ...(next.spareZones ?? [])]);
-    setLayout({ ...next, spareZones: [...merged].sort((a, b) => a - b) });
+    setLayout(next);
     setShowUForm(false);
   };
 
@@ -145,20 +145,25 @@ export const LayoutEditor3D = ({
       {showUForm ? (
         <div style={{ padding: 8, background: "rgba(255,255,255,0.04)", borderRadius: 6, marginBottom: 6 }}>
           <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>
-            Génère un layout en U autour d'une pièce rectangulaire. Total actif :{" "}
-            <strong>{uBack + uRight + uFront + uLeft}</strong> / {zoneCount} zones —{" "}
-            <strong>{Math.max(0, zoneCount - (uBack + uRight + uFront + uLeft))}</strong> auto-marquées spare.
+            Génère un layout en U (counter-clockwise vu de dessus). Ordre le long du strip :{" "}
+            <strong>{uSpareAtStart ? "spare → " : ""}fond → gauche → avant → droit{!uSpareAtStart ? " → spare" : ""}</strong>.<br />
+            Total actif : <strong>{uBack + uLeft + uFront + uRight}</strong> / {zoneCount} —{" "}
+            <strong>{Math.max(0, zoneCount - (uBack + uLeft + uFront + uRight))}</strong> auto-marquées spare.
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
             <SidesInput label="Fond (jaune)" value={uBack} onChange={setUBack} />
-            <SidesInput label="Droit (rouge)" value={uRight} onChange={setURight} />
-            <SidesInput label="Avant (bleu)" value={uFront} onChange={setUFront} />
             <SidesInput label="Gauche (vert)" value={uLeft} onChange={setULeft} />
+            <SidesInput label="Avant (bleu)" value={uFront} onChange={setUFront} />
+            <SidesInput label="Droit (rouge)" value={uRight} onChange={setURight} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
             <SidesInput label="Largeur (m)" value={uWidth} onChange={setUWidth} step={0.1} />
             <SidesInput label="Profondeur (m)" value={uDepth} onChange={setUDepth} step={0.1} />
           </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, marginBottom: 6 }}>
+            <input type="checkbox" checked={uSpareAtStart} onChange={(e) => setUSpareAtStart(e.target.checked)} />
+            Zones spare au début du strip (côté contrôleur)
+          </label>
           <button type="button" onClick={applyUShape} style={buttonStylePrimary}>Appliquer U-shape</button>
         </div>
       ) : null}
