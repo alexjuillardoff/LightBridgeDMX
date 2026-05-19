@@ -186,8 +186,15 @@ const SmartLightCard = ({
   onDeleted: (id: string) => void;
 }) => {
   const state = light.state ?? { on: false, hue: 0, sat: 0, brightness: 0, reachable: true };
-  const colorMode = state.colorMode ?? "hs";
   const streaming = light.streaming?.enabled ?? false;
+  // When streaming is active the device's reported colorMode ("effect" → "*ExtControl*")
+  // is uninformative. Show the actual driver: which kind of effect is being streamed.
+  // Otherwise fall back to whatever the device reports (hs/ct/effect).
+  const colorMode: string = streaming
+    ? light.currentEffect
+      ? `stream · ${light.currentEffect.kind}`
+      : "stream · uniform"
+    : state.colorMode ?? "hs";
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [tab, setTab] = useState<"none" | "painter" | "effect" | "layout3d">("none");
 
@@ -232,11 +239,9 @@ const SmartLightCard = ({
             {light.room ? ` · ${light.room}` : null}
             {" · "}
             <span style={{ color: streaming ? "var(--accent)" : "var(--muted)" }}>
-              {streaming ? "⚡ Streaming UDP" : "HTTP"}
+              {streaming ? `⚡ ${colorMode}` : `HTTP · ${colorMode}`}
             </span>
-            {" · "}
-            <span className="muted">{colorMode}</span>
-            {colorMode === "effect" && state.currentEffect ? ` (${state.currentEffect})` : null}
+            {!streaming && colorMode === "effect" && state.currentEffect ? ` (${state.currentEffect})` : null}
           </p>
         </div>
         <span
