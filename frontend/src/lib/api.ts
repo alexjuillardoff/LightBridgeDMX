@@ -1,4 +1,17 @@
-import { DanceConfig, DanceState, Fixture, QxfLibraryFixture, Scene } from "@lightbridgedmx/shared";
+import {
+  DanceConfig,
+  DanceState,
+  Fixture,
+  NanoleafDiscovered,
+  QxfLibraryFixture,
+  Scene,
+  SmartLight,
+  SmartLightEffectConfig,
+  SmartLightInput,
+  SmartLightStateInput,
+  SmartLightZoneLayout,
+  SmartLightZonePalette
+} from "@lightbridgedmx/shared";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -80,6 +93,57 @@ export const api = {
       fetchJSON<DanceState>("/api/dance/config", { method: "PUT", body: JSON.stringify(patch) }),
     start: () => fetchJSON<DanceState>("/api/dance/start", { method: "POST" }),
     stop: () => fetchJSON<DanceState>("/api/dance/stop", { method: "POST" })
+  },
+  smartLights: {
+    list: () => fetchJSON<SmartLight[]>("/api/smart-lights"),
+    create: (body: SmartLightInput) =>
+      fetchJSON<SmartLight>("/api/smart-lights", { method: "POST", body: JSON.stringify(body) }),
+    update: (id: string, body: Partial<SmartLightInput>) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+    delete: (id: string) => fetchJSON<void>(`/api/smart-lights/${id}`, { method: "DELETE" }),
+    setState: (id: string, body: SmartLightStateInput) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/state`, { method: "POST", body: JSON.stringify(body) }),
+    pair: (body: { host: string; port?: number; name?: string; room?: string }) =>
+      fetchJSON<SmartLight>("/api/smart-lights/pair", { method: "POST", body: JSON.stringify(body) }),
+    repair: (id: string) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/pair`, { method: "POST" }),
+    probe: (body: { host: string; port?: number }) =>
+      fetchJSON<{ reachable: boolean; inPairingMode: boolean; status?: number }>(
+        "/api/smart-lights/probe",
+        { method: "POST", body: JSON.stringify(body) }
+      ),
+    discover: (body?: { timeoutMs?: number }) =>
+      fetchJSON<{ devices: NanoleafDiscovered[] }>("/api/smart-lights/discover", {
+        method: "POST",
+        body: JSON.stringify(body ?? {})
+      }),
+    listEffects: (id: string) =>
+      fetchJSON<{ effects: string[] }>(`/api/smart-lights/${id}/effects`),
+    selectEffect: (id: string, name: string) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/effects/select`, {
+        method: "POST",
+        body: JSON.stringify({ name })
+      }),
+    setStreaming: (id: string, enabled: boolean, zoneCount?: number) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/streaming`, {
+        method: "POST",
+        body: JSON.stringify({ enabled, zoneCount })
+      }),
+    setZones: (id: string, palette: SmartLightZonePalette) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/zones`, {
+        method: "POST",
+        body: JSON.stringify(palette)
+      }),
+    setLayout: (id: string, layout: SmartLightZoneLayout | null) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/layout`, {
+        method: "POST",
+        body: JSON.stringify(layout)
+      }),
+    setEffect: (id: string, effect: SmartLightEffectConfig | null) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/effect`, {
+        method: "POST",
+        body: JSON.stringify(effect)
+      })
   }
 };
 

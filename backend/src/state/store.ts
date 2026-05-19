@@ -8,7 +8,10 @@ import {
   Preset,
   PresetSchema,
   Scene,
-  SceneSchema
+  SceneSchema,
+  SmartLight,
+  SmartLightInput,
+  SmartLightSchema
 } from "@lightbridgedmx/shared";
 
 export class StoreError extends Error {
@@ -31,6 +34,34 @@ type DbFixture = {
   homekit: string | null;
   room: string | null;
 };
+
+type DbSmartLight = {
+  id: string;
+  name: string;
+  room: string | null;
+  backend: string;
+  config: string;
+  dmxMirror: string | null;
+  streaming: string | null;
+  zoneLayout: string | null;
+  currentEffect: string | null;
+  createdAt: string;
+};
+
+function deserializeSmartLight(row: DbSmartLight): SmartLight {
+  return SmartLightSchema.parse({
+    id: row.id,
+    name: row.name,
+    backend: row.backend,
+    config: JSON.parse(row.config),
+    createdAt: row.createdAt,
+    ...(row.room ? { room: row.room } : {}),
+    ...(row.dmxMirror ? { dmxMirror: JSON.parse(row.dmxMirror) } : {}),
+    ...(row.streaming ? { streaming: JSON.parse(row.streaming) } : {}),
+    ...(row.zoneLayout ? { zoneLayout: JSON.parse(row.zoneLayout) } : {}),
+    ...(row.currentEffect ? { currentEffect: JSON.parse(row.currentEffect) } : {})
+  });
+}
 
 function deserializeFixture(row: DbFixture): Fixture {
   return FixtureSchema.parse({
@@ -238,13 +269,79 @@ export class Store {
     return parsed;
   }
 
-  async listRooms(): Promise<string[]> {
-    const rows = await this.prisma.fixture.findMany({
-      where: { room: { not: null } },
-      select: { room: true }
+  async listSmartLights(): Promise<SmartLight[]> {
+    const rows = await this.prisma.smartLight.findMany({ orderBy: { createdAt: "asc" } });
+    return rows.map(deserializeSmartLight);
+  }
+
+  async getSmartLight(id: string): Promise<SmartLight | undefined> {
+    const row = await this.prisma.smartLight.findUnique({ where: { id } });
+    return row ? deserializeSmartLight(row) : undefined;
+  }
+
+  async createSmartLight(input: SmartLightInput): Promise<SmartLight> {
+    const now = new Date().toISOString();
+    const parsed = SmartLightSchema.parse({
+      id: input.id ?? randomUUID(),
+      createdAt: now,
+      ...input
     });
+    await this.prisma.smartLight.create({
+      data: {
+        id: parsed.id,
+        name: parsed.name,
+        room: parsed.room ?? null,
+        backend: parsed.backend,
+        config: JSON.stringify(parsed.config),
+        dmxMirror: parsed.dmxMirror ? JSON.stringify(parsed.dmxMirror) : null,
+        streaming: parsed.streaming ? JSON.stringify(parsed.streaming) : null,
+        zoneLayout: parsed.zoneLayout ? JSON.stringify(parsed.zoneLayout) : null,
+        currentEffect: parsed.currentEffect ? JSON.stringify(parsed.currentEffect) : null,
+        createdAt: parsed.createdAt
+      }
+    });
+    return parsed;
+  }
+
+  async updateSmartLight(id: string, patch: Partial<SmartLightInput>): Promise<SmartLight> {
+    const existing = await this.getSmartLight(id);
+    if (!existing) throw new StoreError("Smart light not found", 404);
+    const next: SmartLight = { ...existing, ...patch };
+    const parsed = SmartLightSchema.parse(next);
+    await this.prisma.smartLight.update({
+      where: { id },
+      data: {
+        name: parsed.name,
+        room: parsed.room ?? null,
+        backend: parsed.backend,
+        config: JSON.stringify(parsed.config),
+        dmxMirror: parsed.dmxMirror ? JSON.stringify(parsed.dmxMirror) : null,
+        streaming: parsed.streaming ? JSON.stringify(parsed.streaming) : null,
+        zoneLayout: parsed.zoneLayout ? JSON.stringify(parsed.zoneLayout) : null,
+        currentEffect: parsed.currentEffect ? JSON.stringify(parsed.currentEffect) : null
+      }
+    });
+    return parsed;
+  }
+
+  async deleteSmartLight(id: string): Promise<void> {
+    await this.prisma.smartLight.delete({ where: { id } }).catch(() => {});
+  }
+
+  async listRooms(): Promise<string[]> {
+    const [fixtureRows, smartRows] = await Promise.all([
+      this.prisma.fixture.findMany({
+        where: { room: { not: null } },
+        select: { room: true }
+      }),
+      this.prisma.smartLight.findMany({
+        where: { room: { not: null } },
+        select: { room: true }
+      })
+    ]);
     const set = new Set<string>();
-    for (const r of rows) if (r.room) set.add(r.room);
+    for (const r of fixtureRows) if (r.room) set.add(r.room);
+    for (const r of smartRows) if (r.room) set.add(r.room);
     return [...set].sort();
   }
 

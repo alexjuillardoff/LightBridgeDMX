@@ -6,6 +6,7 @@ import { createErrorHandler } from "./routes/errors";
 import { DanceService } from "./services/dance";
 import { DmxService } from "./services/dmx";
 import { HomeKitBridge } from "./services/homekit";
+import { SmartLightService } from "./services/smart-lights";
 import { createWebsocketManager } from "./websocket";
 import { Store } from "./state/store";
 
@@ -50,9 +51,14 @@ const homekit = new HomeKitBridge(app.log, dmx, {
 });
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });
 const dance = new DanceService(app.log, dmx, store);
+const smartLights = new SmartLightService(app.log, dmx, store);
 const handleError = createErrorHandler(app.log);
 
-registerRoutes(app, { store, dmx, homekit, dance, broadcast: websocket.broadcast }, handleError);
+registerRoutes(
+  app,
+  { store, dmx, homekit, dance, smartLights, broadcast: websocket.broadcast },
+  handleError
+);
 
 dmx.on("tick", (state) => {
   websocket.broadcast({ type: "universe_tick", data: state });
@@ -62,8 +68,13 @@ dance.on("state", (state) => {
   websocket.broadcast({ type: "dance_state", data: state });
 });
 
+smartLights.on("light_updated", (light) => {
+  websocket.broadcast({ type: "smart_light_updated", data: light });
+});
+
 app.addHook("onClose", async () => {
   await dance.stop();
+  await smartLights.stop();
   await dmx.stop();
   await homekit.stop();
   await store.disconnect();
@@ -75,6 +86,7 @@ const start = async () => {
     await dmx.start();
     await homekit.start(await store.listFixtures());
     await dance.init();
+    await smartLights.start();
     await app.listen({ port: PORT, host: "0.0.0.0" });
 
     websocket.attach(app.server);

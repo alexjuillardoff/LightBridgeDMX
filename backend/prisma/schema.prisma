@@ -43,3 +43,16 @@ model Preset {
   name    String
   payload String // JSON: Record<string, number>
 }
+
+model SmartLight {
+  id            String  @id
+  name          String
+  room          String?
+  backend       String  // "nanoleaf-http" — extensible (Matter, hap-controller…)
+  config        String  // JSON: backend-specific config (host, token, deviceId…)
+  dmxMirror     String? // JSON: SmartLightDmxMirror | null
+  streaming     String? // JSON: SmartLightStreaming | null
+  zoneLayout    String? // JSON: SmartLightZoneLayout | null
+  currentEffect String? // JSON: SmartLightEffectConfig | null
+  createdAt     String
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Fixture, UniverseState, WsEvent } from "@lightbridgedmx/shared";
+import { Fixture, SmartLight, UniverseState, WsEvent } from "@lightbridgedmx/shared";
 import { wsUrl } from "../lib/api";
 
 type UseDmxWebsocketResult = {
@@ -10,7 +10,12 @@ type UseDmxWebsocketResult = {
   setLogMessage: React.Dispatch<React.SetStateAction<string>>;
 };
 
-export const useDmxWebsocket = (onFixtureUpdated: (fixture: Fixture) => void): UseDmxWebsocketResult => {
+type WsHandlers = {
+  onFixtureUpdated: (fixture: Fixture) => void;
+  onSmartLightUpdated?: (light: SmartLight) => void;
+};
+
+export const useDmxWebsocket = (handlers: WsHandlers): UseDmxWebsocketResult => {
   const [universeState, setUniverseState] = useState<UniverseState | null>(null);
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed">("connecting");
   const [logMessage, setLogMessage] = useState<string>("");
@@ -29,13 +34,16 @@ export const useDmxWebsocket = (onFixtureUpdated: (fixture: Fixture) => void): U
             setUniverseState(parsed.data);
             break;
           case "fixture_updated":
-            onFixtureUpdated(parsed.data);
+            handlers.onFixtureUpdated(parsed.data);
             break;
           case "scene_activated":
             setLogMessage(`Scene activated: ${parsed.data.name}`);
             break;
           case "log":
             setLogMessage(parsed.data.message);
+            break;
+          case "smart_light_updated":
+            handlers.onSmartLightUpdated?.(parsed.data);
             break;
           default:
             break;
@@ -46,7 +54,7 @@ export const useDmxWebsocket = (onFixtureUpdated: (fixture: Fixture) => void): U
     };
 
     return () => socket.close();
-  }, [onFixtureUpdated]);
+  }, [handlers]);
 
   return { universeState, setUniverseState, wsStatus, logMessage, setLogMessage };
 };

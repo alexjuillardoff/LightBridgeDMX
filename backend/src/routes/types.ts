@@ -3,6 +3,7 @@ import { WsEvent } from "@lightbridgedmx/shared";
 import { DmxService } from "../services/dmx";
 import { HomeKitBridge } from "../services/homekit";
 import { DanceService } from "../services/dance";
+import { SmartLightService } from "../services/smart-lights";
 import { Store } from "../state/store";
 
 export type Broadcast = (event: WsEvent) => void;
@@ -12,6 +13,7 @@ export type RouteContext = {
   dmx: DmxService;
   homekit: HomeKitBridge;
   dance: DanceService;
+  smartLights: SmartLightService;
   broadcast: Broadcast;
 };
 

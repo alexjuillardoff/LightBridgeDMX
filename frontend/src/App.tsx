@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fixture, QxfLibraryFixture, Scene } from "@lightbridgedmx/shared";
+import { Fixture, QxfLibraryFixture, Scene, SmartLight } from "@lightbridgedmx/shared";
 import { ChannelGrid } from "./components/ChannelGrid";
 import { DancePanel } from "./components/DancePanel";
 import { FixtureForm } from "./components/FixtureForm";
@@ -9,6 +9,7 @@ import { HomeKitCard } from "./components/HomeKitCard";
 import { Header } from "./components/Header";
 import { QxfLibraryPanel } from "./components/QxfLibraryPanel";
 import { ScenesSection } from "./components/ScenesSection";
+import { SmartLightsPanel } from "./components/SmartLightsPanel";
 import { StatusCards } from "./components/StatusCards";
 import { useDmxWebsocket } from "./hooks/useDmxWebsocket";
 import { HomeKitStatus, api } from "./lib/api";
@@ -29,12 +30,29 @@ function App() {
     });
   }, [queryClient]);
 
+  const upsertSmartLight = useCallback((light: SmartLight) => {
+    queryClient.setQueryData<SmartLight[]>(["smart-lights"], (prev = []) => {
+      const idx = prev.findIndex((l) => l.id === light.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = light;
+        return next;
+      }
+      return [...prev, light];
+    });
+  }, [queryClient]);
+
+  const wsHandlers = useMemo(
+    () => ({ onFixtureUpdated: upsertFixture, onSmartLightUpdated: upsertSmartLight }),
+    [upsertFixture, upsertSmartLight]
+  );
+
   const fixturesQuery = useQuery<Fixture[]>(["fixtures"], api.fixtures.list);
   const scenesQuery = useQuery<Scene[]>(["scenes"], api.scenes.list);
   const libraryQuery = useQuery<QxfLibraryFixture[]>(["qxf", "library"], api.qxf.library);
   const homekitStatusQuery = useQuery<HomeKitStatus>(["homekit", "status"], api.homekit.status);
 
-  const { universeState, setUniverseState, wsStatus, logMessage, setLogMessage } = useDmxWebsocket(upsertFixture);
+  const { universeState, setUniverseState, wsStatus, logMessage, setLogMessage } = useDmxWebsocket(wsHandlers);
 
   const createFixture = useMutation<Fixture, Error, unknown>(
     (body: unknown) => api.fixtures.create(body),
@@ -200,6 +218,8 @@ function App() {
           />
         </div>
       </div>
+
+      <SmartLightsPanel />
 
       <div className="section-title">
         <h2>Mode Dance</h2>

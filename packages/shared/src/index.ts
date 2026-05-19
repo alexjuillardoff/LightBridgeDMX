@@ -206,12 +206,241 @@ export const LogEventSchema = z.object({
 
 export type LogEvent = z.infer<typeof LogEventSchema>;
 
+// ─── Smart Lights (Nanoleaf / HomeKit / Matter externes) ────────────────────
+
+export const SmartLightBackendTypeSchema = z.enum(["nanoleaf-http"]);
+export type SmartLightBackendType = z.infer<typeof SmartLightBackendTypeSchema>;
+
+// Backend config: discriminated on `type`. Each backend describes how to reach the device.
+export const NanoleafHttpConfigSchema = z.object({
+  type: z.literal("nanoleaf-http"),
+  host: z.string().min(1),         // e.g. "192.168.0.234"
+  port: z.number().int().min(1).max(65535).default(16021).optional(),
+  token: z.string().min(1).optional(), // auth token from /api/v1/new (set after pairing)
+  deviceName: z.string().optional()    // device-reported name (e.g. "Light Strip 5DA6")
+});
+export type NanoleafHttpConfig = z.infer<typeof NanoleafHttpConfigSchema>;
+
+export const SmartLightBackendConfigSchema = z.discriminatedUnion("type", [
+  NanoleafHttpConfigSchema
+]);
+export type SmartLightBackendConfig = z.infer<typeof SmartLightBackendConfigSchema>;
+
+// Optional mirror: bind the smart light to DMX channels in the universe so that
+// existing scenes / Dance mode / channel sliders drive it transparently.
+export const SmartLightDmxMirrorSchema = z.object({
+  universe: z.number().int().min(0).default(0).optional(),
+  rChannel: z.number().int().min(1).max(512).optional(),
+  gChannel: z.number().int().min(1).max(512).optional(),
+  bChannel: z.number().int().min(1).max(512).optional(),
+  briChannel: z.number().int().min(1).max(512).optional() // optional master dimmer override
+});
+export type SmartLightDmxMirror = z.infer<typeof SmartLightDmxMirrorSchema>;
+
+export const SmartLightColorModeSchema = z.enum(["hs", "ct", "effect"]);
+export type SmartLightColorMode = z.infer<typeof SmartLightColorModeSchema>;
+
+export const SmartLightStateSchema = z.object({
+  on: z.boolean(),
+  hue: z.number().min(0).max(360),       // degrees
+  sat: z.number().min(0).max(100),       // percent
+  brightness: z.number().min(0).max(100),// percent
+  ct: z.number().min(1000).max(10000).optional(),         // Kelvin (NL72K3 ≈ 2127–6535)
+  colorMode: SmartLightColorModeSchema.optional(),
+  currentEffect: z.string().optional(),  // when colorMode = "effect"
+  reachable: z.boolean().default(true).optional()
+});
+export type SmartLightState = z.infer<typeof SmartLightStateSchema>;
+
+// User-tunable streaming config (UDP extControl for Nanoleaf).
+// When enabled the SmartLightService maintains a continuous UDP stream
+// instead of HTTP coalesced PUT /state writes — dropping latency from
+// ~100 ms to ~5–15 ms, useful for DMX-mirror and music-sync use cases.
+export const SmartLightStreamingSchema = z.object({
+  enabled: z.boolean().default(false).optional(),
+  zoneCount: z.number().int().min(1).max(500).optional() // discovered from device
+});
+export type SmartLightStreaming = z.infer<typeof SmartLightStreamingSchema>;
+
+// ─── 3D Layout ──────────────────────────────────────────────────────────────
+
+export const Point3DSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  z: z.number()
+});
+export type Point3D = z.infer<typeof Point3DSchema>;
+
+/** A single addressable zone of an LED strip: a line segment from start to end in 3D space.
+ *  Effects use start, end, and midpoint to compute per-zone colors. */
+export const ZoneSegmentSchema = z.object({
+  start: Point3DSchema,
+  end: Point3DSchema
+});
+export type ZoneSegment = z.infer<typeof ZoneSegmentSchema>;
+
+export const SmartLightZoneLayoutSchema = z.object({
+  /** Linked = consecutive segments share an endpoint (polyline). Unlinked = every segment is free. */
+  mode: z.enum(["linked", "unlinked"]).default("linked").optional(),
+  segments: z.array(ZoneSegmentSchema).min(1).max(500)
+});
+export type SmartLightZoneLayout = z.infer<typeof SmartLightZoneLayoutSchema>;
+
+// ─── Effects ────────────────────────────────────────────────────────────────
+
+export const RgbColorSchema = z.object({
+  r: z.number().int().min(0).max(255),
+  g: z.number().int().min(0).max(255),
+  b: z.number().int().min(0).max(255)
+});
+export type RgbColor = z.infer<typeof RgbColorSchema>;
+
+/**
+ * Effect config — discriminated by `kind`. The EffectEngine evaluates these every frame
+ * (30 Hz) against the zone layout and pushes a per-zone color frame via the streamer.
+ *
+ *   • "static"   — fixed per-zone palette painted in the UI
+ *   • "solid"    — single color across all zones
+ *   • "gradient" — interpolate between two colors along a direction in 3D space
+ *   • "chase"    — a moving lit "head" of N zones traveling along the strip
+ *   • "wave"     — sine wave colored from→to traveling along a direction
+ */
+export const EffectStaticSchema = z.object({
+  kind: z.literal("static"),
+  palette: z.array(RgbColorSchema),
+  brightness: z.number().min(0).max(100).default(100).optional()
+});
+export const EffectSolidSchema = z.object({
+  kind: z.literal("solid"),
+  color: RgbColorSchema,
+  brightness: z.number().min(0).max(100).default(100).optional()
+});
+export const EffectGradientSchema = z.object({
+  kind: z.literal("gradient"),
+  from: RgbColorSchema,
+  to: RgbColorSchema,
+  direction: Point3DSchema.optional(),
+  scrollSpeed: z.number().default(0).optional(),
+  brightness: z.number().min(0).max(100).default(100).optional()
+});
+export const EffectChaseSchema = z.object({
+  kind: z.literal("chase"),
+  color: RgbColorSchema,
+  bgColor: RgbColorSchema.optional(),
+  speed: z.number().min(0.1).max(50).default(5),
+  width: z.number().int().min(1).max(50).default(3),
+  bounce: z.boolean().default(false).optional(),
+  brightness: z.number().min(0).max(100).default(100).optional()
+});
+export const EffectWaveSchema = z.object({
+  kind: z.literal("wave"),
+  from: RgbColorSchema,
+  to: RgbColorSchema,
+  direction: Point3DSchema.optional(),
+  wavelength: z.number().min(0.05).max(50).default(1),
+  speed: z.number().min(-20).max(20).default(1),
+  brightness: z.number().min(0).max(100).default(100).optional()
+});
+
+export const SmartLightEffectConfigSchema = z.discriminatedUnion("kind", [
+  EffectStaticSchema,
+  EffectSolidSchema,
+  EffectGradientSchema,
+  EffectChaseSchema,
+  EffectWaveSchema
+]);
+export type SmartLightEffectConfig = z.infer<typeof SmartLightEffectConfigSchema>;
+
+export const SmartLightSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  room: z.string().min(1).optional(),
+  backend: SmartLightBackendTypeSchema,
+  config: SmartLightBackendConfigSchema,
+  dmxMirror: SmartLightDmxMirrorSchema.nullable().optional(),
+  streaming: SmartLightStreamingSchema.optional(),
+  /** Per-zone physical placement (for position-aware effects). */
+  zoneLayout: SmartLightZoneLayoutSchema.nullable().optional(),
+  /** Active effect — runs continuously in the EffectEngine when streaming is enabled. */
+  currentEffect: SmartLightEffectConfigSchema.nullable().optional(),
+  state: SmartLightStateSchema.optional(),
+  createdAt: z.string().datetime()
+});
+export type SmartLight = z.infer<typeof SmartLightSchema>;
+
+export const SmartLightInputSchema = SmartLightSchema.omit({
+  id: true,
+  createdAt: true,
+  state: true
+}).extend({
+  id: z.string().uuid().optional()
+});
+export type SmartLightInput = z.infer<typeof SmartLightInputSchema>;
+
+export const SmartLightStateInputSchema = z.object({
+  on: z.boolean().optional(),
+  hue: z.number().min(0).max(360).optional(),
+  sat: z.number().min(0).max(100).optional(),
+  brightness: z.number().min(0).max(100).optional(),
+  ct: z.number().min(1000).max(10000).optional(),
+  // Convenience: clients can pass RGB directly; backend converts to HSV.
+  rgb: z
+    .object({
+      r: z.number().int().min(0).max(255),
+      g: z.number().int().min(0).max(255),
+      b: z.number().int().min(0).max(255)
+    })
+    .optional()
+});
+export type SmartLightStateInput = z.infer<typeof SmartLightStateInputSchema>;
+
+// Per-zone palette (for strips like NL72K3 with addressable LEDs).
+// Each entry maps a zone index to a color; zones omitted stay at their last value.
+export const SmartLightZonePaletteSchema = z.object({
+  zones: z
+    .array(
+      z.object({
+        index: z.number().int().min(0).max(999),
+        r: z.number().int().min(0).max(255),
+        g: z.number().int().min(0).max(255),
+        b: z.number().int().min(0).max(255),
+        w: z.number().int().min(0).max(255).optional()
+      })
+    )
+    .min(1)
+});
+export type SmartLightZonePalette = z.infer<typeof SmartLightZonePaletteSchema>;
+
+
+export const SmartLightEffectSchema = z.object({
+  name: z.string(),
+  active: z.boolean().default(false).optional()
+});
+export type SmartLightEffect = z.infer<typeof SmartLightEffectSchema>;
+
+export const NanoleafDiscoveredSchema = z.object({
+  host: z.string(),
+  port: z.number().int().default(16021),
+  name: z.string().optional(),
+  model: z.string().optional()
+});
+export type NanoleafDiscovered = z.infer<typeof NanoleafDiscoveredSchema>;
+
+export const SmartLightPairInputSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().min(1).max(65535).default(16021).optional(),
+  name: z.string().min(1).optional(),
+  room: z.string().min(1).optional()
+});
+export type SmartLightPairInput = z.infer<typeof SmartLightPairInputSchema>;
+
 export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("universe_tick"), data: UniverseStateSchema }),
   z.object({ type: z.literal("fixture_updated"), data: FixtureSchema }),
   z.object({ type: z.literal("scene_activated"), data: SceneSchema }),
   z.object({ type: z.literal("log"), data: LogEventSchema }),
-  z.object({ type: z.literal("dance_state"), data: DanceStateSchema })
+  z.object({ type: z.literal("dance_state"), data: DanceStateSchema }),
+  z.object({ type: z.literal("smart_light_updated"), data: SmartLightSchema })
 ]);
 
 export type WsEvent = z.infer<typeof WsEventSchema>;
