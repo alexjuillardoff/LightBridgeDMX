@@ -8,5 +8,11 @@ build
 .vscode
 coverage
 backend/data
+# Path-doubling bug in QXF library downloader writes to `backend/backend/data/`
+# instead of `backend/data/`. Ignore the wrong path until the underlying bug
+# (`process.cwd()` joined with a path that already starts at the backend root)
+# is fixed in qxf-library.ts. See repo history for the 6 stale tracked files
+# under backend/backend/data/fixtures/ that pre-date this rule.
+backend/backend/
 backend/.homekit/
 logs/
