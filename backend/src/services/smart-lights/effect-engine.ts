@@ -2,9 +2,10 @@ import type {
   Point3D,
   RgbColor,
   SmartLightEffectConfig,
-  SmartLightZoneLayout,
-  ZoneSegment
+  SmartLightZoneLayout
 } from "@lightbridgedmx/shared";
+
+type ZoneSegment = SmartLightZoneLayout["segments"][number];
 
 export type RgbFrame = RgbColor[];
 
@@ -24,7 +25,17 @@ export function evaluateEffect(
   timeSeconds: number
 ): RgbFrame {
   const zoneCount = layout.segments.length;
+  const spare = new Set(layout.spareZones ?? []);
   const out: RgbFrame = new Array(zoneCount);
+
+  const BLACK: RgbColor = { r: 0, g: 0, b: 0 };
+  const finalize = (): RgbFrame => {
+    // Always force spare zones to black so they don't show through any effect.
+    for (const idx of spare) {
+      if (idx >= 0 && idx < zoneCount) out[idx] = BLACK;
+    }
+    return out;
+  };
 
   switch (effect.kind) {
     case "static": {
@@ -33,13 +44,13 @@ export function evaluateEffect(
         const c = effect.palette[i];
         out[i] = c ? scale(c, bri) : { r: 0, g: 0, b: 0 };
       }
-      return out;
+      return finalize();
     }
 
     case "solid": {
       const c = scale(effect.color, (effect.brightness ?? 100) / 100);
       for (let i = 0; i < zoneCount; i++) out[i] = c;
-      return out;
+      return finalize();
     }
 
     case "gradient": {
@@ -64,7 +75,7 @@ export function evaluateEffect(
         const tt = t < 0 ? t + 1 : t;
         out[i] = scale(lerpRgb(effect.from, effect.to, tt), bri);
       }
-      return out;
+      return finalize();
     }
 
     case "chase": {
@@ -94,7 +105,7 @@ export function evaluateEffect(
           out[i] = scale(bg, bri);
         }
       }
-      return out;
+      return finalize();
     }
 
     case "wave": {
@@ -110,25 +121,14 @@ export function evaluateEffect(
         const t = (Math.sin(phase) + 1) / 2;
         out[i] = scale(lerpRgb(effect.from, effect.to, t), bri);
       }
-      return out;
+      return finalize();
     }
   }
 }
 
-/** Build a sensible default layout: zones evenly spaced along the X axis,
- *  total length 1.0 unit. Useful when the user enables streaming on a new device. */
-export function defaultLinearLayout(zoneCount: number): SmartLightZoneLayout {
-  const segments: ZoneSegment[] = [];
-  for (let i = 0; i < zoneCount; i++) {
-    const t0 = i / zoneCount;
-    const t1 = (i + 1) / zoneCount;
-    segments.push({
-      start: { x: t0, y: 0, z: 0 },
-      end: { x: t1, y: 0, z: 0 }
-    });
-  }
-  return { mode: "linked", segments };
-}
+
+/** Re-export from shared so callers can import the engine + builders from one place. */
+export { buildLinearLayout as defaultLinearLayout, buildUShapeLayout } from "@lightbridgedmx/shared";
 
 // ─── vector helpers ─────────────────────────────────────────────────────────
 

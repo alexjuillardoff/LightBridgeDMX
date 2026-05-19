@@ -7,7 +7,9 @@ import {
   Point3D,
   SmartLight,
   SmartLightZoneLayout,
-  ZoneSegment
+  ZoneSegment,
+  buildLinearLayout,
+  buildUShapeLayout as buildUShape
 } from "@lightbridgedmx/shared";
 import { api } from "../../lib/api";
 
@@ -41,6 +43,19 @@ export const LayoutEditor3D = ({
   const [mode, setMode] = useState<"linked" | "unlinked">(layout.mode ?? "linked");
   const [yLocked, setYLocked] = useState(true);
   const [selectedZone, setSelectedZone] = useState<number | null>(null);
+  const [hideSpare, setHideSpare] = useState(true);
+
+  // U-shape preset inputs (back/right/front/left counts + room dimensions)
+  const totalActive = zoneCount - (layout.spareZones?.length ?? 0);
+  const [showUForm, setShowUForm] = useState(false);
+  const [uBack, setUBack] = useState(Math.floor(totalActive / 4));
+  const [uRight, setURight] = useState(Math.floor(totalActive / 4));
+  const [uFront, setUFront] = useState(Math.floor(totalActive / 4));
+  const [uLeft, setULeft] = useState(totalActive - 3 * Math.floor(totalActive / 4));
+  const [uWidth, setUWidth] = useState(4);
+  const [uDepth, setUDepth] = useState(3);
+
+  const spareSet = useMemo(() => new Set(layout.spareZones ?? []), [layout.spareZones]);
 
   const apply = useMutation(
     (next: SmartLightZoneLayout) => api.smartLights.setLayout(light.id, next),
@@ -66,12 +81,30 @@ export const LayoutEditor3D = ({
 
   const reset = () => {
     const next = makeLinearLayout(zoneCount);
-    setLayout(next);
+    // Preserve spareZones across reset (they're a property of the physical strip, not the layout).
+    setLayout({ ...next, spareZones: layout.spareZones });
   };
 
   const switchMode = (nextMode: "linked" | "unlinked") => {
     setMode(nextMode);
     setLayout((prev) => ({ ...prev, mode: nextMode }));
+  };
+
+  const applyUShape = () => {
+    const next = buildUShape({
+      totalZones: zoneCount,
+      backZones: uBack,
+      rightZones: uRight,
+      frontZones: uFront,
+      leftZones: uLeft,
+      width: uWidth,
+      depth: uDepth
+    });
+    // Merge user-provided spareZones if any (auto-generated spares from buildUShape are inferred,
+    // but user may have manually marked extras as spare via the painter).
+    const merged = new Set([...(layout.spareZones ?? []), ...(next.spareZones ?? [])]);
+    setLayout({ ...next, spareZones: [...merged].sort((a, b) => a - b) });
+    setShowUForm(false);
   };
 
   return (
@@ -91,9 +124,16 @@ export const LayoutEditor3D = ({
         </button>
         <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
           <input type="checkbox" checked={yLocked} onChange={(e) => setYLocked(e.target.checked)} />
-          Verrouiller Y (plan horizontal)
+          Verrouiller Y
         </label>
-        <button type="button" onClick={reset} style={buttonStyleSecondary}>Reset (ligne droite)</button>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <input type="checkbox" checked={hideSpare} onChange={(e) => setHideSpare(e.target.checked)} />
+          Cacher spare ({spareSet.size})
+        </label>
+        <button type="button" onClick={reset} style={buttonStyleSecondary}>Reset ligne</button>
+        <button type="button" onClick={() => setShowUForm(!showUForm)} style={buttonStyleSecondary}>
+          {showUForm ? "Annuler U" : "🔲 Preset U-shape"}
+        </button>
         <button type="button"
           onClick={() => apply.mutate(layout)}
           style={buttonStylePrimary}
@@ -101,6 +141,40 @@ export const LayoutEditor3D = ({
           {apply.isLoading ? "Enreg…" : "Enregistrer"}
         </button>
       </div>
+
+      {showUForm ? (
+        <div style={{ padding: 8, background: "rgba(255,255,255,0.04)", borderRadius: 6, marginBottom: 6 }}>
+          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>
+            Génère un layout en U autour d'une pièce rectangulaire. Total actif :{" "}
+            <strong>{uBack + uRight + uFront + uLeft}</strong> / {zoneCount} zones —{" "}
+            <strong>{Math.max(0, zoneCount - (uBack + uRight + uFront + uLeft))}</strong> auto-marquées spare.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
+            <SidesInput label="Fond (jaune)" value={uBack} onChange={setUBack} />
+            <SidesInput label="Droit (rouge)" value={uRight} onChange={setURight} />
+            <SidesInput label="Avant (bleu)" value={uFront} onChange={setUFront} />
+            <SidesInput label="Gauche (vert)" value={uLeft} onChange={setULeft} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+            <SidesInput label="Largeur (m)" value={uWidth} onChange={setUWidth} step={0.1} />
+            <SidesInput label="Profondeur (m)" value={uDepth} onChange={setUDepth} step={0.1} />
+          </div>
+          <button type="button" onClick={applyUShape} style={buttonStylePrimary}>Appliquer U-shape</button>
+        </div>
+      ) : null}
+
+      {layout.sides && layout.sides.length > 0 ? (
+        <p className="muted" style={{ fontSize: 11, margin: "0 0 6px 0" }}>
+          Sides :{" "}
+          {layout.sides.map((s, i) => (
+            <span key={s.label} style={{ marginRight: 8 }}>
+              <span style={{ display: "inline-block", width: 10, height: 10, background: s.color ?? "#888", borderRadius: 2, verticalAlign: "middle", marginRight: 3 }} />
+              {s.label} [{s.zoneStart}–{s.zoneEnd}]
+              {i < (layout.sides?.length ?? 0) - 1 ? " ·" : ""}
+            </span>
+          ))}
+        </p>
+      ) : null}
 
       <div style={{ width: "100%", height: 360, background: "#050a18", borderRadius: 6, overflow: "hidden" }}>
         <Canvas camera={{ position: [1.5, 1.5, 1.5], fov: 50 }}>
@@ -113,6 +187,8 @@ export const LayoutEditor3D = ({
             layout={layout}
             mode={mode}
             yLocked={yLocked}
+            hideSpare={hideSpare}
+            spareSet={spareSet}
             selectedZone={selectedZone}
             onSelectZone={setSelectedZone}
             onMovePoint={movePoint}
@@ -138,6 +214,8 @@ const Scene = ({
   layout,
   mode,
   yLocked,
+  hideSpare,
+  spareSet,
   selectedZone,
   onSelectZone,
   onMovePoint
@@ -145,36 +223,59 @@ const Scene = ({
   layout: SmartLightZoneLayout;
   mode: "linked" | "unlinked";
   yLocked: boolean;
+  hideSpare: boolean;
+  spareSet: Set<number>;
   selectedZone: number | null;
   onSelectZone: (i: number | null) => void;
   onMovePoint: (zone: number, end: "start" | "end", next: Point3D) => void;
 }) => {
   // Strip rendered as colored lines between each segment's start and end.
+  // If a `sides` mapping exists, color each segment by its side (matches the painter convention).
   const lines = useMemo(() => {
-    return layout.segments.map((seg, i) => {
-      const color = selectedZone === i ? "#1dd3b0" : `hsl(${(i * 360) / layout.segments.length}, 70%, 55%)`;
-      return { i, points: [toV(seg.start), toV(seg.end)] as [THREE.Vector3, THREE.Vector3], color };
-    });
-  }, [layout, selectedZone]);
+    const findSideColor = (i: number): string | null => {
+      if (!layout.sides) return null;
+      for (const s of layout.sides) {
+        if (i >= s.zoneStart && i <= s.zoneEnd) return s.color ?? null;
+      }
+      return null;
+    };
+    return layout.segments
+      .map((seg, i) => {
+        const isSpare = spareSet.has(i);
+        const sideColor = findSideColor(i);
+        const color = selectedZone === i
+          ? "#1dd3b0"
+          : isSpare
+            ? "#444"
+            : sideColor ?? `hsl(${(i * 360) / layout.segments.length}, 70%, 55%)`;
+        return { i, isSpare, points: [toV(seg.start), toV(seg.end)] as [THREE.Vector3, THREE.Vector3], color };
+      })
+      .filter((l) => !(hideSpare && l.isSpare));
+  }, [layout, selectedZone, hideSpare, spareSet]);
 
   // Handle points: in linked mode show N+1 unique points (start of each + end of last);
   // in unlinked mode show every start and every end (2N).
+  // Spare zones don't get handles when hidden — they're not physically there.
   const handles = useMemo(() => {
     const list: { key: string; pos: Point3D; zoneIndex: number; end: "start" | "end" }[] = [];
     if (mode === "linked") {
       layout.segments.forEach((seg, i) => {
+        if (hideSpare && spareSet.has(i)) return;
         list.push({ key: `s${i}`, pos: seg.start, zoneIndex: i, end: "start" });
       });
       const last = layout.segments[layout.segments.length - 1];
-      list.push({ key: `e${layout.segments.length - 1}`, pos: last.end, zoneIndex: layout.segments.length - 1, end: "end" });
+      if (!(hideSpare && spareSet.has(layout.segments.length - 1))) {
+        list.push({ key: `e${layout.segments.length - 1}`, pos: last.end, zoneIndex: layout.segments.length - 1, end: "end" });
+      }
     } else {
       layout.segments.forEach((seg, i) => {
+        if (hideSpare && spareSet.has(i)) return;
         list.push({ key: `s${i}`, pos: seg.start, zoneIndex: i, end: "start" });
         list.push({ key: `e${i}`, pos: seg.end, zoneIndex: i, end: "end" });
       });
     }
     return list;
-  }, [layout, mode]);
+  }, [layout, mode, hideSpare, spareSet]);
 
   return (
     <>
@@ -287,17 +388,42 @@ const toV = (p: Point3D): THREE.Vector3 => new THREE.Vector3(p.x, p.y, p.z);
 const fmt = (p: Point3D) => `${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}`;
 
 function makeLinearLayout(zoneCount: number): SmartLightZoneLayout {
-  const segments: ZoneSegment[] = [];
-  for (let i = 0; i < zoneCount; i++) {
-    const t0 = i / zoneCount;
-    const t1 = (i + 1) / zoneCount;
-    segments.push({
-      start: { x: t0 - 0.5, y: 0, z: 0 },
-      end: { x: t1 - 0.5, y: 0, z: 0 }
-    });
-  }
-  return { mode: "linked", segments };
+  return buildLinearLayout(zoneCount);
 }
+
+const SidesInput = ({
+  label,
+  value,
+  onChange,
+  step = 1
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  step?: number;
+}) => (
+  <label style={{ fontSize: 11, color: "var(--muted)" }}>
+    {label}
+    <input
+      type="number"
+      step={step}
+      min={0}
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+      style={{
+        display: "block",
+        width: "100%",
+        marginTop: 2,
+        padding: "4px 6px",
+        background: "rgba(0,0,0,0.25)",
+        color: "var(--text)",
+        border: "1px solid var(--border)",
+        borderRadius: 4,
+        fontSize: 12
+      }}
+    />
+  </label>
+);
 
 const buttonStylePrimary: React.CSSProperties = {
   padding: "6px 12px", background: "var(--accent)", color: "#001a14",

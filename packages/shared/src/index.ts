@@ -282,7 +282,23 @@ export type ZoneSegment = z.infer<typeof ZoneSegmentSchema>;
 export const SmartLightZoneLayoutSchema = z.object({
   /** Linked = consecutive segments share an endpoint (polyline). Unlinked = every segment is free. */
   mode: z.enum(["linked", "unlinked"]).default("linked").optional(),
-  segments: z.array(ZoneSegmentSchema).min(1).max(500)
+  segments: z.array(ZoneSegmentSchema).min(1).max(500),
+  /** Indices (0-based) of zones that are SPARE — present in the streaming protocol but no physical
+   *  LED behind them. The EffectEngine forces these to black; the 3D editor hides their segments;
+   *  the painter shows them as hatched. Example on NL72K3 where strip < 50 LEDs. */
+  spareZones: z.array(z.number().int().min(0).max(999)).optional(),
+  /** Optional logical labels for sides (e.g. "back", "left", "front", "right") with zone ranges.
+   *  Used by the U-shape preset and as guidance for the user. */
+  sides: z
+    .array(
+      z.object({
+        label: z.string().min(1),
+        zoneStart: z.number().int().min(0).max(499),
+        zoneEnd: z.number().int().min(0).max(499),
+        color: z.string().optional() // hex for UI hint
+      })
+    )
+    .optional()
 });
 export type SmartLightZoneLayout = z.infer<typeof SmartLightZoneLayoutSchema>;
 
@@ -350,6 +366,92 @@ export const SmartLightEffectConfigSchema = z.discriminatedUnion("kind", [
   EffectWaveSchema
 ]);
 export type SmartLightEffectConfig = z.infer<typeof SmartLightEffectConfigSchema>;
+
+// ─── Layout builders (pure helpers, shared between backend & frontend) ──────
+
+function _lerpPoint(a: Point3D, b: Point3D, t: number): Point3D {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+}
+
+/** Linear strip along the X axis from -0.5 to +0.5. Used as a default when no layout is set. */
+export function buildLinearLayout(zoneCount: number): SmartLightZoneLayout {
+  const segments: ZoneSegment[] = [];
+  for (let i = 0; i < zoneCount; i++) {
+    const t0 = i / zoneCount;
+    const t1 = (i + 1) / zoneCount;
+    segments.push({
+      start: { x: t0 - 0.5, y: 0, z: 0 },
+      end: { x: t1 - 0.5, y: 0, z: 0 }
+    });
+  }
+  return { mode: "linked", segments };
+}
+
+/**
+ * Build a U-shape layout around 4 sides of a rectangular room.
+ *
+ * Input: number of active zones per side (back / right / front / left) + dimensions.
+ * Coordinate system: X = left↔right (back/front edges), Z = back↔front (left/right edges), Y = floor.
+ * The trace runs clockwise viewed from above: back-left → back-right → front-right → front-left.
+ *
+ * Total active = back + right + front + left. Remaining zones (totalZones - active) → auto-spare,
+ * positioned in a hidden corner to keep the streaming frame well-formed.
+ */
+export function buildUShapeLayout(opts: {
+  totalZones: number;
+  backZones: number;
+  rightZones: number;
+  frontZones: number;
+  leftZones: number;
+  width?: number;  // back/front edges length (default 4 m)
+  depth?: number;  // left/right edges length (default 3 m)
+  height?: number; // Y position of the strip (default 0)
+}): SmartLightZoneLayout {
+  const w = opts.width ?? 4;
+  const d = opts.depth ?? 3;
+  const y = opts.height ?? 0;
+  const halfW = w / 2;
+  const segments: ZoneSegment[] = [];
+  const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
+
+  const pushSide = (
+    label: string,
+    n: number,
+    color: string,
+    start: Point3D,
+    end: Point3D
+  ): void => {
+    if (n <= 0) return;
+    const startIdx = segments.length;
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n;
+      const t1 = (i + 1) / n;
+      segments.push({
+        start: _lerpPoint(start, end, t0),
+        end: _lerpPoint(start, end, t1)
+      });
+    }
+    sides.push({ label, zoneStart: startIdx, zoneEnd: segments.length - 1, color });
+  };
+
+  pushSide("back",  opts.backZones,  "#ffeb3b", { x: -halfW, y, z: 0 }, { x: +halfW, y, z: 0 });
+  pushSide("right", opts.rightZones, "#f44336", { x: +halfW, y, z: 0 }, { x: +halfW, y, z: d });
+  pushSide("front", opts.frontZones, "#2196f3", { x: +halfW, y, z: d }, { x: -halfW, y, z: d });
+  pushSide("left",  opts.leftZones,  "#4caf50", { x: -halfW, y, z: d }, { x: -halfW, y, z: 0 });
+
+  // Pad with hidden spare zones up to totalZones.
+  const active = segments.length;
+  const spareZones: number[] = [];
+  for (let i = active; i < opts.totalZones; i++) {
+    segments.push({
+      start: { x: -halfW - 0.2, y, z: -0.2 - (i - active) * 0.02 },
+      end:   { x: -halfW - 0.2, y, z: -0.2 - (i - active + 1) * 0.02 }
+    });
+    spareZones.push(i);
+  }
+
+  return { mode: "linked", segments, spareZones, sides };
+}
 
 export const SmartLightSchema = z.object({
   id: z.string().uuid(),
