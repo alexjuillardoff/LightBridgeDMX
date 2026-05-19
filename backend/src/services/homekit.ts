@@ -331,8 +331,13 @@ export class HomeKitBridge {
     const channelsChanged =
       existing.cf.deviceId !== cf.deviceId ||
       JSON.stringify(existing.cf.channels) !== JSON.stringify(cf.channels);
+    // A name change must propagate to Characteristic.Name (read by iOS) and
+    // force a bridge configVersion bump so the Home app refreshes its cache.
+    // updateCharacteristic alone doesn't bump config; only adding/removing
+    // accessories does, so we recreate them on rename.
+    const nameChanged = existing.cf.name !== cf.name;
 
-    if (channelsChanged) {
+    if (channelsChanged || nameChanged) {
       for (const slot of existing.slots.values()) {
         this.bridge?.removeBridgedAccessory(slot.accessory);
       }
@@ -526,8 +531,12 @@ export class HomeKitBridge {
     const channelsChanged =
       existing.mh.deviceId !== mh.deviceId ||
       JSON.stringify(existing.mh.channels) !== JSON.stringify(mh.channels);
+    // Mirror the channel-fixture path: a name change must trigger a config
+    // bump so the Home app picks it up; we recreate the accessories instead
+    // of patching displayName in place.
+    const nameChanged = existing.mh.name !== mh.name;
 
-    if (channelsChanged) {
+    if (channelsChanged || nameChanged) {
       for (const slot of existing.slots.values()) {
         this.bridge?.removeBridgedAccessory(slot.accessory);
       }
