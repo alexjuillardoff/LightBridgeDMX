@@ -244,21 +244,62 @@ export class SmartLightService extends EventEmitter {
     return { ...updated, state: entry.desired };
   }
 
+  /**
+   * Register or update a light in the runtime. CRITICAL: re-uses the existing client
+   * and streamer when possible — recreating either on every config update was causing
+   * multiple UDP sockets to fight over the device (visible flicker) because the old
+   * streamer's keepalive kept running after a new one was installed.
+   *
+   * Streamer is only torn down + recreated when:
+   *   • The light's host or port changed (different physical device)
+   *   • The user explicitly toggled streaming off (handled by setStreaming, not here)
+   * Otherwise, the existing streamer is kept and its zoneCount is updated in place.
+   */
   private async registerInternal(light: SmartLight): Promise<void> {
-    let client: NanoleafClient | null = null;
-    let streamer: NanoleafStreamer | null = null;
-    if (light.backend === "nanoleaf-http" && light.config.type === "nanoleaf-http") {
-      client = new NanoleafClient({
-        host: light.config.host,
-        port: light.config.port,
-        token: light.config.token,
-        logger: this.logger
-      });
-      if (light.streaming?.enabled && light.config.token) {
+    const existing = this.runtime.get(light.id);
+    const isNanoleaf = light.backend === "nanoleaf-http" && light.config.type === "nanoleaf-http";
+
+    // ── Client ─────────────────────────────────────────────────────────────
+    // Re-use existing client unless the host or token changed.
+    let client: NanoleafClient | null = existing?.client ?? null;
+    if (isNanoleaf) {
+      const prevConfig = existing?.light.config.type === "nanoleaf-http" ? existing.light.config : null;
+      const configChanged =
+        !prevConfig ||
+        prevConfig.host !== light.config.host ||
+        prevConfig.port !== light.config.port ||
+        prevConfig.token !== light.config.token;
+      if (configChanged || !client) {
+        client = new NanoleafClient({
+          host: light.config.host,
+          port: light.config.port,
+          token: light.config.token,
+          logger: this.logger
+        });
+      }
+    } else {
+      client = null;
+    }
+
+    // ── Streamer ────────────────────────────────────────────────────────────
+    // Re-use existing streamer if the host hasn't changed. Update its zone count
+    // in place. Only call enable() if the streamer isn't already enabled.
+    let streamer: NanoleafStreamer | null = existing?.streamer ?? null;
+    const wantStreaming = isNanoleaf && light.streaming?.enabled === true && !!light.config.token;
+    const zc = (isNanoleaf && light.streaming?.zoneCount) || 50;
+
+    if (wantStreaming && client) {
+      const prevHost = existing?.light.config.type === "nanoleaf-http" ? existing.light.config.host : null;
+      const hostChanged = prevHost && prevHost !== light.config.host;
+      if (hostChanged && streamer) {
+        await streamer.disable().catch(() => {});
+        streamer = null;
+      }
+      if (!streamer) {
         streamer = new NanoleafStreamer({
           host: light.config.host,
           port: 60222,
-          zoneCount: light.streaming.zoneCount ?? 50,
+          zoneCount: zc,
           client,
           logger: this.logger
         });
@@ -267,9 +308,24 @@ export class SmartLightService extends EventEmitter {
         } catch (err) {
           this.logger.warn({ err, id: light.id }, "Failed to enable streaming on register — will retry on next setStreaming");
         }
+      } else {
+        streamer.setZoneCount(zc);
+        // Don't re-call enable() if already enabled — guard exists in streamer but
+        // skipping it avoids any chance of duplicate setInterval-side keepalives.
+        if (!streamer.isEnabled()) {
+          try {
+            await streamer.enable();
+          } catch (err) {
+            this.logger.warn({ err, id: light.id }, "Failed to re-enable streaming on register");
+          }
+        }
       }
+    } else if (streamer) {
+      // Streaming disabled (or backend changed) — tear down any leftover streamer.
+      await streamer.disable().catch(() => {});
+      streamer = null;
     }
-    const existing = this.runtime.get(light.id);
+
     this.runtime.set(light.id, {
       light,
       client,
