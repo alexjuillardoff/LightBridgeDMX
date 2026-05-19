@@ -9,6 +9,7 @@ import {
 import { api } from "../lib/api";
 import { ZonePainter } from "./smart-lights/ZonePainter";
 import { EffectDesigner } from "./smart-lights/EffectDesigner";
+import { lightMatchesBackend, SmartLightBackendId } from "./smart-lights/backendRegistry";
 
 // Lazy-load the 3D editor — three.js + drei is ~600KB, only paid for when opened.
 const LayoutEditor3D = lazy(() =>
@@ -17,7 +18,15 @@ const LayoutEditor3D = lazy(() =>
 
 type Probe = { reachable: boolean; inPairingMode: boolean; status?: number } | null;
 
-export const SmartLightsPanel = () => {
+type SmartLightsPanelProps = {
+  backendFilter?: SmartLightBackendId | "all";
+  hideSectionTitle?: boolean;
+};
+
+export const SmartLightsPanel = ({
+  backendFilter = "all",
+  hideSectionTitle = false
+}: SmartLightsPanelProps = {}) => {
   const queryClient = useQueryClient();
   const lightsQuery = useQuery<SmartLight[]>(["smart-lights"], api.smartLights.list);
 
@@ -38,15 +47,19 @@ export const SmartLightsPanel = () => {
     );
   };
 
+  const lights = (lightsQuery.data ?? []).filter((l) => lightMatchesBackend(l, backendFilter));
+
   return (
     <>
-      <div className="section-title">
-        <h2>Smart Lights</h2>
-        <span className="muted">Nanoleaf et autres lampes WiFi pilotées par LightBridge</span>
-      </div>
+      {hideSectionTitle ? null : (
+        <div className="section-title">
+          <h2>Smart Lights</h2>
+          <span className="muted">Nanoleaf et autres lampes WiFi pilotées par LightBridge</span>
+        </div>
+      )}
       <div className="grid">
         <PairCard onPaired={upsertLight} />
-        {(lightsQuery.data ?? []).map((light) => (
+        {lights.map((light) => (
           <SmartLightCard
             key={light.id}
             light={light}
@@ -54,6 +67,13 @@ export const SmartLightsPanel = () => {
             onDeleted={removeLight}
           />
         ))}
+        {lights.length === 0 && lightsQuery.isFetched ? (
+          <div className="card">
+            <p className="muted" style={{ margin: 0 }}>
+              Aucune lampe pour ce backend. Utilise <em>Pairer un Nanoleaf</em> pour en ajouter.
+            </p>
+          </div>
+        ) : null}
       </div>
     </>
   );

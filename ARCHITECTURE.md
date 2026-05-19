@@ -68,20 +68,40 @@ Le **SmartLightService** est un registry de lampes WiFi avec deux paths de sorti
 - `currentEffect` (JSON) : config d'effet active évaluée à chaque tick UDP
 
 ### Frontend (`frontend/`)
-- `package.json` : scripts Vite (`dev`, `build`, `preview`), deps React 18 + React Query + qrcode.react + three / @react-three/fiber v8 / @react-three/drei v9.
+
+Navigation **par onglets** responsive (5 onglets : Tableau de bord, Projecteurs, Lampes connectées, Live, Réglages), routing par hash URL, top bar desktop/tablet + bottom nav iOS mobile.
+
+- `package.json` : scripts Vite (`dev`, `build`, `preview`), deps React 18 + React Query + qrcode.react + three / @react-three/fiber v8 / @react-three/drei v9 + **lucide-react** (icônes).
 - `vite.config.ts` : proxy API/WS vers `http://localhost:5000`, serveur dev `host: true`, port 5173.
 - `src/main.tsx` : bootstrap React/Vite + QueryClient.
-- `src/App.tsx` : layout principal — Header, StatusCards, Fixtures section, SmartLights section, Dance section, ChannelGrid, Scenes section.
+- `src/App.tsx` : wrap `<AppDataProvider><AppShell /></AppDataProvider>` (12 lignes).
+- `src/shell/` : navigation et layout racine
+  - `AppShell.tsx` — Header + TabBar + page active (lazy LivePage) + BottomNav, met à jour `document.title` selon onglet
+  - `TabBar.tsx` — top bar desktop/tablet (cachée <640px), icônes lucide
+  - `BottomNav.tsx` — bottom nav iOS-style mobile (cachée ≥640px), `safe-area-inset-bottom`, `backdrop-filter: blur`
+  - `tabs.ts` — source unique des 5 `TabDef` (id, label, shortLabel, hash, icon)
+  - `useHashTab.ts` — routing hash URL (`useState` + `hashchange` listener), valide les ids, fallback `#dashboard`
+  - `navigate.ts` — `setActiveTabHash(id)` pour liens internes (boutons "Gérer →" du Dashboard)
+- `src/contexts/` : state partagé entre pages
+  - `AppDataContext.tsx` — provider central (queries, mutations, WS handlers, wsBadge, logMessage, logHistory, handleBlackout). Value mémoizé pour absorber les ticks 30 Hz sans re-render des consommateurs.
+  - `UniverseStateContext.tsx` — provider isolé pour `universeState` (broadcast WS 30 Hz). Seules `ChannelGrid` + tuile "canaux actifs" du Dashboard s'abonnent.
+- `src/pages/` : une page par onglet (consomment `useAppData()` / `useUniverseState()`)
+  - `DashboardPage.tsx` — tuiles Univers / Fixtures / Scènes / HomeKit / Dance, Quick Actions (Blackout, Stop Dance, Refresh QXF), Activity log (rolling 10)
+  - `FixturesPage.tsx` — `FixtureForm` + `QxfLibraryPanel` + `FixturesTable`
+  - `SmartLightsPage.tsx` — pills filtre backend depuis `backendRegistry` + `SmartLightsPanel`
+  - `LivePage.tsx` (lazy via React.lazy) — sous-nav d'ancres Console / Dance / Scènes + `ChannelGrid` + `DancePanel` + `ScenesSection`
+  - `SettingsPage.tsx` — `HomeKitCard` + cartes Système / Variables backend
 - `src/lib/api.ts` : client REST (fetch JSON) + wsUrl + namespaces `fixtures` / `scenes` / `universe` / `qxf` / `homekit` / `dance` / `smartLights`.
 - `src/lib/fixtures.ts`, `fixtureTemplates.ts`, `math.ts` : helpers UI.
-- `src/hooks/useDmxWebsocket.ts` : hook WS — écoute `universe_tick`, `fixture_updated`, `smart_light_updated`, `dance_state`, `log`.
+- `src/hooks/useDmxWebsocket.ts` : hook WS — écoute `universe_tick`, `fixture_updated`, `smart_light_updated`, `dance_state`, `log` ; expose `logHistory: LogEntry[]` (rolling 10).
 - `src/components/` :
-  - `Header.tsx`, `StatusCards.tsx`, `FixtureForm.tsx`, `FixturesTable.tsx`, `ChannelGrid.tsx`, `QxfLibraryPanel.tsx`, `HomeKitCard.tsx`, `ScenesSection.tsx`, `DancePanel.tsx`
-  - `SmartLightsPanel.tsx` : section Smart Lights (PairCard + cartes par lampe + onglets Painter/Effets/Layout 3D)
+  - `Header.tsx` (icône Zap + badge WS), `StatusCards.tsx`, `FixtureForm.tsx`, `FixturesTable.tsx` (avec `data-label` pour stacked cards mobile), `ChannelGrid.tsx`, `QxfLibraryPanel.tsx`, `HomeKitCard.tsx`, `ScenesSection.tsx`, `DancePanel.tsx`
+  - `SmartLightsPanel.tsx` : accepte `backendFilter` + `hideSectionTitle` (PairCard + cartes par lampe + onglets Painter/Effets/Layout 3D)
+  - `smart-lights/backendRegistry.ts` : registre des backends UI (Nanoleaf aujourd'hui, Hue/Matter futur — ajouter une entrée suffit)
   - `smart-lights/ZonePainter.tsx` : 50 swatches paintable click+drag, brush color + spare, presets, fill all
   - `smart-lights/EffectDesigner.tsx` : onglets solid/gradient/chase/wave + sliders live (chaque changement = PUT effet)
   - `smart-lights/LayoutEditor3D.tsx` : éditeur 3D React Three Fiber (sphères draggables, OrbitControls, modes linked/unlinked, preset U-shape, hide spare)
-- `src/styles.css` : styles globaux (thème sombre, palette accent #1dd3b0 / #f39c12).
+- `src/styles.css` : styles globaux (thème sombre, palette accent #1dd3b0 / #f39c12), breakpoints `<640px` / `640-1023px` / `≥1024px`, `.channels` adaptatif (8 → 6 → 4 colonnes), `.table` en cartes empilées sur mobile.
 
 ### Shared (`packages/shared/`)
 - `src/index.ts` : types et schémas Zod partagés. Sections :

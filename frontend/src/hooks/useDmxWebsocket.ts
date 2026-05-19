@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Fixture, SmartLight, UniverseState, WsEvent } from "@lightbridgedmx/shared";
 import { wsUrl } from "../lib/api";
+
+export type LogEntry = {
+  level: "info" | "warn" | "error";
+  message: string;
+  timestamp: string;
+};
 
 type UseDmxWebsocketResult = {
   universeState: UniverseState | null;
@@ -8,6 +14,7 @@ type UseDmxWebsocketResult = {
   wsStatus: "connecting" | "open" | "closed";
   logMessage: string;
   setLogMessage: React.Dispatch<React.SetStateAction<string>>;
+  logHistory: LogEntry[];
 };
 
 type WsHandlers = {
@@ -15,10 +22,24 @@ type WsHandlers = {
   onSmartLightUpdated?: (light: SmartLight) => void;
 };
 
+const LOG_HISTORY_MAX = 10;
+
 export const useDmxWebsocket = (handlers: WsHandlers): UseDmxWebsocketResult => {
   const [universeState, setUniverseState] = useState<UniverseState | null>(null);
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed">("connecting");
   const [logMessage, setLogMessage] = useState<string>("");
+  const [logHistory, setLogHistory] = useState<LogEntry[]>([]);
+
+  const pushLog = useCallback(
+    (level: LogEntry["level"], message: string, timestamp = new Date().toISOString()) => {
+      setLogMessage(message);
+      setLogHistory((prev) => {
+        const next = [{ level, message, timestamp }, ...prev];
+        return next.slice(0, LOG_HISTORY_MAX);
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     const socket = new WebSocket(wsUrl());
@@ -37,10 +58,10 @@ export const useDmxWebsocket = (handlers: WsHandlers): UseDmxWebsocketResult => 
             handlers.onFixtureUpdated(parsed.data);
             break;
           case "scene_activated":
-            setLogMessage(`Scene activated: ${parsed.data.name}`);
+            pushLog("info", `Scene activated: ${parsed.data.name}`);
             break;
           case "log":
-            setLogMessage(parsed.data.message);
+            pushLog(parsed.data.level, parsed.data.message, parsed.data.timestamp);
             break;
           case "smart_light_updated":
             handlers.onSmartLightUpdated?.(parsed.data);
@@ -54,7 +75,7 @@ export const useDmxWebsocket = (handlers: WsHandlers): UseDmxWebsocketResult => 
     };
 
     return () => socket.close();
-  }, [handlers]);
+  }, [handlers, pushLog]);
 
-  return { universeState, setUniverseState, wsStatus, logMessage, setLogMessage };
+  return { universeState, setUniverseState, wsStatus, logMessage, setLogMessage, logHistory };
 };

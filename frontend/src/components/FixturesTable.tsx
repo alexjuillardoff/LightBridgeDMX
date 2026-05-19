@@ -45,7 +45,7 @@ export const FixturesTable = ({
         <tbody>
           {fixtures.map((fixture) => (
             <tr key={fixture.id}>
-              <td>
+              <td data-label="Name">
                 <div className="flex-between" style={{ gap: 6, alignItems: "center" }}>
                   <span>{fixture.name}</span>
                   {homekitEnabled !== false &&
@@ -59,15 +59,15 @@ export const FixturesTable = ({
                   </small>
                 ) : null}
               </td>
-              <td>{fixture.address}</td>
-              <td>{fixture.universe}</td>
-              <td>
+              <td data-label="Addr">{fixture.address}</td>
+              <td data-label="Universe">{fixture.universe}</td>
+              <td data-label="Channels">
                 <div>{fixture.channels.length} ch</div>
                 <small className="muted">
                   {fixture.channels.map((ch) => `${ch.channel}:${ch.name ?? ch.capability}`).join(", ")}
                 </small>
               </td>
-              <td>
+              <td data-label="Actions">
                 <div className="table-actions">
                   <button
                     type="button"

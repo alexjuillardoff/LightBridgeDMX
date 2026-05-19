@@ -128,13 +128,33 @@ LightBridgeDMX/
 
 ### Frontend (`frontend/`)
 
+Le tableau de bord React est organisé en **5 onglets responsive** avec routing par hash URL :
+
+| Onglet | Hash | Contenu |
+|--------|------|---------|
+| Tableau de bord | `#dashboard` | Statut universe, fixtures, scènes, HomeKit, Dance, quick actions, log |
+| Projecteurs | `#projecteurs` | Ajout / import QXF / liste des fixtures DMX |
+| Lampes connectées | `#lampes` | Nanoleaf et futurs backends (Hue, Matter…) avec filtre par marque |
+| Live | `#live` | Console DMX 512 sliders, Mode Dance, Scènes |
+| Réglages | `#reglages` | QR code HomeKit, PIN, infos système |
+
+Sur desktop/tablet : barre d'onglets en haut. Sur mobile (<640px) : bottom nav iOS-style.
+
 | Fichier | Rôle |
 |---------|------|
-| `src/App.tsx` | Composant principal, requêtes React Query, mutations API |
-| `src/hooks/useDmxWebsocket.ts` | Connexion WebSocket, mise à jour de l'état en temps réel |
-| `src/components/ChannelGrid.tsx` | Grille des 512 canaux avec sliders verticaux |
+| `src/App.tsx` | Wrap `AppDataProvider` + `AppShell` |
+| `src/shell/AppShell.tsx` | Layout racine : Header + TabBar + page active + BottomNav |
+| `src/shell/TabBar.tsx` / `BottomNav.tsx` | Navigation desktop / mobile |
+| `src/shell/useHashTab.ts` | Routing par hash URL (sans react-router) |
+| `src/contexts/AppDataContext.tsx` | État partagé : queries, mutations, WS handlers |
+| `src/contexts/UniverseStateContext.tsx` | Universe DMX isolé pour absorber les ticks 30 Hz |
+| `src/pages/*.tsx` | 5 pages (DashboardPage, FixturesPage, SmartLightsPage, LivePage, SettingsPage) |
+| `src/hooks/useDmxWebsocket.ts` | WebSocket + log history rolling 10 |
+| `src/components/ChannelGrid.tsx` | Grille des 512 canaux (8 → 6 → 4 colonnes selon viewport) |
 | `src/components/QxfLibraryPanel.tsx` | Navigateur de la bibliothèque de projecteurs |
 | `src/components/HomeKitCard.tsx` | Statut HomeKit avec QR code de couplage |
+| `src/components/SmartLightsPanel.tsx` | Section smart lights (Nanoleaf + futurs) |
+| `src/components/smart-lights/backendRegistry.ts` | Registre extensible des backends affichables |
 | `src/lib/api.ts` | Client fetch vers l'API backend |
 
 ### Shared (`packages/shared/`)
@@ -290,15 +310,31 @@ Ouvre ton navigateur sur **[http://localhost:5173](http://localhost:5173)**
 
 ### Vue d'ensemble de l'interface
 
-Le tableau de bord est divisé en plusieurs sections :
+Le tableau de bord est organisé en **5 onglets** accessibles via la barre de navigation (top bar sur desktop/tablet, bottom nav iOS-style sur mobile <640px). Chaque onglet a une URL dédiée pour le bookmarking et le partage de lien :
 
-#### Cartes de statut (en haut)
-- **Univers DMX** : FPS actuels, nombre de canaux actifs (non-zéro)
-- **Fixtures** : nombre total de projecteurs configurés
-- **Scènes** : nombre de scènes enregistrées
-- **Activité** : derniers événements (logs temps réel)
+| Onglet | URL | Contenu |
+|--------|-----|---------|
+| **Tableau de bord** | `/#dashboard` | Statut univers, fixtures, scènes, HomeKit, Dance + actions rapides + log |
+| **Projecteurs** | `/#projecteurs` | Création manuelle, import QXF, liste des projecteurs DMX |
+| **Lampes connectées** | `/#lampes` | Pairing et contrôle des Nanoleaf (et futurs Hue/Matter) |
+| **Live** | `/#live` | Console DMX 512 sliders, Mode Dance, Scènes |
+| **Réglages** | `/#reglages` | QR code HomeKit, PIN, infos système |
 
-#### Ajouter un projecteur manuellement
+#### Onglet Tableau de bord
+
+Vue synthétique du système avec :
+- **Tuiles statut** : Univers DMX (FPS, canaux actifs), Projecteurs (compteur), Scènes (compteur), HomeKit (état + nombre exporté), Mode Dance (état + pattern courant)
+- **Actions rapides** :
+  - **Blackout** : remet les 512 canaux DMX à 0
+  - **Stop Dance** : arrête le Mode Dance en cours
+  - **Refresh QXF** : recharge la bibliothèque de projecteurs depuis GitHub
+- **Activité récente** : 10 derniers événements (logs temps réel via WebSocket)
+
+#### Onglet Projecteurs
+
+Tout ce qui concerne les fixtures DMX.
+
+##### Ajouter un projecteur manuellement
 
 Utilise le formulaire **"Nouveau projecteur"** :
 1. **Nom** : nom lisible du projecteur (ex: "PAR Scène Gauche")
@@ -309,10 +345,10 @@ Utilise le formulaire **"Nouveau projecteur"** :
    - **RGBW** (4 canaux : Rouge, Vert, Bleu, Blanc)
    - **Dimmer** (1 canal : intensité)
 
-#### Importer depuis la bibliothèque QXF
+##### Importer depuis la bibliothèque QXF
 
 Pour importer un projecteur avec son profil officiel :
-1. Clique sur **"Bibliothèque QXF"**
+1. Va dans la carte **"Bibliothèque QXF"**
 2. Sélectionne la **marque** (ex: "Eurolite", "Chauvet")
 3. Sélectionne le **modèle** de projecteur
 4. Choisis le **mode DMX** (si le projecteur en a plusieurs)
@@ -321,15 +357,7 @@ Pour importer un projecteur avec son profil officiel :
 
 > La première fois, la bibliothèque est téléchargée automatiquement depuis GitHub (~50 Mo, quelques secondes d'attente).
 
-#### Grille des canaux DMX (Live DMX)
-
-La grille affiche les 512 canaux DMX avec des **sliders verticaux** :
-- Chaque slider contrôle un canal de 0 à 255
-- Les canaux appartenant à un projecteur sont **colorés** et annotés avec le nom du projecteur et du canal
-- Utilise **Précédent / Suivant** pour naviguer par pages
-- Les modifications sont envoyées en temps réel au backend
-
-#### Liste des projecteurs
+##### Liste des projecteurs
 
 Affiche tous les projecteurs configurés avec :
 - Nom, adresse DMX, univers
@@ -337,13 +365,58 @@ Affiche tous les projecteurs configurés avec :
 - Profil QXF (fabricant, modèle, mode) si importé depuis la bibliothèque
 - Bouton **Supprimer** (remet automatiquement les canaux DMX à 0)
 
-#### Carte HomeKit
+Sur mobile, la liste se transforme automatiquement en cartes empilées avec labels.
+
+#### Onglet Lampes connectées
+
+Pairing et pilotage des lampes WiFi (Nanoleaf aujourd'hui, Hue/Matter à venir).
+
+- **Pills de filtre** en haut pour afficher uniquement un backend (Nanoleaf, etc.)
+- **Carte de pairing** pour ajouter un Nanoleaf : scan mDNS automatique ou IP manuelle
+- **Carte par lampe** avec sliders couleur (HSL + température), toggle streaming UDP, et **3 onglets internes** :
+  - **Painter** : palette de zones cliquables (drag pour peindre, zones spare en noir)
+  - **Effets** : designer d'effets (solid, gradient, chase, wave) avec sliders live
+  - **Layout 3D** : éditeur React Three Fiber pour positionner les zones dans l'espace (preset U-shape, loop, etc.)
+- **Mirror DMX** : lier les canaux R/G/B/Dimmer d'un strip à 4 canaux DMX → pilote la lampe depuis une scène DMX
+
+> Pour ajouter un nouveau backend (Hue, Matter…) plus tard : ajouter une entrée dans `frontend/src/components/smart-lights/backendRegistry.ts` + un nouveau type dans la discriminated union `SmartLight.config.type` côté `shared/`.
+
+#### Onglet Live
+
+Trois surfaces de pilotage temps réel, accessibles via la sous-nav d'ancres (Console / Dance / Scènes) :
+
+##### Console DMX (Live channels)
+
+La grille affiche les **512 canaux DMX** avec des sliders verticaux :
+- Chaque slider contrôle un canal de 0 à 255
+- Les canaux appartenant à un projecteur sont **colorés** et annotés avec le nom du projecteur et du canal
+- Utilise **Précédent / Suivant** pour naviguer par pages (32 canaux à la fois)
+- Le layout s'adapte : 8 colonnes sur desktop, 6 sur tablet, 4 sur mobile
+- Les modifications sont envoyées en temps réel au backend
+
+##### Mode Dance
+
+Strobe coordonné par pièce avec patterns spatiaux (12 patterns disponibles : chase, ping-pong, vagues, alternance, paires, random subset, full hit, strobe synchrone, bookend…). Voir les commandes dans le code de `DancePanel.tsx`.
+
+##### Scènes
+
+Liste des scènes enregistrées (capture et recall des cues — UI complète à venir).
+
+#### Onglet Réglages
+
+##### Carte HomeKit
 
 Si HomeKit est activé :
 - Badge de statut (Actif / Inactif)
 - **QR code** à scanner depuis l'app Maison
 - **PIN** de couplage
 - Liste des projecteurs exposés comme ampoules HomeKit
+
+##### Cartes Système / Variables backend
+
+- État WebSocket en direct + URL utilisée
+- API base, mode (dev/prod)
+- Variables backend en lecture seule (DMX_OUTPUT, ARTNET_HOST, DMX_FPS, HomeKit on/off) — pour modifier, éditer `backend/.env` ou le plist launchd.
 
 ---
 
