@@ -473,6 +473,98 @@ export function buildUShapeLayout(opts: {
   return { mode: "linked", segments, spareZones, sides };
 }
 
+/**
+ * Build a "room loop" layout — the strip wraps around a room with vertical sections,
+ * forming a closed 3D path. Sections in strip order:
+ *
+ *   1. backRightFloor    — lead-in on the floor at back-right corner (controller entry)
+ *   2. backRightUp       — vertical climb at back-right (floor → ceiling)
+ *   3. topRightToLeft    — top of back wall, going right to left
+ *   4. backLeftDown      — vertical descent at back-left (ceiling → floor)
+ *   5. leftFloorBToF     — left wall at floor, back to front
+ *   6. frontFloorLToR    — front wall at floor, left to right
+ *   7. rightFloorFToB    — right wall at floor, front to back (closes the loop)
+ *
+ * Coordinate system: X=left↔right (-halfW..+halfW), Y=down↔up (0..height), Z=back↔front (0..depth).
+ *
+ * All sections have a configurable zone count; the sum must equal totalZones — any deficit
+ * becomes spare segments at the end of the strip. Total active is auto-checked.
+ */
+export function buildRoomLoopLayout(opts: {
+  backRightFloorZones: number;
+  backRightUpZones: number;
+  topRightToLeftZones: number;
+  backLeftDownZones: number;
+  leftFloorBToFZones: number;
+  frontFloorLToRZones: number;
+  rightFloorFToBZones: number;
+  totalZones?: number;
+  width?: number;   // X span (default 4 m)
+  depth?: number;   // Z span (default 3 m)
+  height?: number;  // Y ceiling (default 2.5 m)
+  /** Lead-in horizontal length from corner — used only to give the lead-in section a real position. */
+  leadInLength?: number; // default 0.5 m
+}): SmartLightZoneLayout {
+  const W = opts.width ?? 4;
+  const D = opts.depth ?? 3;
+  const H = opts.height ?? 2.5;
+  const lead = opts.leadInLength ?? 0.5;
+  const halfW = W / 2;
+
+  const activeTotal =
+    opts.backRightFloorZones + opts.backRightUpZones + opts.topRightToLeftZones +
+    opts.backLeftDownZones + opts.leftFloorBToFZones + opts.frontFloorLToRZones +
+    opts.rightFloorFToBZones;
+  const total = opts.totalZones ?? activeTotal;
+  const spareCount = Math.max(0, total - activeTotal);
+
+  const segments: ZoneSegment[] = [];
+  const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
+  const spareZones: number[] = [];
+
+  const pushSection = (
+    label: string, n: number, color: string,
+    start: Point3D, end: Point3D
+  ): void => {
+    if (n <= 0) return;
+    const startIdx = segments.length;
+    for (let i = 0; i < n; i++) {
+      segments.push({
+        start: _lerpPoint(start, end, i / n),
+        end: _lerpPoint(start, end, (i + 1) / n)
+      });
+    }
+    sides.push({ label, zoneStart: startIdx, zoneEnd: segments.length - 1, color });
+  };
+
+  pushSection("backRightFloor",  opts.backRightFloorZones,  "#c800ff",
+    { x: +halfW, y: 0, z: lead }, { x: +halfW, y: 0, z: 0 });
+  pushSection("backRightUp",     opts.backRightUpZones,     "#ff6400",
+    { x: +halfW, y: 0, z: 0 },    { x: +halfW, y: H, z: 0 });
+  pushSection("topRightToLeft",  opts.topRightToLeftZones,  "#00ff00",
+    { x: +halfW, y: H, z: 0 },    { x: -halfW, y: H, z: 0 });
+  pushSection("backLeftDown",    opts.backLeftDownZones,    "#00c8ff",
+    { x: -halfW, y: H, z: 0 },    { x: -halfW, y: 0, z: 0 });
+  pushSection("leftFloorBToF",   opts.leftFloorBToFZones,   "#ff0000",
+    { x: -halfW, y: 0, z: 0 },    { x: -halfW, y: 0, z: D });
+  pushSection("frontFloorLToR",  opts.frontFloorLToRZones,  "#0000ff",
+    { x: -halfW, y: 0, z: D },    { x: +halfW, y: 0, z: D });
+  pushSection("rightFloorFToB",  opts.rightFloorFToBZones,  "#ffff00",
+    { x: +halfW, y: 0, z: D },    { x: +halfW, y: 0, z: 0 });
+
+  // Pad spare zones at the end in a hidden corner.
+  for (let i = 0; i < spareCount; i++) {
+    const idx = segments.length;
+    segments.push({
+      start: { x: -halfW - 0.2, y: 0, z: -0.3 - i * 0.02 },
+      end:   { x: -halfW - 0.2, y: 0, z: -0.3 - (i + 1) * 0.02 }
+    });
+    spareZones.push(idx);
+  }
+
+  return { mode: "linked", segments, spareZones, sides };
+}
+
 export const SmartLightSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),

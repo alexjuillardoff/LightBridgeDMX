@@ -9,6 +9,7 @@ import {
   SmartLightZoneLayout,
   ZoneSegment,
   buildLinearLayout,
+  buildRoomLoopLayout,
   buildUShapeLayout as buildUShape
 } from "@lightbridgedmx/shared";
 import { api } from "../../lib/api";
@@ -56,6 +57,20 @@ export const LayoutEditor3D = ({
   const [uWidth, setUWidth] = useState(4);
   const [uDepth, setUDepth] = useState(3);
   const [uSpareAtStart, setUSpareAtStart] = useState(true);
+
+  // Room loop preset (7 sections — see buildRoomLoopLayout for the path).
+  // Defaults seeded to match the precise NL72K3 mapping captured on 2026-05-19.
+  const [showRoomForm, setShowRoomForm] = useState(false);
+  const [rBackRightFloor, setRBackRightFloor] = useState(5);
+  const [rBackRightUp,    setRBackRightUp]    = useState(2);
+  const [rTopRightToLeft, setRTopRightToLeft] = useState(17);
+  const [rBackLeftDown,   setRBackLeftDown]   = useState(2);
+  const [rLeftBToF,       setRLeftBToF]       = useState(4);
+  const [rFrontLToR,      setRFrontLToR]      = useState(17);
+  const [rRightFToB,      setRRightFToB]      = useState(3);
+  const [rWidth,          setRWidth]          = useState(4);
+  const [rDepth,          setRDepth]          = useState(3);
+  const [rHeight,         setRHeight]         = useState(2.5);
 
   const spareSet = useMemo(() => new Set(layout.spareZones ?? []), [layout.spareZones]);
 
@@ -107,6 +122,24 @@ export const LayoutEditor3D = ({
     setShowUForm(false);
   };
 
+  const applyRoomLoop = () => {
+    const next = buildRoomLoopLayout({
+      backRightFloorZones: rBackRightFloor,
+      backRightUpZones: rBackRightUp,
+      topRightToLeftZones: rTopRightToLeft,
+      backLeftDownZones: rBackLeftDown,
+      leftFloorBToFZones: rLeftBToF,
+      frontFloorLToRZones: rFrontLToR,
+      rightFloorFToBZones: rRightFToB,
+      totalZones: zoneCount,
+      width: rWidth,
+      depth: rDepth,
+      height: rHeight
+    });
+    setLayout(next);
+    setShowRoomForm(false);
+  };
+
   return (
     <div style={{ padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
       <div className="flex-between" style={{ marginBottom: 8 }}>
@@ -131,8 +164,11 @@ export const LayoutEditor3D = ({
           Cacher spare ({spareSet.size})
         </label>
         <button type="button" onClick={reset} style={buttonStyleSecondary}>Reset ligne</button>
-        <button type="button" onClick={() => setShowUForm(!showUForm)} style={buttonStyleSecondary}>
-          {showUForm ? "Annuler U" : "🔲 Preset U-shape"}
+        <button type="button" onClick={() => { setShowUForm(!showUForm); setShowRoomForm(false); }} style={buttonStyleSecondary}>
+          {showUForm ? "Annuler U" : "🔲 U-shape"}
+        </button>
+        <button type="button" onClick={() => { setShowRoomForm(!showRoomForm); setShowUForm(false); }} style={buttonStyleSecondary}>
+          {showRoomForm ? "Annuler Room loop" : "🏠 Room loop"}
         </button>
         <button type="button"
           onClick={() => apply.mutate(layout)}
@@ -165,6 +201,30 @@ export const LayoutEditor3D = ({
             Zones spare au début du strip (côté contrôleur)
           </label>
           <button type="button" onClick={applyUShape} style={buttonStylePrimary}>Appliquer U-shape</button>
+        </div>
+      ) : null}
+
+      {showRoomForm ? (
+        <div style={{ padding: 8, background: "rgba(255,255,255,0.04)", borderRadius: 6, marginBottom: 6 }}>
+          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>
+            Boucle 3D autour de la pièce : strip entre au sol back-droit, monte au plafond, traverse le haut, redescend back-gauche, fait le tour au sol. <strong>7 sections</strong> dans l'ordre du strip.
+            Total : <strong>{rBackRightFloor + rBackRightUp + rTopRightToLeft + rBackLeftDown + rLeftBToF + rFrontLToR + rRightFToB}</strong> / {zoneCount}.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+            <SidesInput label="Back-right sol (violet)" value={rBackRightFloor} onChange={setRBackRightFloor} />
+            <SidesInput label="Montée back-right (orange)" value={rBackRightUp} onChange={setRBackRightUp} />
+            <SidesInput label="Plafond droite→gauche (vert)" value={rTopRightToLeft} onChange={setRTopRightToLeft} />
+            <SidesInput label="Descente back-left (cyan)" value={rBackLeftDown} onChange={setRBackLeftDown} />
+            <SidesInput label="Gauche sol B→F (rouge)" value={rLeftBToF} onChange={setRLeftBToF} />
+            <SidesInput label="Avant sol G→D (bleu)" value={rFrontLToR} onChange={setRFrontLToR} />
+            <SidesInput label="Droite sol F→B (jaune)" value={rRightFToB} onChange={setRRightFToB} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 6 }}>
+            <SidesInput label="Largeur W (m)" value={rWidth} onChange={setRWidth} step={0.1} />
+            <SidesInput label="Profondeur D (m)" value={rDepth} onChange={setRDepth} step={0.1} />
+            <SidesInput label="Hauteur H (m)" value={rHeight} onChange={setRHeight} step={0.1} />
+          </div>
+          <button type="button" onClick={applyRoomLoop} style={buttonStylePrimary}>Appliquer Room loop</button>
         </div>
       ) : null}
 
