@@ -19,7 +19,7 @@
 ### Racine
 - `package.json` / `pnpm-workspace.yaml` / `pnpm-lock.yaml` : scripts racine (`dev|build|lint|format|test`) et workspaces.
 - `tsconfig.base.json` : options TypeScript communes (CJS, paths `@lightbridgedmx/shared`).
-- `DEVELOPMENT.md` : référence technique exhaustive (guide de développement).
+- `DEVELOPMENT.md` : référence technique exhaustive du projet.
 - `README.md` : guide utilisateur (FR).
 - `ARCHITECTURE.md` : ce document.
 - `logs/` : sortie std/err des services launchd dev.
@@ -116,7 +116,7 @@ Navigation **par onglets** responsive (5 onglets : Tableau de bord, Projecteurs,
 
 ## Ops / services persistants (macOS)
 - LaunchAgents :
-  - `~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` → `pnpm -C backend dev` avec `DMX_OUTPUT=artnet ARTNET_HOST=192.168.0.200 ARTNET_UNIVERSE=0 DMX_FPS=30 DATABASE_URL=file:/Users/alex/LightBridgeDMX/backend/data/lightbridge.db`.
+  - `~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` → `pnpm -C backend dev` avec `DMX_OUTPUT=artnet ARTNET_HOST=<ip-qlc>  ARTNET_UNIVERSE=0 DMX_FPS=30 DATABASE_URL=file:<chemin-absolu-du-repo>/backend/data/lightbridge.db`.
   - `~/Library/LaunchAgents/com.lightbridgedmx.frontend.dev.plist` → `pnpm -C frontend dev`.
 - Logs : `logs/backend-dev.{out,err}.log`, `logs/frontend-dev.{out,err}.log`.
 - Commandes utiles : `launchctl kickstart -k gui/501/com.lightbridgedmx.backend.dev`, `launchctl bootout gui/501 ~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` (idem frontend), `lsof -i :5000|:5173` pour vérifier l'écoute.

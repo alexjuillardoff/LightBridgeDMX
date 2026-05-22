@@ -197,7 +197,7 @@ Télécharge QLC+ depuis [qlcplus.org](https://www.qlcplus.org) et installe-le s
 ### Étape 1 : Cloner le projet
 
 ```bash
-git clone https://github.com/ton-user/LightBridgeDMX.git
+git clone https://github.com/alexjuillardoff/LightBridgeDMX.git
 cd LightBridgeDMX
 ```
 
