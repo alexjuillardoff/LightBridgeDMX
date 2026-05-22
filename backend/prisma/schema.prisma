@@ -29,6 +29,7 @@ model DanceConfig {
   excludePanTilt Boolean @default(true)
   excludeCapabilities String // JSON: string[]
   lyre          String  @default("{\"enabled\":false,\"shutterOpenValue\":255,\"dimmerOnValue\":255,\"followChase\":false,\"positions\":[],\"wallEdgeRight\":{\"pan\":20,\"tilt\":9},\"speedValue\":0,\"msPerPanUnit\":40}") // JSON: DanceLyreMode
+  smartLights   String  @default("{\"enabled\":false,\"lightIds\":[]}") // JSON: DanceSmartLightsMode
   updatedAt     String
 }
 

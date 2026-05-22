@@ -9,19 +9,35 @@ import {
 } from "@lightbridgedmx/shared";
 import { DmxService } from "./dmx";
 import { Store } from "../state/store";
+import { SmartLightService } from "./smart-lights";
 
 const PAN_TILT_CAPS: ReadonlySet<Capability> = new Set<Capability>(["pan", "tilt"]);
 
-type FixtureGroup = {
-  name: string;
-  fixtureId: string;
-  channels: { channel: number; value: number }[];
-};
+/** A "group" in the chase pattern: either a set of DMX channels (PAR / lyre dimmer),
+ *  or a contiguous range of zones on a smart light strip (one side of the layout). */
+type DanceGroup =
+  | {
+      kind: "dmx";
+      name: string;
+      // Unique id used to order groups + cluster channels by fixture.
+      fixtureId: string;
+      channels: { channel: number; value: number }[];
+    }
+  | {
+      kind: "smart-light-side";
+      name: string;
+      // `"<smartLightId>:<sideLabel>"` — used as a stable id, never collides with fixtureId.
+      fixtureId: string;
+      smartLightId: string;
+      zoneStart: number;
+      zoneEnd: number;
+    };
 
 export class DanceService extends EventEmitter {
   private readonly logger: FastifyBaseLogger;
   private readonly dmx: DmxService;
   private readonly store: Store;
+  private readonly smartLights: SmartLightService;
   private config: DanceConfig | null = null;
   private running = false;
   private timer: NodeJS.Timeout | null = null;
@@ -29,7 +45,9 @@ export class DanceService extends EventEmitter {
   private currentPatternName: DancePatternId | null = null;
   private stepIdx = 0;
   private lastMask: boolean[] | null = null;
-  private groups: FixtureGroup[] = [];
+  private groups: DanceGroup[] = [];
+  // Smart lights currently claimed by Dance — released on stop().
+  private claimedSmartLightIds: Set<string> = new Set();
   private rememberedSnapshot = new Map<number, { value: number; fixtureId: string }>();
   private fixturesCache: Fixture[] = [];
   private shutterChannels: number[] = []; // absolute channels with capability "strobe" on lyre fixtures
@@ -51,20 +69,49 @@ export class DanceService extends EventEmitter {
   private lastRefreshAt = 0;
   private phasesSent = 0;
 
-  constructor(logger: FastifyBaseLogger, dmx: DmxService, store: Store) {
+  constructor(
+    logger: FastifyBaseLogger,
+    dmx: DmxService,
+    store: Store,
+    smartLights: SmartLightService
+  ) {
     super();
     this.logger = logger.child({ service: "dance" });
     this.dmx = dmx;
     this.store = store;
+    this.smartLights = smartLights;
   }
 
   async init(): Promise<void> {
     this.config = await this.store.getDanceConfig();
     await this.autoseedLyrePositions();
+    await this.autoseedSmartLights();
     if (this.config.enabled) {
       this.logger.info("Resuming Dance mode from persisted config");
       await this.start();
     }
+  }
+
+  /**
+   * First-run convenience: if no smart light has been configured for Dance yet, enable
+   * Dance for any smart lights that already have labelled sides in their zoneLayout.
+   * Side labels mean the user has explicitly carved the strip into spatial sections —
+   * a clear signal they want it to participate in chases.
+   */
+  private async autoseedSmartLights() {
+    if (!this.config) return;
+    if (this.config.smartLights.lightIds.length > 0) return;
+    const lights = this.smartLights.listWithState();
+    const candidates = lights
+      .filter((l) => (l.zoneLayout?.sides?.length ?? 0) > 0)
+      .map((l) => l.id);
+    if (candidates.length === 0) return;
+    this.config = await this.store.saveDanceConfig({
+      ...this.config,
+      smartLights: { enabled: true, lightIds: candidates },
+      updatedAt: new Date().toISOString()
+    });
+    this.logger.info({ lightIds: candidates }, "Auto-seeded smart lights for Dance mode");
   }
 
   /**
@@ -120,9 +167,34 @@ export class DanceService extends EventEmitter {
       ...patch,
       updatedAt: new Date().toISOString()
     };
+    const prevSmartLightIds = new Set(current.smartLights.lightIds);
+    const prevSmartLightsEnabled = current.smartLights.enabled;
     this.config = await this.store.saveDanceConfig(next);
     if (this.running) {
-      // Refresh active groups to apply room/exclusion/lyre changes immediately.
+      // Reconcile smart light claims: release lights that were removed (or disabled),
+      // claim new ones. Skip if smartLights is disabled entirely.
+      const nextEnabled = this.config.smartLights.enabled;
+      const nextIds = new Set(this.config.smartLights.lightIds);
+      if (prevSmartLightsEnabled && !nextEnabled) {
+        this.releaseAllSmartLights();
+      } else {
+        for (const id of this.claimedSmartLightIds) {
+          if (!nextIds.has(id)) {
+            this.smartLights.setDanceClaim(id, false);
+            this.claimedSmartLightIds.delete(id);
+          }
+        }
+        if (nextEnabled) {
+          for (const id of nextIds) {
+            if (this.claimedSmartLightIds.has(id)) continue;
+            if (this.smartLights.setDanceClaim(id, true)) {
+              this.claimedSmartLightIds.add(id);
+            }
+          }
+        }
+      }
+      void prevSmartLightIds; // silence unused — kept for future diff logging if needed
+      // Refresh active groups to apply room/exclusion/lyre/smart-light changes immediately.
       await this.refreshGroups({ force: true });
       this.currentPattern = null;
       this.lastMask = null;
@@ -147,9 +219,10 @@ export class DanceService extends EventEmitter {
     this.running = true;
     this.phasesSent = 0;
     this.rememberedSnapshot.clear();
+    this.claimConfiguredSmartLights();
     await this.refreshGroups({ force: true });
     this.scheduleNext(0);
-    this.logger.info({ groups: this.groups.length }, "Dance started");
+    this.logger.info({ groups: this.groups.length, smartLights: this.claimedSmartLightIds.size }, "Dance started");
     this.emitState();
     return this.getState();
   }
@@ -171,6 +244,8 @@ export class DanceService extends EventEmitter {
     for (const lyre of this.lyreFixtures) {
       this.dmx.setChannel(lyre.dimmerChannel, 0);
     }
+    // Release all smart lights — they revert to their persisted ambient effect.
+    this.releaseAllSmartLights();
     // Reset cached lyre target so the next start re-evaluates from scratch.
     this.lastLyrePan = null;
     this.lastLyreTilt = null;
@@ -185,6 +260,28 @@ export class DanceService extends EventEmitter {
     this.logger.info("Dance stopped");
     this.emitState();
     return this.getState();
+  }
+
+  /** Claim every smart light listed in `config.smartLights.lightIds`. Only lights with
+   *  streaming actually enabled are claimable — others are skipped with a warning. */
+  private claimConfiguredSmartLights() {
+    this.claimedSmartLightIds.clear();
+    if (!this.config?.smartLights.enabled) return;
+    for (const id of this.config.smartLights.lightIds) {
+      const ok = this.smartLights.setDanceClaim(id, true);
+      if (ok) {
+        this.claimedSmartLightIds.add(id);
+      } else {
+        this.logger.warn({ id }, "Could not claim smart light for Dance — streaming disabled or unknown light");
+      }
+    }
+  }
+
+  private releaseAllSmartLights() {
+    for (const id of this.claimedSmartLightIds) {
+      this.smartLights.setDanceClaim(id, false);
+    }
+    this.claimedSmartLightIds.clear();
   }
 
   // ----- internals -----
@@ -233,12 +330,12 @@ export class DanceService extends EventEmitter {
 
     // Build groups by fixture id, preserve fixture spatial order = creation order in DB
     // (overridable later by an explicit `position` field on Fixture if needed).
-    const byFixture = new Map<string, FixtureGroup>();
+    const byFixture = new Map<string, Extract<DanceGroup, { kind: "dmx" }>>();
     for (const [abs, { value, fixtureId }] of this.rememberedSnapshot) {
       const meta = channelMeta.get(abs);
       if (!meta) continue;
       if (!byFixture.has(fixtureId)) {
-        byFixture.set(fixtureId, { name: meta.fixtureName, fixtureId, channels: [] });
+        byFixture.set(fixtureId, { kind: "dmx", name: meta.fixtureName, fixtureId, channels: [] });
       }
       byFixture.get(fixtureId)!.channels.push({ channel: abs, value });
     }
@@ -290,10 +387,34 @@ export class DanceService extends EventEmitter {
         // Avoid duplicate group if the lyre already showed up via the snapshot logic.
         if (this.groups.some((g) => g.fixtureId === lyre.fixtureId)) continue;
         this.groups.push({
+          kind: "dmx",
           name: lyre.name,
           fixtureId: lyre.fixtureId,
           channels: [{ channel: lyre.dimmerChannel, value: dimmerOn }]
         });
+      }
+    }
+
+    // Append one virtual group per labelled "side" of each CLAIMED smart light's layout.
+    // We key off `claimedSmartLightIds` (not the config list) so side groups only appear
+    // when the light is actually under Dance's control — guarantees applyZones() won't
+    // throw on a streaming-disabled device, and side groups can't outlive a claim release.
+    if (this.config?.smartLights.enabled && this.claimedSmartLightIds.size > 0) {
+      for (const lightId of this.claimedSmartLightIds) {
+        const light = this.smartLights.getWithState(lightId);
+        if (!light) continue;
+        const layout = light.zoneLayout;
+        if (!layout || !layout.sides || layout.sides.length === 0) continue;
+        for (const side of layout.sides) {
+          this.groups.push({
+            kind: "smart-light-side",
+            name: `${light.name} · ${side.label}`,
+            fixtureId: `${light.id}:${side.label}`,
+            smartLightId: light.id,
+            zoneStart: side.zoneStart,
+            zoneEnd: side.zoneEnd
+          });
+        }
       }
     }
   }
@@ -448,12 +569,67 @@ export class DanceService extends EventEmitter {
   }
 
   private async applyMask(mask: boolean[]) {
+    // Smart-light zone palettes are accumulated per device, then flushed in one
+    // applyZones() call at the end — avoids partial palettes (each side group calling
+    // applyZones would overwrite the previous side's contribution).
+    const palettePerLight = new Map<string, { r: number; g: number; b: number }[]>();
+    const ensurePalette = (lightId: string) => {
+      let arr = palettePerLight.get(lightId);
+      if (!arr) {
+        const light = this.smartLights.getWithState(lightId);
+        const zoneCount =
+          (light?.streaming?.zoneCount as number | undefined) ??
+          light?.zoneLayout?.segments.length ??
+          50;
+        arr = Array.from({ length: zoneCount }, () => ({ r: 0, g: 0, b: 0 }));
+        palettePerLight.set(lightId, arr);
+      }
+      return arr;
+    };
+
     this.groups.forEach((g, i) => {
       const on = mask[i];
-      for (const { channel, value } of g.channels) {
-        this.dmx.setChannel(channel, on ? value : 0);
+      if (g.kind === "dmx") {
+        for (const { channel, value } of g.channels) {
+          this.dmx.setChannel(channel, on ? value : 0);
+        }
+        return;
       }
+      // smart-light-side: ensure this light's palette buffer exists even when off (so
+      // the strip blacks-out non-side zones correctly).
+      const palette = ensurePalette(g.smartLightId);
+      if (!on) return;
+      const color = this.smartLightFlashColor(g.smartLightId);
+      const start = Math.max(0, Math.min(g.zoneStart, g.zoneEnd));
+      const end = Math.min(palette.length - 1, Math.max(g.zoneStart, g.zoneEnd));
+      for (let z = start; z <= end; z++) palette[z] = color;
     });
+
+    // Flush each touched smart light. applyZones throws if streaming isn't enabled —
+    // we only reach here for lights that were successfully claimed (start() guards it).
+    for (const [lightId, zones] of palettePerLight) {
+      try {
+        this.smartLights.applyZones(lightId, {
+          zones: zones.map((c, index) => ({ index, r: c.r, g: c.g, b: c.b }))
+        });
+      } catch (err) {
+        this.logger.warn({ err, lightId }, "Failed to push dance zone palette");
+      }
+    }
+  }
+
+  /**
+   * Color used when a smart-light side is "ON" in the mask. Uses the strip's current
+   * desired hue/sat at full brightness so the dance pulses in the strip's ambient color.
+   * Falls back to white when no color is set (brightness 0 or sat 0).
+   */
+  private smartLightFlashColor(lightId: string): { r: number; g: number; b: number } {
+    const light = this.smartLights.getWithState(lightId);
+    const state = light?.state;
+    if (!state || state.sat === 0 || state.brightness === 0) {
+      return { r: 255, g: 255, b: 255 };
+    }
+    return hsvToRgb255(state.hue, state.sat, 100);
   }
 
   private scheduleNext(delayMs: number) {
@@ -632,4 +808,28 @@ function sleep(ms: number): Promise<void> {
 function clamp8(v: number): number {
   if (Number.isNaN(v)) return 0;
   return Math.max(0, Math.min(255, v));
+}
+
+/** HSV (h:0-360, s:0-100, v:0-100) → RGB 0-255. */
+function hsvToRgb255(h: number, s: number, v: number): { r: number; g: number; b: number } {
+  const sn = Math.max(0, Math.min(100, s)) / 100;
+  const vn = Math.max(0, Math.min(100, v)) / 100;
+  const hh = ((h % 360) + 360) % 360;
+  const c = vn * sn;
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = vn - c;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hh < 60) [r, g, b] = [c, x, 0];
+  else if (hh < 120) [r, g, b] = [x, c, 0];
+  else if (hh < 180) [r, g, b] = [0, c, x];
+  else if (hh < 240) [r, g, b] = [0, x, c];
+  else if (hh < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255)
+  };
 }

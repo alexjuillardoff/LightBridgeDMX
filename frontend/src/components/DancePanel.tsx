@@ -6,7 +6,8 @@ import {
   DancePatternId,
   DancePatternIds,
   DanceState,
-  Fixture
+  Fixture,
+  SmartLight
 } from "@lightbridgedmx/shared";
 import { api } from "../lib/api";
 
@@ -53,6 +54,7 @@ export const DancePanel = () => {
   });
   const roomsQuery = useQuery<string[]>(["rooms"], api.rooms.list);
   const fixturesQuery = useQuery<Fixture[]>(["fixtures"], api.fixtures.list);
+  const smartLightsQuery = useQuery<SmartLight[]>(["smart-lights"], api.smartLights.list);
 
   const updateConfig = useMutation<DanceState, Error, Partial<DanceConfig>>(
     (patch) => api.dance.updateConfig(patch),
@@ -71,7 +73,26 @@ export const DancePanel = () => {
   const config = state?.config;
   const rooms = roomsQuery.data ?? [];
   const fixtures = fixturesQuery.data ?? [];
+  const smartLights = smartLightsQuery.data ?? [];
   const running = state?.running ?? false;
+
+  // Only smart lights that have a layout with labelled sides are useful for Dance —
+  // each side becomes one chase group. Lights without sides are hidden from the picker.
+  const danceableSmartLights = useMemo(
+    () => smartLights.filter((l) => (l.zoneLayout?.sides?.length ?? 0) > 0),
+    [smartLights]
+  );
+
+  const toggleSmartLight = (id: string) => {
+    if (!config) return;
+    const has = config.smartLights.lightIds.includes(id);
+    const lightIds = has
+      ? config.smartLights.lightIds.filter((x) => x !== id)
+      : [...config.smartLights.lightIds, id];
+    updateConfig.mutate({
+      smartLights: { ...config.smartLights, lightIds }
+    });
+  };
 
   // Fixtures eligible as lyre targets: non-lyre fixtures (no pan/tilt capability).
   const targetableFixtures = useMemo(
@@ -524,6 +545,73 @@ export const DancePanel = () => {
                 </div>
               </div>
             ) : null}
+          </section>
+
+          <section>
+            <h3 style={{ margin: "0 0 8px" }}>Lampes connectées</h3>
+            <label style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={config.smartLights.enabled}
+                onChange={(e) =>
+                  updateConfig.mutate({
+                    smartLights: { ...config.smartLights, enabled: e.target.checked }
+                  })
+                }
+              />
+              Inclure les lampes connectées dans le chase
+            </label>
+            <p className="muted" style={{ marginBottom: 6 }}>
+              Chaque <strong>côté</strong> du layout (ex: backRightFloor, frontFloorLToR…)
+              devient un groupe du chase. Les zones flashent dans la couleur ambiante
+              courante du strip. Requiert le streaming activé.
+            </p>
+            {danceableSmartLights.length === 0 ? (
+              <p className="muted">
+                Aucune lampe connectée avec un layout 3D et des côtés nommés. Configure le
+                layout d'une lampe dans l'onglet <strong>Lampes connectées</strong> pour
+                qu'elle apparaisse ici.
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: 6 }}>
+                {danceableSmartLights.map((light) => {
+                  const checked = config.smartLights.lightIds.includes(light.id);
+                  const sides = light.zoneLayout?.sides?.length ?? 0;
+                  const streaming = light.streaming?.enabled === true;
+                  return (
+                    <label
+                      key={light.id}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                        opacity: config.smartLights.enabled ? 1 : 0.6
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!config.smartLights.enabled}
+                        onChange={() => toggleSmartLight(light.id)}
+                      />
+                      <span>
+                        <strong>{light.name}</strong>
+                        {light.room ? <span className="muted"> · {light.room}</span> : null}
+                        <span className="muted">
+                          {" · "}
+                          {sides} côté{sides > 1 ? "s" : ""}
+                        </span>
+                        {!streaming ? (
+                          <span className="muted" style={{ color: "#c44" }}>
+                            {" · "}streaming OFF (activer dans Lampes)
+                          </span>
+                        ) : null}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           <section>

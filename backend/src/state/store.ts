@@ -105,6 +105,10 @@ const DEFAULT_DANCE_CONFIG: Omit<DanceConfig, "updatedAt"> = {
     wallEdgeRight: { pan: 20, tilt: 9 },
     speedValue: 0,
     msPerPanUnit: 40
+  },
+  smartLights: {
+    enabled: false,
+    lightIds: []
   }
 };
 
@@ -229,6 +233,18 @@ export class Store {
       });
       return seeded;
     }
+    // `smartLights` column may be missing on rows persisted before the field existed —
+    // Prisma's @default kicks in for new rows but ALTER TABLE on SQLite preserves NULL for
+    // existing rows. Fall back to the default if absent or unparseable.
+    let smartLights = DEFAULT_DANCE_CONFIG.smartLights;
+    const raw = (row as { smartLights?: string }).smartLights;
+    if (raw) {
+      try {
+        smartLights = JSON.parse(raw);
+      } catch {
+        // ignore — keep default
+      }
+    }
     return DanceConfigSchema.parse({
       enabled: row.enabled,
       rooms: JSON.parse(row.rooms),
@@ -238,6 +254,7 @@ export class Store {
       excludePanTilt: row.excludePanTilt,
       excludeCapabilities: JSON.parse(row.excludeCapabilities),
       lyre: JSON.parse(row.lyre),
+      smartLights,
       updatedAt: row.updatedAt
     });
   }
@@ -259,6 +276,7 @@ export class Store {
       excludePanTilt: parsed.excludePanTilt,
       excludeCapabilities: JSON.stringify(parsed.excludeCapabilities),
       lyre: JSON.stringify(parsed.lyre),
+      smartLights: JSON.stringify(parsed.smartLights),
       updatedAt: parsed.updatedAt
     };
     await this.prisma.danceConfig.upsert({

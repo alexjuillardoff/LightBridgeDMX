@@ -32,6 +32,10 @@ type RuntimeEntry = {
   inflight: boolean;
   /** Timestamp of last local write — refresh from device only fires if quiescent. */
   lastLocalWriteAt: number;
+  /** When true, Dance mode owns this device — streamAll() bypasses currentEffect and
+   *  desired.on so the dance can paint zones over whatever ambient state is configured.
+   *  Set via setDanceClaim(); does NOT persist to DB. */
+  danceClaim: boolean;
 };
 
 const MIN_PUSH_INTERVAL_MS = 70;     // HTTP rate limit per device — ~14 writes/s
@@ -337,8 +341,32 @@ export class SmartLightService extends EventEmitter {
       zonePalette: existing?.zonePalette ?? null,
       lastPushAt: existing?.lastPushAt ?? 0,
       inflight: false,
-      lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0
+      lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0,
+      danceClaim: existing?.danceClaim ?? false
     });
+  }
+
+  /**
+   * Mark a smart light as owned by Dance mode (or release it). When claimed:
+   *   • streamAll() ignores `currentEffect` and `desired.on` for this device
+   *   • The next call to applyZones() drives the strip
+   * When released, the effect & ambient state resume on the next stream tick. The
+   * persisted state (effect, layout, streaming flag) is untouched.
+   *
+   * Returns true if the claim was applied. Returns false if the light isn't
+   * registered or streaming isn't enabled (Dance can't drive an HTTP-only device).
+   */
+  setDanceClaim(id: string, claimed: boolean): boolean {
+    const entry = this.runtime.get(id);
+    if (!entry) return false;
+    if (claimed && !entry.streamer?.isEnabled()) return false;
+    entry.danceClaim = claimed;
+    if (!claimed) {
+      // Drop the dance-painted palette so the next stream tick falls back to
+      // currentEffect / ambient color.
+      entry.zonePalette = null;
+    }
+    return true;
   }
 
   private async refreshFromDevice(entry: RuntimeEntry): Promise<void> {
@@ -462,6 +490,16 @@ export class SmartLightService extends EventEmitter {
     for (const entry of this.runtime.values()) {
       const s = entry.streamer;
       if (!s?.isEnabled()) continue;
+      // Dance mode owns the device: bypass currentEffect priority and the
+      // desired.on guard. Whatever palette DanceService just pushed (or none) wins.
+      if (entry.danceClaim) {
+        if (entry.zonePalette) {
+          s.sendZones(entry.zonePalette.zones);
+        } else {
+          s.sendUniform({ r: 0, g: 0, b: 0 });
+        }
+        continue;
+      }
       if (!entry.desired.on) {
         s.sendUniform({ r: 0, g: 0, b: 0 });
         continue;

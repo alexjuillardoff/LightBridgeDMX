@@ -50,8 +50,10 @@ const homekit = new HomeKitBridge(app.log, dmx, {
   storagePath: HOMEKIT_STORAGE
 });
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });
-const dance = new DanceService(app.log, dmx, store);
+// SmartLightService is created before DanceService so it can be injected — DanceService
+// uses it to claim/release smart lights and read their layouts when building chase groups.
 const smartLights = new SmartLightService(app.log, dmx, store);
+const dance = new DanceService(app.log, dmx, store, smartLights);
 const handleError = createErrorHandler(app.log);
 
 registerRoutes(
@@ -135,8 +137,10 @@ const start = async () => {
     }
     await dmx.start();
     await homekit.start(await store.listFixtures());
-    await dance.init();
+    // SmartLightService must be started before DanceService.init() — Dance reads
+    // layouts via smartLights.listWithState() to autoseed + build side groups.
     await smartLights.start();
+    await dance.init();
     await app.listen({ port: PORT, host: "0.0.0.0" });
 
     websocket.attach(app.server);

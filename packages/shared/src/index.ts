@@ -142,6 +142,17 @@ export const DanceLyreModeSchema = z.object({
 
 export type DanceLyreMode = z.infer<typeof DanceLyreModeSchema>;
 
+export const DanceSmartLightsModeSchema = z.object({
+  enabled: z.boolean(),
+  // Smart light IDs that should join the dance. Each light contributes one group
+  // per labelled "side" of its zoneLayout (see SmartLightZoneLayout.sides). Side
+  // groups participate in the chase patterns alongside DMX fixtures, and flash in
+  // the light's current ambient color (desired.hue/sat → RGB at 100% brightness).
+  lightIds: z.array(z.string().uuid())
+});
+
+export type DanceSmartLightsMode = z.infer<typeof DanceSmartLightsModeSchema>;
+
 export const DanceConfigSchema = z.object({
   enabled: z.boolean(),
   rooms: z.array(z.string().min(1)),
@@ -151,6 +162,7 @@ export const DanceConfigSchema = z.object({
   excludePanTilt: z.boolean(),
   excludeCapabilities: z.array(CapabilitySchema),
   lyre: DanceLyreModeSchema,
+  smartLights: DanceSmartLightsModeSchema,
   updatedAt: z.string().datetime()
 });
 
