@@ -19,3 +19,8 @@ logs/
 
 # Path-doubling artefact of the QXF library downloader — see qxf-library.ts.
 backend/backend/
+
+# QLC+ workspace — user-specific (Enttec serial, LAN IP, fixtures, scenes).
+# Bootstrap from qlc-plus/home.qxw.example.
+qlc-plus/home.qxw
+qlc-plus/*.bak-*
