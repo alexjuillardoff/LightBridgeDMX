@@ -161,6 +161,15 @@ Sur desktop/tablet : barre d'onglets en haut. Sur mobile (<640px) : bottom nav i
 
 Contient tous les **types TypeScript** et **schémas de validation Zod** utilisés à la fois par le backend et le frontend : `Fixture`, `Scene`, `Preset`, `UniverseState`, `WsEvent`, etc.
 
+### Pourquoi ces choix techniques ?
+
+En bref (détail complet dans [ARCHITECTURE.md](ARCHITECTURE.md#choix-techniques-et-pourquoi)) :
+
+- **Tout en TypeScript** — les types attrapent les erreurs *en écrivant le code*, dans l'éditeur, plutôt qu'en production. Ils sont ensuite effacés à la transpilation : Node et le navigateur n'exécutent que du JavaScript.
+- **Backend en Node.js (un choix)** — pour partager **un seul langage et les mêmes types** avec le frontend, et profiter de l'écosystème Node (`hap-nodejs`, `artnet`, `dmx-ts`, Prisma…).
+- **Frontend en JS (forcé)** — un navigateur n'exécute que du JavaScript ; le TS y est transpilé par Vite.
+- **Monorepo + package `shared`** — une **source unique de vérité** pour la forme des données : changer une fixture casse la compilation des deux côtés tout de suite, au lieu d'un bug runtime.
+
 ---
 
 ## Prérequis

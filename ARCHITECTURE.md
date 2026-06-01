@@ -14,6 +14,37 @@
 4) Backend pilote les Nanoleaf via HTTP (coalesce 70 ms) ou UDP streaming (30 Hz, latence <15 ms) selon le toggle par lampe.
 5) Si aucune interface DMX n'est disponible, le backend passe en simulation.
 
+## Choix techniques (et pourquoi)
+
+Cette section documente les décisions d'architecture structurantes et leur justification — le *pourquoi*, pas seulement le *quoi*.
+
+### TypeScript partout
+Tout le projet (backend, frontend, package partagé) est écrit en **TypeScript**, jamais en JavaScript brut.
+- **Pourquoi :** les types attrapent une classe entière d'erreurs *au moment de l'écriture* (mauvais nom de champ, mauvais argument, cas oublié) plutôt qu'en production, en pleine session lumière. L'éditeur fournit autocomplétion, navigation et refactos sûres.
+- **À noter :** les types sont un outil d'écriture, pas un runtime. Ils sont **effacés** à la transpilation — Node et le navigateur n'exécutent que du JavaScript pur, sans aucune trace des annotations. Le TS ne remplace donc pas les tests : il valide la *forme* des données, pas la *logique* métier (un mauvais calcul de canal DMX reste un bug même bien typé → couvert par Vitest).
+
+### Backend en Node.js — un choix, pas une obligation
+Le backend ne tourne pas dans un navigateur : il est exécuté par **Node.js**. Rien n'imposait Node ici — DMX et HomeKit existent aussi en Python, Go, Rust… Node a été choisi pour des raisons précises :
+- **Un seul langage des deux côtés** → backend et frontend partagent littéralement les **mêmes types** via `packages/shared` (voir ci-dessous). Impossible si le backend était en Python : il faudrait redéfinir et resynchroniser les types de fixtures à la main.
+- **Écosystème déjà là :** `hap-nodejs` (HomeKit natif sans Homebridge), `artnet`, `dmx-ts`, `bonjour-service` (mDNS), `@prisma/client`… tout existait en paquets Node.
+- **Modèle événementiel/asynchrone** adapté au temps réel : trames DMX, mirror HomeKit, broadcast WebSocket continu.
+
+### Frontend en JavaScript — là, c'est forcé
+Le tableau de bord tourne **dans un navigateur**, qui n'exécute qu'un seul langage : **JavaScript**. Écrit en TS, il est donc transpilé en JS par Vite. C'est la seule moitié du projet où le JS est une contrainte et non un choix. (Pas de Node ici à l'exécution : c'est le navigateur qui exécute.)
+
+### TS → JS : deux chaînes de transpilation
+TypeScript n'est exécutable nulle part tel quel ; il faut le traduire en JavaScript.
+- **Backend dev :** `ts-node-dev --transpile-only --respawn` transpile en mémoire à la volée et **redémarre** à chaque sauvegarde (⚠️ d'où la prudence sur les éditions rapides — voir `DEVELOPMENT.md`). Pas de fichiers `.js` écrits.
+- **Backend build :** `tsc` compile et **vérifie** les types, écrit le JS dans `backend/dist/`.
+- **Frontend :** Vite/esbuild transpile et bundle pour le navigateur.
+
+### Monorepo pnpm + package `shared`
+Les types et schémas Zod (`Fixture`, `Scene`, `UniverseState`, `WsEvent`…) vivent dans `packages/shared`, importés via l'alias `@lightbridgedmx/shared` par le backend **et** le frontend.
+- **Pourquoi :** une **source unique de vérité** pour la forme des données. Changer la structure d'une fixture casse la compilation des deux côtés *immédiatement*, au lieu d'une découverte au runtime. Zod ajoute en prime la validation des entrées API à l'exécution, à partir des mêmes schémas.
+
+### Modules : CJS backend, ESM frontend
+Le backend compile en **CommonJS** (`require`), le frontend en **ESM** (`import` natif navigateur). C'est le format attendu par chaque environnement cible ; le `tsconfig` de chaque package fixe son `module` en conséquence.
+
 ## Arborescence et rôle des fichiers
 
 ### Racine
