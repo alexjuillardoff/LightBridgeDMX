@@ -1,3 +1,8 @@
+// EffectDesigner : panneau de reglage des effets position-aware (sensibles a la position)
+// d'une lampe connectee (smart light). On choisit un type d'effet (solid, gradient, chase,
+// wave) puis on ajuste ses parametres en direct ; chaque changement est pousse au backend
+// via /effect. ATTENTION : ces effets ne fonctionnent qu'en streaming UDP (voir avertissement
+// affiche), car ils evaluent l'animation a 30 Hz cote serveur.
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -9,8 +14,11 @@ import {
 import { api } from "../../lib/api";
 import { hexToRgb, rgbToHex } from "./ZonePainter";
 
+// Les quatre familles d'effets proposees. On garde les ids en anglais (utilises par le backend).
 type Kind = "solid" | "gradient" | "chase" | "wave";
 
+// Valeurs par defaut de chaque type d'effet : servies quand on change de famille,
+// pour avoir tout de suite un effet visible sans champ vide.
 const DEFAULTS: Record<Kind, SmartLightEffectConfig> = {
   solid:    { kind: "solid", color: { r: 255, g: 100, b: 0 }, brightness: 100 },
   gradient: { kind: "gradient", from: { r: 255, g: 0, b: 0 }, to: { r: 0, g: 0, b: 255 }, direction: { x: 1, y: 0, z: 0 }, scrollSpeed: 0, brightness: 100 },
@@ -18,7 +26,12 @@ const DEFAULTS: Record<Kind, SmartLightEffectConfig> = {
   wave:     { kind: "wave", from: { r: 100, g: 0, b: 200 }, to: { r: 0, g: 200, b: 255 }, direction: { x: 1, y: 0, z: 0 }, wavelength: 0.5, speed: 0.8, brightness: 100 }
 };
 
-/** Pick an effect kind + tune its parameters live. Each change debounce-pushes via /effect. */
+/**
+ * Choisit un type d'effet et permet d'en regler les parametres en direct.
+ * Chaque changement est applique aussitot via /effect.
+ * @param light Lampe connectee ciblee.
+ * @param onUpdated Rappel apres mise a jour reussie cote backend (renvoie la lampe a jour).
+ */
 export const EffectDesigner = ({
   light,
   onUpdated
@@ -26,26 +39,33 @@ export const EffectDesigner = ({
   light: SmartLight;
   onUpdated: (light: SmartLight) => void;
 }) => {
+  // Effet courant de la lampe, mais seulement si c'est un vrai effet anime.
+  // L'etat "static" (couleur figee) est ignore ici : on repartira sur un effet par defaut.
   const cur = light.currentEffect && light.currentEffect.kind !== "static" ? light.currentEffect : null;
   const initialKind: Kind = (cur?.kind as Kind) ?? "solid";
   const [config, setConfig] = useState<SmartLightEffectConfig>(cur ?? DEFAULTS[initialKind]);
 
+  // Applique l'effet (le backend le persiste et le diffuse).
   const apply = useMutation(
     (cfg: SmartLightEffectConfig) => api.smartLights.setEffect(light.id, cfg),
     { onSuccess: onUpdated }
   );
+  // Stoppe l'effet en cours (null = plus d'effet).
   const clear = useMutation(() => api.smartLights.setEffect(light.id, null), { onSuccess: onUpdated });
 
-  // For "live tweak": apply on every change (cheap, backend just persists + emits)
+  // Reglage en direct : on applique a chaque changement. C'est peu couteux car le backend
+  // se contente de persister la config et de diffuser le nouvel etat.
   const updateAndApply = (next: SmartLightEffectConfig) => {
     setConfig(next);
     apply.mutate(next);
   };
+  // Change de famille d'effet : on repart des valeurs par defaut de ce type.
   const changeKind = (kind: Kind) => {
     const next = DEFAULTS[kind];
     updateAndApply(next);
   };
 
+  // Les effets position-aware exigent le streaming UDP : sinon, on affiche un avertissement.
   const streamingOn = light.streaming?.enabled ?? false;
 
   return (
@@ -131,6 +151,8 @@ export const EffectDesigner = ({
   );
 };
 
+// Ligne de selection d'une couleur RGB : le <input type="color"> travaille en hex,
+// on convertit donc dans les deux sens (hex <-> RgbColor) a l'affichage et a la saisie.
 const ColorRow = ({ label, value, onChange }: { label: string; value: RgbColor; onChange: (c: RgbColor) => void }) => (
   <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0" }}>
     <span className="muted" style={{ fontSize: 12, width: 70 }}>{label}</span>
@@ -144,6 +166,7 @@ const ColorRow = ({ label, value, onChange }: { label: string; value: RgbColor; 
   </label>
 );
 
+// Ligne de reglage numerique : un curseur (slider) avec sa valeur affichee a droite.
 const NumberRow = ({
   label, value, min, max, step, unit, onChange
 }: {
@@ -152,6 +175,7 @@ const NumberRow = ({
   <label style={{ display: "block", margin: "4px 0" }}>
     <div className="flex-between" style={{ marginBottom: 2 }}>
       <span className="muted" style={{ fontSize: 12 }}>{label}</span>
+      {/* 2 decimales pour les pas fins (< 1), sinon valeur entiere. */}
       <span style={{ fontSize: 12 }}>{value.toFixed(step && step < 1 ? 2 : 0)}{unit}</span>
     </div>
     <input type="range" min={min} max={max} step={step ?? 1} value={value}
@@ -160,6 +184,8 @@ const NumberRow = ({
   </label>
 );
 
+// Reglage du vecteur direction 3D (axes X, Y, Z, chacun borne entre -1 et 1).
+// Utilise par gradient et wave pour orienter l'effet dans la disposition (layout) du bandeau.
 const DirectionRow = ({ value, onChange }: { value: Point3D; onChange: (p: Point3D) => void }) => (
   <div style={{ margin: "4px 0" }}>
     <span className="muted" style={{ fontSize: 12 }}>Direction (XYZ)</span>
@@ -178,6 +204,7 @@ const DirectionRow = ({ value, onChange }: { value: Point3D; onChange: (p: Point
   </div>
 );
 
+// Styles des onglets de selection d'effet : base commune, puis variante active/inactive.
 const tabBase: React.CSSProperties = {
   padding: "4px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer", border: "1px solid var(--border)"
 };

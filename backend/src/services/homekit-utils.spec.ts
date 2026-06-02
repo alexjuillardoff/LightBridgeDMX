@@ -1,7 +1,13 @@
+// Tests Vitest des utilitaires HomeKit (homekit-utils).
+// Verifie deux choses : les conversions de couleur HSB <-> RGB, et la resolution
+// des canaux RGB d'un projecteur (par capability ou via la config explicite),
+// ainsi que le tri des projecteurs exposables en ampoules HomeKit.
 import { describe, expect, it } from "vitest";
 import { Fixture } from "@lightbridgedmx/shared";
 import { collectHomeKitLights, hsbToRgb, resolveRgbChannels, rgbToHsb } from "./homekit-utils";
 
+// Projecteur de reference reutilise dans plusieurs tests : un RGB simple a
+// l'adresse 1, avec ses trois canaux r/g/b sur les slots 1, 2 et 3.
 const baseFixture: Fixture = {
   id: "00000000-0000-0000-0000-000000000001",
   name: "RGB Fixture",
@@ -15,13 +21,19 @@ const baseFixture: Fixture = {
   ]
 };
 
+// ----- Conversions de couleur HSB <-> RGB -----
 describe("color conversion", () => {
+  // Les trois primaires HSB (rouge 0deg, vert 120deg, bleu 240deg) a saturation
+  // et luminosite max doivent donner exactement leurs equivalents RGB purs.
   it("converts HSB primaries to RGB", () => {
     expect(hsbToRgb({ hue: 0, saturation: 100, brightness: 100 })).toEqual({ r: 255, g: 0, b: 0 });
     expect(hsbToRgb({ hue: 120, saturation: 100, brightness: 100 })).toEqual({ r: 0, g: 255, b: 0 });
     expect(hsbToRgb({ hue: 240, saturation: 100, brightness: 100 })).toEqual({ r: 0, g: 0, b: 255 });
   });
 
+  // Sens inverse : on extrait le HSB d'une couleur RGB. Le blanc pur a une
+  // saturation nulle. Pour une couleur mixte, on verifie l'aller-retour
+  // (RGB -> HSB -> RGB) en gardant l'ordre des composantes (bleu dominant).
   it("extracts HSB from RGB", () => {
     expect(rgbToHsb({ r: 255, g: 0, b: 0 })).toEqual({ hue: 0, saturation: 100, brightness: 100 });
     expect(rgbToHsb({ r: 255, g: 255, b: 255 })).toEqual({ hue: 0, saturation: 0, brightness: 100 });
@@ -32,12 +44,18 @@ describe("color conversion", () => {
   });
 });
 
+// ----- Resolution des canaux DMX d'un projecteur RGB -----
 describe("DMX channel resolution", () => {
+  // Sans config explicite, le mapping RGB est deduit des capabilities des canaux.
+  // source: "capability" indique cette origine. Adresse 1 => canaux 1/2/3.
   it("infers RGB mapping from capabilities", () => {
     const mapping = resolveRgbChannels(baseFixture);
     expect(mapping).toEqual({ r: 1, g: 2, b: 3, universe: 0, source: "capability", address: 1 });
   });
 
+  // Si la config HomeKit fournit des dmxChannels explicites, ils priment.
+  // Ces offsets sont relatifs a l'adresse de depart : adresse 10 + offset 2/3/5
+  // => canaux absolus 11/12/14. source: "config" marque cette priorite.
   it("uses explicit HomeKit dmxChannels when provided", () => {
     const fixture: Fixture = {
       ...baseFixture,
@@ -48,6 +66,8 @@ describe("DMX channel resolution", () => {
     expect(mapping).toEqual({ r: 11, g: 12, b: 14, universe: 0, source: "config", address: 10 });
   });
 
+  // Un projecteur sans canaux RGB (ici un simple variateur "intensity") ne peut
+  // pas devenir une ampoule HomeKit : il doit etre ecarte et liste dans "skipped".
   it("skips fixtures that are not RGB-capable", () => {
     const fixtures: Fixture[] = [
       baseFixture,

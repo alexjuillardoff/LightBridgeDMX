@@ -1,7 +1,12 @@
+// FixtureForm : formulaire d'ajout d'un projecteur (fixture).
+// L'utilisateur saisit un nom, une adresse DMX de depart, un univers DMX et choisit un modele
+// (template) de canaux. A la validation, on envoie le tout au parent via onSubmit, puis on
+// reinitialise le formulaire.
 import { FormEvent, useState } from "react";
 import { FixtureChannel } from "@lightbridgedmx/shared";
 import { fixtureTemplates, FixtureTemplateKey } from "../lib/fixtureTemplates";
 
+// Etat local du formulaire (champs saisis).
 type FixtureFormState = {
   name: string;
   address: number;
@@ -15,6 +20,7 @@ type FixtureFormProps = {
   error?: Error | null;
 };
 
+// Valeurs par defaut a l'ouverture (et apres un ajout reussi) : adresse 1, univers 0, modele RGB.
 const initialForm: FixtureFormState = {
   name: "",
   address: 1,
@@ -25,6 +31,8 @@ const initialForm: FixtureFormState = {
 export const FixtureForm = ({ onSubmit, isLoading, error }: FixtureFormProps) => {
   const [form, setForm] = useState<FixtureFormState>(initialForm);
 
+  // Validation du formulaire : on resout le modele de canaux choisi, on construit le contenu
+  // (payload) et on le transmet au parent. En cas de succes, on remet le formulaire a zero.
   const handleSubmit = async (evt: FormEvent) => {
     evt.preventDefault();
     const template = fixtureTemplates[form.template];
@@ -32,6 +40,7 @@ export const FixtureForm = ({ onSubmit, isLoading, error }: FixtureFormProps) =>
 
     try {
       await onSubmit({
+        // Nom par defaut si l'utilisateur n'en saisit pas : "Fixture <adresse>".
         name: form.name || `Fixture ${form.address}`,
         address: Number(form.address),
         universe: Number(form.universe),
@@ -39,7 +48,7 @@ export const FixtureForm = ({ onSubmit, isLoading, error }: FixtureFormProps) =>
       });
       setForm(initialForm);
     } catch {
-      // Error handled upstream via mutation state.
+      // Erreur geree en amont via l'etat de la mutation (on ne fait rien ici).
     }
   };
 

@@ -15,16 +15,21 @@ import {
 import { api } from "../../lib/api";
 
 /**
- * 3D editor for the per-zone physical layout of a smart light strip.
+ * Editeur 3D de la disposition (layout) physique, zone par zone, d'un bandeau LED (strip)
+ * d'une lampe connectee (smart light).
  *
- * Two modes:
- *   • Linked (default) — consecutive zones share an endpoint, forming a polyline.
- *     User edits N+1 points (50 zones → 51 handles).
- *   • Unlinked — every zone segment is independent.
- *     User edits 2N points (100 handles), useful for branched / disjoint layouts.
+ * Role : permet a l'utilisateur de placer dans l'espace chaque zone du bandeau, pour que
+ * le moteur d'effets sensible a la position (position-aware) sache ou se trouve chaque LED.
  *
- * Default layout: linear horizontal strip from x=0 to x=1.
- * User can drag any handle in 3D space (constrained to the XZ plane by default; Y unlocks via shift).
+ * Deux modes :
+ *   - Linked (par defaut) — les zones consecutives partagent un point d'extremite et
+ *     forment une polyligne. L'utilisateur edite N+1 points (50 zones -> 51 poignees).
+ *   - Unlinked — chaque segment de zone est independant.
+ *     L'utilisateur edite 2N points (100 poignees), utile pour les layouts ramifies / disjoints.
+ *
+ * Disposition par defaut : strip lineaire horizontal de x=0 a x=1.
+ * L'utilisateur peut deplacer (drag) chaque poignee dans l'espace 3D. Le deplacement est
+ * contraint au plan XZ par defaut ; on libere l'axe Y en decochant "Verrouiller Y".
  */
 export const LayoutEditor3D = ({
   light,
@@ -33,8 +38,10 @@ export const LayoutEditor3D = ({
   light: SmartLight;
   onUpdated: (light: SmartLight) => void;
 }) => {
+  // Nombre de zones du bandeau (50 par defaut pour le NL72K3).
   const zoneCount = light.streaming?.zoneCount ?? 50;
 
+  // Layout de depart : celui deja enregistre sur la lampe, sinon un strip lineaire genere.
   const initialLayout = useMemo<SmartLightZoneLayout>(() => {
     if (light.zoneLayout) return light.zoneLayout;
     return makeLinearLayout(zoneCount);
@@ -42,12 +49,15 @@ export const LayoutEditor3D = ({
 
   const [layout, setLayout] = useState<SmartLightZoneLayout>(initialLayout);
   const [mode, setMode] = useState<"linked" | "unlinked">(layout.mode ?? "linked");
+  // yLocked : si vrai, le drag reste dans le plan horizontal XZ (l'altitude Y ne bouge pas).
   const [yLocked, setYLocked] = useState(true);
   const [selectedZone, setSelectedZone] = useState<number | null>(null);
+  // hideSpare : masque les zones spare (LED non cablees) pour ne pas encombrer la vue 3D.
   const [hideSpare, setHideSpare] = useState(true);
 
-  // U-shape preset inputs (back/left/front/right counts in strip-traversal order +
-  // room dimensions). Spare zones default to the START of the strip (controller end).
+  // Champs du preset U-shape : nombre de zones par cote (fond/gauche/avant/droit) dans
+  // l'ordre de parcours du strip, plus les dimensions de la piece.
+  // Les zones spare sont placees par defaut au DEBUT du strip (cote controleur).
   const totalActive = zoneCount - (layout.spareZones?.length ?? 0);
   const [showUForm, setShowUForm] = useState(false);
   const [uBack, setUBack] = useState(Math.floor(totalActive / 4));
@@ -58,8 +68,8 @@ export const LayoutEditor3D = ({
   const [uDepth, setUDepth] = useState(3);
   const [uSpareAtStart, setUSpareAtStart] = useState(true);
 
-  // Room loop preset (7 sections — see buildRoomLoopLayout for the path).
-  // Defaults seeded to match the precise NL72K3 mapping captured on 2026-05-19.
+  // Preset Room loop (7 sections — voir buildRoomLoopLayout pour le trace exact).
+  // Les valeurs par defaut reprennent le mapping precis du NL72K3 releve le 2026-05-19.
   const [showRoomForm, setShowRoomForm] = useState(false);
   const [rBackRightFloor, setRBackRightFloor] = useState(5);
   const [rBackRightUp,    setRBackRightUp]    = useState(2);
@@ -72,19 +82,24 @@ export const LayoutEditor3D = ({
   const [rDepth,          setRDepth]          = useState(3);
   const [rHeight,         setRHeight]         = useState(2.5);
 
+  // Ensemble des index de zones spare, pour un test d'appartenance rapide (O(1)).
   const spareSet = useMemo(() => new Set(layout.spareZones ?? []), [layout.spareZones]);
 
+  // Sauvegarde du layout cote serveur via l'API ; previent le parent au succes.
   const apply = useMutation(
     (next: SmartLightZoneLayout) => api.smartLights.setLayout(light.id, next),
     { onSuccess: onUpdated }
   );
 
+  // Deplace une extremite (start ou end) d'une zone. En mode linked, on propage le point
+  // deplace au voisin qui le partage pour que la polyligne reste connectee.
   const movePoint = (zoneIndex: number, end: "start" | "end", next: Point3D) => {
     setLayout((prev) => {
+      // Copie en profondeur des segments pour ne pas muter l'etat React precedent.
       const segs = prev.segments.map((s) => ({ start: { ...s.start }, end: { ...s.end } }));
       segs[zoneIndex][end] = next;
       if ((prev.mode ?? "linked") === "linked") {
-        // Propagate the shared endpoint to the neighbor segment so the polyline stays connected.
+        // Propage le point d'extremite partage au segment voisin pour garder la polyligne connectee.
         if (end === "end" && zoneIndex + 1 < segs.length) {
           segs[zoneIndex + 1].start = next;
         }
@@ -96,17 +111,20 @@ export const LayoutEditor3D = ({
     });
   };
 
+  // Remet la disposition en ligne droite.
   const reset = () => {
     const next = makeLinearLayout(zoneCount);
-    // Preserve spareZones across reset (they're a property of the physical strip, not the layout).
+    // On conserve les spareZones au reset : c'est une propriete du strip physique, pas du layout.
     setLayout({ ...next, spareZones: layout.spareZones });
   };
 
+  // Bascule entre les modes linked et unlinked.
   const switchMode = (nextMode: "linked" | "unlinked") => {
     setMode(nextMode);
     setLayout((prev) => ({ ...prev, mode: nextMode }));
   };
 
+  // Genere et applique une disposition en U a partir des champs du formulaire.
   const applyUShape = () => {
     const next = buildUShape({
       totalZones: zoneCount,
@@ -122,6 +140,7 @@ export const LayoutEditor3D = ({
     setShowUForm(false);
   };
 
+  // Genere et applique la boucle 3D autour de la piece (Room loop) a partir du formulaire.
   const applyRoomLoop = () => {
     const next = buildRoomLoopLayout({
       backRightFloorZones: rBackRightFloor,
@@ -275,6 +294,8 @@ export const LayoutEditor3D = ({
   );
 };
 
+// Scene Three.js : dessine le bandeau (lignes colorees) et les poignees deplacables.
+// Composant interne au Canvas react-three-fiber ; il ne gere pas l'etat, il l'affiche.
 const Scene = ({
   layout,
   mode,
@@ -294,9 +315,10 @@ const Scene = ({
   onSelectZone: (i: number | null) => void;
   onMovePoint: (zone: number, end: "start" | "end", next: Point3D) => void;
 }) => {
-  // Strip rendered as colored lines between each segment's start and end.
-  // If a `sides` mapping exists, color each segment by its side (matches the painter convention).
+  // Le bandeau est dessine sous forme de lignes colorees reliant le start et le end de chaque segment.
+  // Si un mapping `sides` existe, chaque segment prend la couleur de son cote (memes couleurs que le painter).
   const lines = useMemo(() => {
+    // Retourne la couleur du cote (side) qui contient la zone i, ou null si aucun.
     const findSideColor = (i: number): string | null => {
       if (!layout.sides) return null;
       for (const s of layout.sides) {
@@ -308,6 +330,8 @@ const Scene = ({
       .map((seg, i) => {
         const isSpare = spareSet.has(i);
         const sideColor = findSideColor(i);
+        // Priorite des couleurs : zone selectionnee (vert) > spare (gris) > couleur du cote
+        // > a defaut, teinte HSB repartie sur la roue selon l'index pour distinguer les zones.
         const color = selectedZone === i
           ? "#1dd3b0"
           : isSpare
@@ -315,12 +339,14 @@ const Scene = ({
             : sideColor ?? `hsl(${(i * 360) / layout.segments.length}, 70%, 55%)`;
         return { i, isSpare, points: [toV(seg.start), toV(seg.end)] as [THREE.Vector3, THREE.Vector3], color };
       })
+      // Si "Cacher spare" est actif, on retire les segments spare de l'affichage.
       .filter((l) => !(hideSpare && l.isSpare));
   }, [layout, selectedZone, hideSpare, spareSet]);
 
-  // Handle points: in linked mode show N+1 unique points (start of each + end of last);
-  // in unlinked mode show every start and every end (2N).
-  // Spare zones don't get handles when hidden — they're not physically there.
+  // Poignees deplacables :
+  //   - mode linked : N+1 points uniques (le start de chaque zone + le end de la derniere) ;
+  //   - mode unlinked : chaque start et chaque end, soit 2N poignees.
+  // Quand elles sont masquees, les zones spare n'ont pas de poignee : elles ne sont pas physiquement la.
   const handles = useMemo(() => {
     const list: { key: string; pos: Point3D; zoneIndex: number; end: "start" | "end" }[] = [];
     if (mode === "linked") {
@@ -366,8 +392,11 @@ const Scene = ({
   );
 };
 
-/** A small sphere the user can pointer-drag in 3D. Drags are constrained to a plane
- *  (Y locked = XZ horizontal plane; unlocked = XY vertical plane through the camera). */
+/**
+ * Petite sphere que l'utilisateur peut deplacer (drag) a la souris dans la scene 3D.
+ * Le deplacement est contraint a un plan : Y verrouille = plan horizontal XZ ;
+ * Y libere = plan vertical face a la camera (on bouge alors en hauteur).
+ */
 const DraggableHandle = ({
   position,
   yLocked,
@@ -383,6 +412,8 @@ const DraggableHandle = ({
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
 
+  // A chaque trame (frame), on recale la sphere sur la position courante. Cela garde la
+  // poignee synchro avec l'etat React meme quand le point bouge en dehors du drag.
   useFrame(() => {
     if (meshRef.current) {
       meshRef.current.position.set(position.x, position.y, position.z);
@@ -406,8 +437,8 @@ const DraggableHandle = ({
         e.stopPropagation();
         setDragging(true);
         document.body.style.cursor = "grabbing";
-        // Disable orbit on drag start: drei OrbitControls reads pointer events,
-        // and stopPropagation here is enough for it not to engage.
+        // On coupe l'orbite au debut du drag : les OrbitControls de drei lisent les
+        // evenements pointeur, et le stopPropagation ci-dessus suffit a les empecher de s'activer.
       }}
       onPointerUp={() => {
         setDragging(false);
@@ -415,8 +446,10 @@ const DraggableHandle = ({
       }}
       onPointerMove={(e) => {
         if (!dragging) return;
-        // Raycast against the drag plane: a horizontal plane (Y=current) when yLocked,
-        // otherwise a plane through the current point facing the camera.
+        // On lance un rayon (raycast) depuis le curseur vers un plan de drag, puis on prend
+        // le point d'intersection comme nouvelle position de la poignee.
+        //   - yLocked : plan horizontal a l'altitude Y actuelle (on glisse au sol).
+        //   - sinon : plan passant par le point et faisant face a la camera (on glisse en hauteur).
         const plane = new THREE.Plane();
         if (yLocked) {
           plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), new THREE.Vector3(position.x, position.y, position.z));
@@ -438,6 +471,7 @@ const DraggableHandle = ({
         emissive={isSelected ? "#1dd3b0" : "#000000"}
         emissiveIntensity={isSelected ? 0.6 : 0}
       />
+      {/* Au survol, on affiche les coordonnees du point dans une petite etiquette HTML. */}
       {hovered ? (
         <Html distanceFactor={8} style={{ pointerEvents: "none", fontSize: 11, color: "#fff", background: "rgba(0,0,0,0.7)", padding: "2px 6px", borderRadius: 4, whiteSpace: "nowrap" }}>
           {fmt(position)}
@@ -447,15 +481,20 @@ const DraggableHandle = ({
   );
 };
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// ----- helpers -----
 
+// Convertit un Point3D (x,y,z) en Vector3 Three.js pour le rendu.
 const toV = (p: Point3D): THREE.Vector3 => new THREE.Vector3(p.x, p.y, p.z);
+// Formate un point en texte court "x, y, z" arrondi a 2 decimales (etiquettes/affichage).
 const fmt = (p: Point3D) => `${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}`;
 
+// Construit une disposition en ligne droite. Delegue au builder partage pour rester
+// coherent avec le backend et le moteur d'effets.
 function makeLinearLayout(zoneCount: number): SmartLightZoneLayout {
   return buildLinearLayout(zoneCount);
 }
 
+// Champ numerique reutilisable pour les formulaires de presets (cote U-shape, dimensions...).
 const SidesInput = ({
   label,
   value,
@@ -490,6 +529,7 @@ const SidesInput = ({
   </label>
 );
 
+// Styles partages des boutons : primaire (action principale, ex. Enregistrer) et secondaire.
 const buttonStylePrimary: React.CSSProperties = {
   padding: "6px 12px", background: "var(--accent)", color: "#001a14",
   border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13

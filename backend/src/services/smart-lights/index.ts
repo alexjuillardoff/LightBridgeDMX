@@ -1,3 +1,17 @@
+// =============================================================================
+// SmartLightService : registre central des lampes connectees (smart lights).
+//
+// Role : pour chaque lampe (aujourd'hui Nanoleaf, d'autres backends plus tard),
+// ce module garde un etat "voulu" (desired) et l'envoie a l'appareil via deux
+// chemins de sortie :
+//   - HTTP regroupe (coalesce) : envoi PUT /state quand l'etat change (par defaut)
+//   - streaming UDP extControl : flux continu basse latence (~5-15 ms)
+//
+// Il gere aussi le miroir DMX (mirror), le rafraichissement periodique depuis
+// l'appareil (pour suivre les apps externes), les effets et le Mode Dance.
+// Il herite d'EventEmitter et emet "light_updated" a chaque changement d'etat ;
+// la couche WebSocket re-diffuse (broadcast) l'evenement aux clients.
+// =============================================================================
 import { EventEmitter } from "node:events";
 import type { FastifyBaseLogger } from "fastify";
 import {
@@ -15,48 +29,52 @@ import { defaultLinearLayout, evaluateEffect } from "./effect-engine";
 import { NanoleafApiError, NanoleafClient, rgbToHsv } from "./nanoleaf-client";
 import { NanoleafStreamer } from "./nanoleaf-streamer";
 
+// Etat de fonctionnement (runtime) garde en memoire pour chaque lampe.
+// Ce n'est PAS persiste tel quel ; seul `light` reflete la base SQLite.
 type RuntimeEntry = {
   light: SmartLight;
   client: NanoleafClient | null;
   streamer: NanoleafStreamer | null;
-  /** Last state we successfully pushed via HTTP. */
+  /** Dernier etat envoye avec succes via HTTP. */
   lastPushed: SmartLightState | null;
-  /** Desired state — diffed against lastPushed by the flush loop. */
+  /** Etat voulu — compare a lastPushed par la boucle de flush. */
   desired: SmartLightState;
-  /** Optional per-zone palette — when set, streamer pushes this instead of uniform color.
-   *  Cleared when a uniform-color write arrives via setState/applyState. */
+  /** Palette par zone optionnelle — si presente, le streamer l'envoie au lieu d'une couleur uniforme.
+   *  Effacee des qu'une ecriture de couleur uniforme arrive via setState/applyState. */
   zonePalette: SmartLightZonePalette | null;
-  /** Timestamp of last successful network call (HTTP push). */
+  /** Horodatage du dernier appel reseau reussi (push HTTP). */
   lastPushAt: number;
-  /** Concurrent HTTP push guard. */
+  /** Garde-fou anti-concurrence : un seul push HTTP en cours a la fois. */
   inflight: boolean;
-  /** Timestamp of last local write — refresh from device only fires if quiescent. */
+  /** Horodatage de la derniere ecriture locale — le refresh depuis l'appareil
+   *  ne se declenche que si l'on est reste calme (quiescent) depuis ce moment. */
   lastLocalWriteAt: number;
-  /** When true, Dance mode owns this device — streamAll() bypasses currentEffect and
-   *  desired.on so the dance can paint zones over whatever ambient state is configured.
-   *  Set via setDanceClaim(); does NOT persist to DB. */
+  /** Si true, le Mode Dance possede cet appareil — streamAll() ignore currentEffect et
+   *  desired.on pour que la dance puisse peindre les zones par-dessus l'etat ambiant configure.
+   *  Defini via setDanceClaim() ; n'est PAS persiste en base. */
   danceClaim: boolean;
 };
 
-const MIN_PUSH_INTERVAL_MS = 70;     // HTTP rate limit per device — ~14 writes/s
-const FLUSH_INTERVAL_MS = 30;        // ~33 Hz coalesce tick (HTTP path)
-const STREAM_INTERVAL_MS = 33;       // ~30 Hz streaming frame cadence (UDP path)
-const REFRESH_INTERVAL_MS = 5000;    // periodic refresh from device
-const REFRESH_QUIESCENT_MS = 2000;   // don't refresh if user wrote within this window
+// Valeurs en dur de cadence reseau. Choisies pour ne pas saturer l'appareil.
+const MIN_PUSH_INTERVAL_MS = 70;     // throttle HTTP par appareil — ~14 ecritures/s
+const FLUSH_INTERVAL_MS = 30;        // tick de regroupement (coalesce) ~33 Hz (chemin HTTP)
+const STREAM_INTERVAL_MS = 33;       // cadence des trames de streaming ~30 Hz (chemin UDP)
+const REFRESH_INTERVAL_MS = 5000;    // refresh periodique depuis l'appareil
+const REFRESH_QUIESCENT_MS = 2000;   // ne pas refresh si l'utilisateur a ecrit dans cette fenetre
 
 /**
- * Manages a registry of "smart lights" (Nanoleaf today, more backends later) with two
- * output paths:
- *   • HTTP coalesced PUT /state (default, ~100 ms latency, no extra device state)
- *   • UDP extControl v2 streaming (~5–15 ms latency, requires streamer.enable())
+ * Gere un registre de "smart lights" (Nanoleaf aujourd'hui, d'autres backends
+ * plus tard) avec deux chemins de sortie :
+ *   - HTTP regroupe PUT /state (par defaut, ~100 ms de latence, sans etat supplementaire sur l'appareil)
+ *   - streaming UDP extControl v2 (~5-15 ms de latence, necessite streamer.enable())
  *
- * Plus:
- *   • Bidirectional DMX mirror (mirror RGB/brightness from configured DMX channels)
- *   • Periodic state refresh from device (so external apps editing the strip stay in sync)
- *   • Effects pass-through (selectEffect via NanoleafClient)
+ * En plus :
+ *   - miroir DMX bidirectionnel (recopie RGB/luminosite depuis des canaux DMX configures)
+ *   - refresh periodique de l'etat depuis l'appareil (pour rester synchro avec les apps externes)
+ *   - relais des effets (selectEffect via NanoleafClient)
  *
- * Emits "light_updated" whenever a smart light's state changes (after a successful push
- * or after a sync from device). Listeners (websocket layer) re-broadcast.
+ * Emet "light_updated" a chaque changement d'etat d'une lampe (apres un push
+ * reussi ou apres une synchro depuis l'appareil). Les ecouteurs (couche WebSocket) re-diffusent.
  */
 export class SmartLightService extends EventEmitter {
   private readonly logger: FastifyBaseLogger;
@@ -76,6 +94,8 @@ export class SmartLightService extends EventEmitter {
     this.tickHandler = (state) => this.onDmxTick(state);
   }
 
+  // Demarre le service : charge les lampes depuis la base, branche le tick DMX
+  // et lance les trois boucles periodiques (flush HTTP, streaming UDP, refresh).
   async start(): Promise<void> {
     const lights = await this.store.listSmartLights();
     for (const light of lights) await this.registerInternal(light);
@@ -86,12 +106,14 @@ export class SmartLightService extends EventEmitter {
     this.refreshTimer = setInterval(() => this.refreshAllIfQuiescent(), REFRESH_INTERVAL_MS);
     this.logger.info({ count: lights.length }, "SmartLightService started");
 
-    // Best-effort initial sync from each device so the UI shows a real state.
+    // Synchro initiale "au mieux" depuis chaque appareil pour que l'UI affiche un etat reel.
     for (const entry of this.runtime.values()) {
       void this.refreshFromDevice(entry);
     }
   }
 
+  // Arrete le service : coupe les boucles, debranche le tick DMX et desactive
+  // les streamers UDP encore actifs avant de vider le registre.
   async stop(): Promise<void> {
     if (this.flushTimer) clearInterval(this.flushTimer);
     if (this.streamTimer) clearInterval(this.streamTimer);
@@ -104,18 +126,21 @@ export class SmartLightService extends EventEmitter {
     this.runtime.clear();
   }
 
+  // Enregistre (ou met a jour) une lampe et tente une synchro immediate avec l'appareil.
   async register(light: SmartLight): Promise<void> {
     await this.registerInternal(light);
     const entry = this.runtime.get(light.id);
     if (entry) void this.refreshFromDevice(entry);
   }
 
+  // Retire une lampe du registre et coupe son streamer UDP s'il tournait.
   async unregister(id: string): Promise<void> {
     const entry = this.runtime.get(id);
     if (entry?.streamer) await entry.streamer.disable().catch(() => {});
     this.runtime.delete(id);
   }
 
+  // Liste toutes les lampes en y injectant l'etat voulu courant (pour l'API/UI).
   listWithState(): SmartLight[] {
     return [...this.runtime.values()].map((entry) => ({
       ...entry.light,
@@ -123,12 +148,16 @@ export class SmartLightService extends EventEmitter {
     }));
   }
 
+  // Renvoie une lampe precise avec son etat voulu courant, ou undefined si inconnue.
   getWithState(id: string): SmartLight | undefined {
     const entry = this.runtime.get(id);
     if (!entry) return undefined;
     return { ...entry.light, state: entry.desired };
   }
 
+  // Applique une modification d'etat (couleur, on/off, luminosite...) a la lampe.
+  // On ne fait que mettre a jour l'etat "desired" en memoire ; l'envoi reel a
+  // l'appareil est fait plus tard par la boucle flushAll (chemin HTTP).
   applyState(id: string, patch: SmartLightStateInput): SmartLight | undefined {
     const entry = this.runtime.get(id);
     if (!entry) return undefined;
@@ -136,11 +165,14 @@ export class SmartLightService extends EventEmitter {
 
     const next: SmartLightState = { ...entry.desired };
     if (patch.rgb) {
+      // Nanoleaf raisonne en HSB ; on convertit donc le RGB recu en teinte/saturation.
       const { h, s, v } = rgbToHsv(patch.rgb.r, patch.rgb.g, patch.rgb.b);
       next.hue = h;
       next.sat = s;
       next.colorMode = "hs";
+      // La luminosite n'est deduite du RGB que si l'appelant ne l'a pas precisee a part.
       if (patch.brightness === undefined) next.brightness = v;
+      // Pratique : envoyer une couleur non noire sans dire on:true rallume la lampe.
       if (patch.on === undefined && (patch.rgb.r > 0 || patch.rgb.g > 0 || patch.rgb.b > 0)) {
         next.on = true;
       }
@@ -161,11 +193,11 @@ export class SmartLightService extends EventEmitter {
     }
 
     entry.desired = next;
-    entry.zonePalette = null; // uniform-color write clears any per-zone palette
+    entry.zonePalette = null; // une ecriture de couleur uniforme efface toute palette par zone
     return { ...entry.light, state: next };
   }
 
-  /** Push a per-zone palette via the streamer. Requires streaming.enabled = true. */
+  /** Envoie une palette par zone via le streamer. Necessite streaming.enabled = true. */
   applyZones(id: string, palette: SmartLightZonePalette): SmartLight | undefined {
     const entry = this.runtime.get(id);
     if (!entry) return undefined;
@@ -178,7 +210,9 @@ export class SmartLightService extends EventEmitter {
     return { ...entry.light, state: entry.desired };
   }
 
-  /** Select a builtin effect. Effect mode persists until next setState. */
+  /** Selectionne un effet integre a l'appareil. Le mode effet reste actif
+   *  jusqu'au prochain setState. NB : on coupe d'abord le streaming, car le flux
+   *  UDP et un effet embarque ne peuvent pas piloter la lampe en meme temps. */
   async selectEffect(id: string, effectName: string): Promise<SmartLight | undefined> {
     const entry = this.runtime.get(id);
     if (!entry?.client) return undefined;
@@ -190,13 +224,15 @@ export class SmartLightService extends EventEmitter {
     return { ...entry.light, state: entry.desired };
   }
 
+  // Renvoie la liste des effets integres disponibles sur l'appareil.
   async listEffects(id: string): Promise<string[]> {
     const entry = this.runtime.get(id);
     if (!entry?.client) throw new Error("Unknown smart light or no client");
     return entry.client.listEffects();
   }
 
-  /** Set or clear the active effect. Persists to DB; engine picks it up on next stream tick. */
+  /** Definit ou efface l'effet actif (moteur d'effets local, pas l'appareil).
+   *  Persiste en base ; le moteur le prend en compte au prochain tick de streaming. */
   async setEffect(id: string, effect: SmartLightEffectConfig | null): Promise<SmartLight | undefined> {
     const entry = this.runtime.get(id);
     if (!entry) return undefined;
@@ -207,7 +243,8 @@ export class SmartLightService extends EventEmitter {
     return { ...updated, state: entry.desired };
   }
 
-  /** Update the per-zone physical layout (start/end coords of every zone). */
+  /** Met a jour la disposition (layout) physique par zone : coordonnees de
+   *  debut/fin de chaque zone. Sert au moteur d'effets sensible a la position. */
   async setLayout(id: string, layout: SmartLightZoneLayout | null): Promise<SmartLight | undefined> {
     const entry = this.runtime.get(id);
     if (!entry) return undefined;
@@ -217,12 +254,14 @@ export class SmartLightService extends EventEmitter {
     return { ...updated, state: entry.desired };
   }
 
-  /** Enable/disable streaming for a light. Persists user choice + restarts UDP socket. */
+  /** Active/desactive le streaming UDP pour une lampe. Persiste le choix de
+   *  l'utilisateur et (re)demarre le socket UDP en consequence. */
   async setStreaming(id: string, enabled: boolean, zoneCount?: number): Promise<SmartLight | undefined> {
     const entry = this.runtime.get(id);
     if (!entry?.client) return undefined;
 
     if (enabled) {
+      // Nombre de zones : valeur fournie, sinon celle deja connue, sinon 50 (NL72K3).
       const zc = zoneCount ?? entry.light.streaming?.zoneCount ?? 50;
       if (!entry.streamer) {
         entry.streamer = new NanoleafStreamer({
@@ -249,22 +288,23 @@ export class SmartLightService extends EventEmitter {
   }
 
   /**
-   * Register or update a light in the runtime. CRITICAL: re-uses the existing client
-   * and streamer when possible — recreating either on every config update was causing
-   * multiple UDP sockets to fight over the device (visible flicker) because the old
-   * streamer's keepalive kept running after a new one was installed.
+   * Enregistre ou met a jour une lampe dans le runtime.
+   * ATTENTION : on reutilise le client et le streamer existants tant que possible.
+   * Les recreer a chaque mise a jour de config faisait que plusieurs sockets UDP
+   * se battaient pour piloter l'appareil (scintillement visible) : le keepalive de
+   * l'ancien streamer continuait a tourner apres l'installation du nouveau.
    *
-   * Streamer is only torn down + recreated when:
-   *   • The light's host or port changed (different physical device)
-   *   • The user explicitly toggled streaming off (handled by setStreaming, not here)
-   * Otherwise, the existing streamer is kept and its zoneCount is updated in place.
+   * Le streamer n'est detruit + recree que si :
+   *   - l'host ou le port de la lampe a change (autre appareil physique) ;
+   *   - l'utilisateur a explicitement coupe le streaming (gere par setStreaming, pas ici).
+   * Sinon on garde le streamer existant et on met juste a jour son zoneCount sur place.
    */
   private async registerInternal(light: SmartLight): Promise<void> {
     const existing = this.runtime.get(light.id);
     const isNanoleaf = light.backend === "nanoleaf-http" && light.config.type === "nanoleaf-http";
 
     // ── Client ─────────────────────────────────────────────────────────────
-    // Re-use existing client unless the host or token changed.
+    // On reutilise le client existant sauf si l'host ou le token a change.
     let client: NanoleafClient | null = existing?.client ?? null;
     if (isNanoleaf) {
       const prevConfig = existing?.light.config.type === "nanoleaf-http" ? existing.light.config : null;
@@ -286,8 +326,8 @@ export class SmartLightService extends EventEmitter {
     }
 
     // ── Streamer ────────────────────────────────────────────────────────────
-    // Re-use existing streamer if the host hasn't changed. Update its zone count
-    // in place. Only call enable() if the streamer isn't already enabled.
+    // On reutilise le streamer existant si l'host n'a pas change. On met a jour
+    // son nombre de zones sur place. On n'appelle enable() que s'il ne l'est pas deja.
     let streamer: NanoleafStreamer | null = existing?.streamer ?? null;
     const wantStreaming = isNanoleaf && light.streaming?.enabled === true && !!light.config.token;
     const zc = (isNanoleaf && light.streaming?.zoneCount) || 50;
@@ -314,8 +354,9 @@ export class SmartLightService extends EventEmitter {
         }
       } else {
         streamer.setZoneCount(zc);
-        // Don't re-call enable() if already enabled — guard exists in streamer but
-        // skipping it avoids any chance of duplicate setInterval-side keepalives.
+        // On ne rappelle pas enable() s'il est deja actif : le streamer a deja un
+        // garde-fou, mais sauter l'appel evite tout risque de doubler les keepalive
+        // (setInterval) cote streamer.
         if (!streamer.isEnabled()) {
           try {
             await streamer.enable();
@@ -325,11 +366,14 @@ export class SmartLightService extends EventEmitter {
         }
       }
     } else if (streamer) {
-      // Streaming disabled (or backend changed) — tear down any leftover streamer.
+      // Streaming desactive (ou backend change) — on detruit le streamer qui traine.
       await streamer.disable().catch(() => {});
       streamer = null;
     }
 
+    // On conserve un maximum d'etat runtime existant (lastPushed, desired, palette...)
+    // pour ne pas perdre la couleur/luminosite courante lors d'une simple mise a jour
+    // de config. Les valeurs par defaut ne servent qu'au tout premier enregistrement.
     this.runtime.set(light.id, {
       light,
       client,
@@ -347,14 +391,15 @@ export class SmartLightService extends EventEmitter {
   }
 
   /**
-   * Mark a smart light as owned by Dance mode (or release it). When claimed:
-   *   • streamAll() ignores `currentEffect` and `desired.on` for this device
-   *   • The next call to applyZones() drives the strip
-   * When released, the effect & ambient state resume on the next stream tick. The
-   * persisted state (effect, layout, streaming flag) is untouched.
+   * Reserve (claim) une lampe pour le Mode Dance, ou la libere. Quand elle est reservee :
+   *   - streamAll() ignore `currentEffect` et `desired.on` pour cet appareil ;
+   *   - le prochain appel a applyZones() pilote le bandeau.
+   * A la liberation, l'effet et l'etat ambiant reprennent au prochain tick de streaming.
+   * L'etat persiste (effet, layout, drapeau streaming) n'est pas touche.
    *
-   * Returns true if the claim was applied. Returns false if the light isn't
-   * registered or streaming isn't enabled (Dance can't drive an HTTP-only device).
+   * Renvoie true si la reservation a ete appliquee. Renvoie false si la lampe n'est
+   * pas enregistree ou si le streaming n'est pas actif (Dance ne peut pas piloter un
+   * appareil en HTTP seul).
    */
   setDanceClaim(id: string, claimed: boolean): boolean {
     const entry = this.runtime.get(id);
@@ -362,13 +407,15 @@ export class SmartLightService extends EventEmitter {
     if (claimed && !entry.streamer?.isEnabled()) return false;
     entry.danceClaim = claimed;
     if (!claimed) {
-      // Drop the dance-painted palette so the next stream tick falls back to
-      // currentEffect / ambient color.
+      // On efface la palette peinte par la dance pour que le prochain tick de
+      // streaming retombe sur currentEffect / la couleur ambiante.
       entry.zonePalette = null;
     }
     return true;
   }
 
+  // Lit l'etat reel de l'appareil et le recopie dans desired/lastPushed. En cas
+  // d'echec reseau, marque la lampe comme non joignable (reachable = false).
   private async refreshFromDevice(entry: RuntimeEntry): Promise<void> {
     if (!entry.client || !entry.light.config.token) return;
     try {
@@ -377,6 +424,7 @@ export class SmartLightService extends EventEmitter {
       entry.lastPushed = entry.desired;
       this.emit("light_updated", { ...entry.light, state: entry.desired });
     } catch (err) {
+      // 401 = token invalide : il faut refaire l'appairage (pairing) de l'appareil.
       if (err instanceof NanoleafApiError && err.status === 401) {
         this.logger.warn({ id: entry.light.id }, "Nanoleaf token invalid — re-pair the device");
       } else {
@@ -387,26 +435,30 @@ export class SmartLightService extends EventEmitter {
     }
   }
 
-  /** Refresh lights that haven't received a local write in REFRESH_QUIESCENT_MS.
-   *  This catches external mutations (Apple Home, Nanoleaf app) without fighting the user. */
+  /** Rafraichit les lampes qui n'ont pas recu d'ecriture locale depuis
+   *  REFRESH_QUIESCENT_MS. Cela rattrape les changements externes (app Maison,
+   *  app Nanoleaf) sans entrer en conflit avec ce que fait l'utilisateur. */
   private refreshAllIfQuiescent(): void {
     const now = Date.now();
     for (const entry of this.runtime.values()) {
-      // Streaming mode owns the strip entirely — no point refreshing.
+      // En mode streaming, on possede entierement le bandeau — refresh inutile.
       if (entry.streamer?.isEnabled()) continue;
       if (now - entry.lastLocalWriteAt < REFRESH_QUIESCENT_MS) continue;
-      // Only refresh if our diff is settled (we're not mid-push of a queued change).
+      // On ne refresh que si notre diff est stabilise (pas en train de pousser un changement en attente).
       const diff = computeStateDiff(entry.lastPushed, entry.desired);
       if (diff) continue;
       void this.refreshFromDevice(entry);
     }
   }
 
-  /** DMX tick → update desired state of any DMX-mirrored light. */
+  /** Tick DMX -> met a jour l'etat voulu de toute lampe avec un miroir DMX (mirror).
+   *  C'est le sens DMX -> lampe : les canaux DMX configures pilotent la smart light. */
   private onDmxTick(state: UniverseState): void {
     for (const entry of this.runtime.values()) {
       const mirror = entry.light.dmxMirror;
       if (!mirror) continue;
+      // Les adresses DMX sont en base 1 (canal 1 a 512) ; le tableau values est en
+      // base 0, d'ou le -1. On renvoie undefined si le canal n'est pas configure.
       const read = (channel?: number) =>
         channel && channel >= 1 && channel <= 512 ? state.values[channel - 1] : undefined;
 
@@ -415,6 +467,7 @@ export class SmartLightService extends EventEmitter {
       const b = read(mirror.bChannel);
       const bri = read(mirror.briChannel);
 
+      // Aucun des canaux miroir n'est cable pour ce projecteur : rien a faire.
       if (r === undefined && g === undefined && b === undefined && bri === undefined) continue;
 
       const next: SmartLightState = { ...entry.desired };
@@ -424,31 +477,36 @@ export class SmartLightService extends EventEmitter {
         next.hue = h;
         next.sat = s;
         next.colorMode = "hs";
+        // Si aucun canal d'intensite (briChannel) dedie, la luminosite vient du RGB.
         if (bri === undefined) {
           next.brightness = v;
           next.on = v > 0;
         }
       }
+      // Un canal d'intensite explicite a la priorite : il fixe la luminosite et le on/off.
       if (bri !== undefined) {
         next.brightness = (bri / 255) * 100;
         next.on = bri > 0;
       }
 
       entry.desired = next;
-      entry.zonePalette = null; // DMX mirror is a uniform write
+      entry.zonePalette = null; // le miroir DMX est une ecriture de couleur uniforme
       entry.lastLocalWriteAt = Date.now();
     }
   }
 
-  /** HTTP path: walk every NON-streaming light and push diffs. */
+  /** Chemin HTTP : parcourt chaque lampe NON streaming et pousse les differences.
+   *  C'est ici qu'on respecte le throttle (MIN_PUSH_INTERVAL_MS) et qu'on evite
+   *  d'empiler deux requetes HTTP simultanees (garde inflight). */
   private flushAll(): void {
     const now = Date.now();
     for (const entry of this.runtime.values()) {
       if (!entry.client || !entry.light.config.token) continue;
-      if (entry.streamer?.isEnabled()) continue; // streaming owns the device
+      if (entry.streamer?.isEnabled()) continue; // le streaming possede l'appareil
       if (entry.inflight) continue;
       if (now - entry.lastPushAt < MIN_PUSH_INTERVAL_MS) continue;
 
+      // On n'envoie que ce qui a change ; si rien n'a bouge, on saute cette lampe.
       const diff = computeStateDiff(entry.lastPushed, entry.desired);
       if (!diff) continue;
 
@@ -466,6 +524,8 @@ export class SmartLightService extends EventEmitter {
           this.logger.warn({ err, id: entry.light.id }, "Failed to push smart light state");
           entry.desired = { ...entry.desired, reachable: false };
           this.emit("light_updated", { ...entry.light, state: entry.desired });
+          // En cas d'echec, on repousse le prochain essai de 500 ms (cooldown)
+          // pour ne pas marteler un appareil injoignable.
           entry.lastPushAt = Date.now() + 500;
         } finally {
           entry.inflight = false;
@@ -474,24 +534,25 @@ export class SmartLightService extends EventEmitter {
     }
   }
 
-  /** UDP path: for each streaming light, push the current desired state every ~33 ms.
-   *  We send EVERY tick (not just on diff) because:
-   *    1. UDP is cheap (no TCP handshake)
-   *    2. Continuous frames keep the device in extControl mode (it exits otherwise)
-   *    3. Late-arriving DMX changes get applied in the next tick automatically
+  /** Chemin UDP : pour chaque lampe en streaming, envoie l'etat voulu courant toutes les ~33 ms.
+   *  On envoie a CHAQUE tick (pas seulement sur diff) parce que :
+   *    1. l'UDP est peu couteux (pas de poignee de main TCP) ;
+   *    2. un flux continu garde l'appareil en mode extControl (il en sort sinon) ;
+   *    3. un changement DMX arrive en retard est applique automatiquement au tick suivant.
    *
-   *  Priority order, highest first:
-   *    1. currentEffect set  → EffectEngine computes per-zone frame
-   *    2. zonePalette set    → static per-zone palette (from /zones API)
-   *    3. otherwise          → uniform color from desired HSB
+   *  Ordre de priorite, du plus fort au plus faible :
+   *    1. currentEffect defini -> le moteur d'effets (EffectEngine) calcule une trame par zone
+   *    2. zonePalette definie  -> palette statique par zone (via l'API /zones)
+   *    3. sinon                -> couleur uniforme issue du HSB de desired
    */
   private streamAll(): void {
     const tNow = Date.now() / 1000;
     for (const entry of this.runtime.values()) {
       const s = entry.streamer;
       if (!s?.isEnabled()) continue;
-      // Dance mode owns the device: bypass currentEffect priority and the
-      // desired.on guard. Whatever palette DanceService just pushed (or none) wins.
+      // Le Mode Dance possede l'appareil : on court-circuite la priorite de
+      // currentEffect et la garde desired.on. C'est la palette que DanceService
+      // vient de pousser (ou rien) qui gagne.
       if (entry.danceClaim) {
         if (entry.zonePalette) {
           s.sendZones(entry.zonePalette.zones);
@@ -500,12 +561,15 @@ export class SmartLightService extends EventEmitter {
         }
         continue;
       }
+      // Lampe eteinte : on envoie quand meme du noir a chaque tick pour maintenir
+      // le mode extControl actif (un flux qui s'arrete fait sortir l'appareil du mode).
       if (!entry.desired.on) {
         s.sendUniform({ r: 0, g: 0, b: 0 });
         continue;
       }
       const effect = entry.light.currentEffect;
       if (effect) {
+        // Sans layout configure, on retombe sur une disposition lineaire par defaut.
         const layout = entry.light.zoneLayout ?? defaultLinearLayout(entry.light.streaming?.zoneCount ?? 50);
         const frame = evaluateEffect(effect, layout, tNow);
         s.sendZones(frame.map((c, i) => ({ index: i, r: c.r, g: c.g, b: c.b })));
@@ -521,7 +585,11 @@ export class SmartLightService extends EventEmitter {
   }
 }
 
-/** Return only the fields that changed (within a small tolerance), or null if nothing to push. */
+/** Renvoie uniquement les champs qui ont change (avec une petite tolerance), ou
+ *  null s'il n'y a rien a pousser. Sert a n'envoyer que le minimum a l'appareil.
+ *  NB : on ne compare couleur/luminosite que si la lampe est allumee (next.on) :
+ *  inutile d'envoyer une teinte a une lampe eteinte. La tolerance de 1 evite de
+ *  spammer l'appareil pour des micro-variations dues aux arrondis HSB. */
 function computeStateDiff(
   prev: SmartLightState | null,
   next: SmartLightState
@@ -533,6 +601,7 @@ function computeStateDiff(
     any = true;
   }
   if (next.on) {
+    // En mode "ct" (temperature de couleur) on pousse ct ; sinon on pousse teinte+saturation.
     if (next.colorMode === "ct" && next.ct !== undefined) {
       if (!prev || prev.ct !== next.ct) {
         out.ct = next.ct;
@@ -556,11 +625,14 @@ function computeStateDiff(
   return any ? out : null;
 }
 
-/** HSV (h:0-360, s/v:0-100) → RGB 0-255. Brightness acts as master multiplier on V. */
+/** Convertit HSV (h:0-360, s/v:0-100) en RGB 0-255. La luminosite (brightness)
+ *  agit comme multiplicateur maitre sur V. Utilise pour le chemin streaming UDP,
+ *  qui envoie des couleurs RGB et non du HSB. */
 function hsbToRgb(state: SmartLightState): { r: number; g: number; b: number } {
   const h = state.hue;
   const sn = state.sat / 100;
-  // Apply brightness as a luminance scale on V=1 (so streamed values track the slider).
+  // On applique la luminosite comme une echelle sur V=1, pour que les valeurs
+  // envoyees en streaming suivent fidelement le curseur (slider) de luminosite.
   const vn = state.brightness / 100;
   const c = vn * sn;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));

@@ -1,3 +1,8 @@
+// Store (couche de persistance) : seul point d'acces a la base SQLite via Prisma.
+// Centralise la lecture/ecriture des projecteurs (fixtures), scenes, presets,
+// config du Mode Dance, lampes connectees (smart lights) et snapshots d'univers DMX.
+// Toutes les methodes sont async. La base stocke certains champs complexes en JSON
+// (texte), donc on serialise a l'ecriture et on valide avec Zod a la lecture.
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import {
@@ -14,15 +19,21 @@ import {
   SmartLightSchema
 } from "@lightbridgedmx/shared";
 
+// Erreur metier du store qui porte un code HTTP. Les routes Fastify peuvent ainsi
+// renvoyer le bon statut (404 introuvable, 409 conflit de canaux...) au client.
 export class StoreError extends Error {
   constructor(message: string, public statusCode = 400) {
     super(message);
   }
 }
 
+// Donnees d'entree pour creer un projecteur : on omet id et createdAt
+// (generes par le store), l'id reste optionnel pour pouvoir l'imposer si besoin.
 export type FixtureInput = Omit<Fixture, "id" | "createdAt"> & { id?: string };
 export type FixtureUpdate = Partial<FixtureInput>;
 
+// Forme brute d'une ligne fixture telle que stockee en base : les champs
+// complexes (channels, profile, homekit) y sont du texte JSON, pas des objets.
 type DbFixture = {
   id: string;
   name: string;
@@ -35,6 +46,8 @@ type DbFixture = {
   room: string | null;
 };
 
+// Forme brute d'une ligne smart light en base : config, dmxMirror, streaming,
+// zoneLayout et currentEffect sont stockes en texte JSON (ou NULL si absents).
 type DbSmartLight = {
   id: string;
   name: string;
@@ -48,6 +61,10 @@ type DbSmartLight = {
   createdAt: string;
 };
 
+// Convertit une ligne brute (DbSmartLight) en objet SmartLight valide.
+// On reparse le JSON des champs complexes et on valide le tout avec Zod.
+// Les champs optionnels ne sont ajoutes que s'ils existent (sinon Zod recoit
+// un objet sans la cle, pas une cle a null/undefined).
 function deserializeSmartLight(row: DbSmartLight): SmartLight {
   return SmartLightSchema.parse({
     id: row.id,
@@ -63,6 +80,8 @@ function deserializeSmartLight(row: DbSmartLight): SmartLight {
   });
 }
 
+// Convertit une ligne brute (DbFixture) en objet Fixture valide.
+// Meme principe : on reparse le JSON (channels, profile, homekit) et on valide via Zod.
 function deserializeFixture(row: DbFixture): Fixture {
   return FixtureSchema.parse({
     id: row.id,
@@ -77,6 +96,11 @@ function deserializeFixture(row: DbFixture): Fixture {
   });
 }
 
+// Config par defaut du Mode Dance, utilisee pour l'auto-amorcage (auto-seed)
+// au tout premier acces, quand aucune ligne n'existe encore en base.
+// intervalMinMs/intervalMaxMs : plage aleatoire (en ms) entre deux pas de chenillard.
+// excludePanTilt : par defaut on ne touche pas aux canaux pan/tilt des lyres dans la danse.
+// lyre.msPerPanUnit : duree de deplacement (40 ms par unite de pan) pour caler les mouvements.
 const DEFAULT_DANCE_CONFIG: Omit<DanceConfig, "updatedAt"> = {
   enabled: false,
   rooms: [],
@@ -112,16 +136,22 @@ const DEFAULT_DANCE_CONFIG: Omit<DanceConfig, "updatedAt"> = {
   }
 };
 
+// Classe principale : expose toutes les operations de lecture/ecriture.
+// Une seule instance est partagee dans le backend.
 export class Store {
   private prisma = new PrismaClient();
 
+  // Ouvre la connexion a la base (a appeler au demarrage du backend).
   async connect(): Promise<void> {
     await this.prisma.$connect();
   }
 
+  // Ferme proprement la connexion (a l'arret du backend).
   async disconnect(): Promise<void> {
     await this.prisma.$disconnect();
   }
+
+  // ----- Projecteurs (fixtures) -----
 
   async listFixtures(): Promise<Fixture[]> {
     const rows = await this.prisma.fixture.findMany({ orderBy: { createdAt: "asc" } });
@@ -133,6 +163,9 @@ export class Store {
     return row ? deserializeFixture(row) : undefined;
   }
 
+  // Cree un projecteur. On verifie d'abord qu'aucun de ses canaux ne chevauche
+  // un projecteur deja present (sinon deux projecteurs piloteraient le meme slot DMX).
+  // L'id et la date de creation sont generes ici si l'appelant ne les fournit pas.
   async createFixture(input: FixtureInput): Promise<Fixture> {
     await this.assertChannelAvailability(input);
     const now = new Date().toISOString();
@@ -158,6 +191,8 @@ export class Store {
     return parsed;
   }
 
+  // Met a jour un projecteur existant. On fusionne le patch sur l'objet courant,
+  // puis on re-verifie l'absence de chevauchement de canaux (en s'ignorant soi-meme).
   async updateFixture(id: string, patch: FixtureUpdate): Promise<Fixture> {
     const existing = await this.getFixture(id);
     if (!existing) throw new StoreError("Fixture not found", 404);
@@ -179,9 +214,13 @@ export class Store {
     return parsed;
   }
 
+  // Supprime un projecteur. Le .catch silencieux rend la suppression idempotente :
+  // supprimer un id deja absent ne doit pas faire echouer la requete.
   async deleteFixture(id: string): Promise<void> {
     await this.prisma.fixture.delete({ where: { id } }).catch(() => {});
   }
+
+  // ----- Scenes (etats enregistres rappelables) -----
 
   async listScenes(): Promise<Scene[]> {
     const rows = await this.prisma.scene.findMany({ orderBy: { name: "asc" } });
@@ -193,6 +232,7 @@ export class Store {
     return row ? SceneSchema.parse({ ...row, steps: JSON.parse(row.steps) }) : undefined;
   }
 
+  // Cree une scene. Les pas (steps) sont serialises en JSON pour le stockage.
   async createScene(input: Omit<Scene, "id"> & { id?: string }): Promise<Scene> {
     const scene: Scene = { id: input.id ?? randomUUID(), ...input };
     const parsed = SceneSchema.parse(scene);
@@ -202,15 +242,19 @@ export class Store {
     return parsed;
   }
 
+  // Suppression idempotente d'une scene (voir deleteFixture).
   async deleteScene(id: string): Promise<void> {
     await this.prisma.scene.delete({ where: { id } }).catch(() => {});
   }
+
+  // ----- Presets (reglages predefinis reutilisables) -----
 
   async listPresets(): Promise<Preset[]> {
     const rows = await this.prisma.preset.findMany({ orderBy: { name: "asc" } });
     return rows.map((row) => PresetSchema.parse({ ...row, payload: JSON.parse(row.payload) }));
   }
 
+  // Cree un preset. Son contenu (payload) est serialise en JSON pour le stockage.
   async createPreset(input: Omit<Preset, "id"> & { id?: string }): Promise<Preset> {
     const preset: Preset = { id: input.id ?? randomUUID(), ...input };
     const parsed = PresetSchema.parse(preset);
@@ -220,10 +264,15 @@ export class Store {
     return parsed;
   }
 
+  // Suppression idempotente d'un preset (voir deleteFixture).
   async deletePreset(id: string): Promise<void> {
     await this.prisma.preset.delete({ where: { id } }).catch(() => {});
   }
 
+  // ----- Config du Mode Dance (ligne unique "singleton") -----
+
+  // Lit la config de danse. Il n'y a qu'une seule ligne, identifiee par "singleton".
+  // Si elle n'existe pas encore, on l'auto-amorce (auto-seed) avec les valeurs par defaut.
   async getDanceConfig(): Promise<DanceConfig> {
     const row = await this.prisma.danceConfig.findUnique({ where: { id: "singleton" } });
     if (!row) {
@@ -233,16 +282,17 @@ export class Store {
       });
       return seeded;
     }
-    // `smartLights` column may be missing on rows persisted before the field existed —
-    // Prisma's @default kicks in for new rows but ALTER TABLE on SQLite preserves NULL for
-    // existing rows. Fall back to the default if absent or unparseable.
+    // NB : la colonne `smartLights` peut etre absente sur les lignes enregistrees
+    // avant l'ajout de ce champ. Le @default de Prisma ne s'applique qu'aux nouvelles
+    // lignes ; sur SQLite, un ALTER TABLE laisse NULL pour les lignes existantes.
+    // On retombe donc sur la valeur par defaut si le champ est absent ou illisible.
     let smartLights = DEFAULT_DANCE_CONFIG.smartLights;
     const raw = (row as { smartLights?: string }).smartLights;
     if (raw) {
       try {
         smartLights = JSON.parse(raw);
       } catch {
-        // ignore — keep default
+        // JSON invalide : on ignore et on garde la valeur par defaut.
       }
     }
     return DanceConfigSchema.parse({
@@ -259,11 +309,14 @@ export class Store {
     });
   }
 
+  // Enregistre la config de danse (cree la ligne "singleton" ou la met a jour).
+  // On force updatedAt a maintenant et on serialise en JSON les champs structures.
   async saveDanceConfig(config: DanceConfig): Promise<DanceConfig> {
     const parsed = DanceConfigSchema.parse({
       ...config,
       updatedAt: new Date().toISOString()
     });
+    // Garde-fou : la borne basse de l'intervalle aleatoire ne peut pas depasser la haute.
     if (parsed.intervalMinMs > parsed.intervalMaxMs) {
       throw new StoreError("intervalMinMs must be <= intervalMaxMs", 400);
     }
@@ -287,6 +340,8 @@ export class Store {
     return parsed;
   }
 
+  // ----- Lampes connectees (smart lights) -----
+
   async listSmartLights(): Promise<SmartLight[]> {
     const rows = await this.prisma.smartLight.findMany({ orderBy: { createdAt: "asc" } });
     return rows.map(deserializeSmartLight);
@@ -297,6 +352,8 @@ export class Store {
     return row ? deserializeSmartLight(row) : undefined;
   }
 
+  // Cree une lampe connectee. Les champs structures (config, dmxMirror, streaming,
+  // zoneLayout, currentEffect) sont serialises en JSON, ou stockes NULL si absents.
   async createSmartLight(input: SmartLightInput): Promise<SmartLight> {
     const now = new Date().toISOString();
     const parsed = SmartLightSchema.parse({
@@ -321,6 +378,8 @@ export class Store {
     return parsed;
   }
 
+  // Met a jour une lampe connectee : on fusionne le patch sur l'objet courant,
+  // on valide via Zod, puis on re-serialise les champs JSON pour l'ecriture.
   async updateSmartLight(id: string, patch: Partial<SmartLightInput>): Promise<SmartLight> {
     const existing = await this.getSmartLight(id);
     if (!existing) throw new StoreError("Smart light not found", 404);
@@ -342,10 +401,15 @@ export class Store {
     return parsed;
   }
 
+  // Suppression idempotente d'une lampe connectee (voir deleteFixture).
   async deleteSmartLight(id: string): Promise<void> {
     await this.prisma.smartLight.delete({ where: { id } }).catch(() => {});
   }
 
+  // ----- Pieces (rooms) -----
+
+  // Renvoie la liste triee et dedupliquee des pieces utilisees, en croisant
+  // les projecteurs et les lampes connectees (une piece peut contenir les deux).
   async listRooms(): Promise<string[]> {
     const [fixtureRows, smartRows] = await Promise.all([
       this.prisma.fixture.findMany({
@@ -363,6 +427,12 @@ export class Store {
     return [...set].sort();
   }
 
+  // ----- Snapshots d'univers DMX (etat des 512 canaux) -----
+
+  // Recharge l'instantane (snapshot) des 512 canaux d'un univers DMX, par defaut l'univers 0.
+  // Stocke en base comme un Buffer binaire d'au plus 512 octets ; on le re-eclate
+  // en tableau de 512 entiers (les canaux manquants restent a 0).
+  // Renvoie null si aucun snapshot n'a encore ete enregistre.
   async loadUniverseSnapshot(universe = 0): Promise<number[] | null> {
     const row = await this.prisma.universeSnapshot.findUnique({ where: { universe } });
     if (!row) return null;
@@ -374,6 +444,9 @@ export class Store {
     return out;
   }
 
+  // Enregistre l'instantane (snapshot) des 512 canaux d'un univers DMX.
+  // On borne (clamp) chaque valeur a 0-255 et on arrondit ; toute valeur non finie
+  // (NaN, Infinity) retombe a 0 pour ne jamais ecrire de canal invalide.
   async saveUniverseSnapshot(values: number[], universe = 0): Promise<void> {
     const buf = Buffer.alloc(512);
     for (let i = 0; i < Math.min(values.length, 512); i++) {
@@ -388,6 +461,11 @@ export class Store {
     });
   }
 
+  // ----- Helpers internes : detection de chevauchement de canaux -----
+
+  // Verifie qu'aucun canal du projecteur n'est deja occupe par un autre projecteur.
+  // Deux projecteurs sur le meme slot DMX se piloteraient mutuellement : on l'interdit (409).
+  // ignoreId permet de s'exclure soi-meme lors d'une mise a jour.
   private async assertChannelAvailability(fixture: FixtureInput, ignoreId?: string): Promise<void> {
     const all = await this.listFixtures();
     const ranges = this.computeRanges(fixture);
@@ -400,6 +478,8 @@ export class Store {
     }
   }
 
+  // Calcule la liste des canaux DMX absolus occupes par un projecteur.
+  // Canal absolu = adresse de depart + offset du canal - 1 (les offsets demarrent a 1).
   private computeRanges(fixture: Pick<Fixture, "address" | "channels">): number[] {
     return fixture.channels.map((ch) => fixture.address + ch.channel - 1);
   }

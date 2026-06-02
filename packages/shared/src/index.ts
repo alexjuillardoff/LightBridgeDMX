@@ -1,5 +1,21 @@
+// Package partage @lightbridgedmx/shared : source unique de verite des types.
+//
+// Ce fichier rassemble tous les schemas Zod (et les types TypeScript qu'ils
+// produisent) utilises a la fois par le backend Fastify et le frontend React.
+// Chaque schema sert deux roles : valider les entrees API (corps de requete,
+// presets...) et fournir un type partage cote client et serveur.
+//
+// On y trouve : projecteurs (fixtures) DMX, scenes, presets, etat de l'univers
+// DMX, Mode Dance (chenillard), lampes connectees (smart lights, Nanoleaf),
+// effets position-aware, disposition (layout) 3D des zones, evenements
+// WebSocket, et le parsing des fichiers QXF (bibliotheque de projecteurs).
+// Il contient aussi quelques helpers purs pour construire des layouts 3D,
+// partages tels quels entre backend et frontend.
 import { z } from "zod";
 
+// Liste de toutes les capabilities (roles de canal) reconnues.
+// Une capability decrit ce que pilote un canal DMX : intensite, rouge, pan...
+// "as const" fige le tuple pour que z.enum genere une union de litteraux exacte.
 const capabilities = [
   "intensity",
   "r",
@@ -26,6 +42,9 @@ export const CapabilitySchema = z.enum(capabilities);
 
 export type Capability = z.infer<typeof CapabilitySchema>;
 
+// Override manuel des canaux RGB exposes a HomeKit.
+// Utile quand l'auto-detection des capabilities r/g/b ne suffit pas.
+// Chaque valeur est un canal absolu (1-512) dans l'univers DMX.
 export const FixtureHomeKitDmxSchema = z.object({
   r: z.number().int().min(1).max(512),
   g: z.number().int().min(1).max(512),
@@ -34,6 +53,9 @@ export const FixtureHomeKitDmxSchema = z.object({
 
 export type FixtureHomeKitDmx = z.infer<typeof FixtureHomeKitDmxSchema>;
 
+// Override des canaux d'une lyre (moving head) exposee a HomeKit.
+// Les canaux sont ici relatifs a l'adresse de depart du projecteur, pas absolus.
+// Les valeurs ...Default servent de position de repos pour pan/tilt.
 export const FixtureHomeKitMovingHeadChannelsSchema = z.object({
   dimmerChannel: z.number().int().min(1).optional(),
   shutterChannel: z.number().int().min(1).optional(),
@@ -47,6 +69,9 @@ export const FixtureHomeKitMovingHeadChannelsSchema = z.object({
 
 export type FixtureHomeKitMovingHeadChannels = z.infer<typeof FixtureHomeKitMovingHeadChannelsSchema>;
 
+// Configuration de l'exposition d'un projecteur dans HomeKit (app Maison).
+// Permet de (de)activer l'expo, renommer l'accessoire, et forcer le mapping
+// des canaux RGB (dmxChannels) ou des canaux de lyre (movingHeadChannels).
 export const FixtureHomeKitSchema = z.object({
   enabled: z.boolean().default(true).optional(),
   name: z.string().min(1).optional(),
@@ -57,6 +82,8 @@ export const FixtureHomeKitSchema = z.object({
 
 export type FixtureHomeKit = z.infer<typeof FixtureHomeKitSchema>;
 
+// Un canal d'un projecteur : son numero (relatif a l'adresse de depart),
+// sa capability (role) et un nom lisible optionnel.
 export const FixtureChannelSchema = z.object({
   channel: z.number().int().min(1).max(512),
   capability: CapabilitySchema,
@@ -65,6 +92,8 @@ export const FixtureChannelSchema = z.object({
 
 export type FixtureChannel = z.infer<typeof FixtureChannelSchema>;
 
+// Origine d'un projecteur importe depuis la bibliotheque QXF (fichiers QLC+).
+// Garde la trace du fabricant / modele / mode pour pouvoir s'y retrouver.
 export const FixtureProfileSchema = z.object({
   source: z.literal("qxf"),
   manufacturer: z.string(),
@@ -74,6 +103,9 @@ export const FixtureProfileSchema = z.object({
 
 export type FixtureProfile = z.infer<typeof FixtureProfileSchema>;
 
+// Un projecteur (fixture) complet : c'est l'entite centrale du systeme.
+// Il possede une adresse de depart dans un univers DMX, une liste de canaux,
+// et eventuellement un profil QXF, une config HomeKit et une piece (room).
 export const FixtureSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -88,6 +120,11 @@ export const FixtureSchema = z.object({
 
 export type Fixture = z.infer<typeof FixtureSchema>;
 
+// ─── Mode Dance (chenillard) ─────────────────────────────────────────────────
+
+// Identifiants des motifs (patterns) de chenillard (chase).
+// On garde les ids en anglais car ils sont utilises tels quels dans le code.
+// Chaque motif decrit comment la lumiere se deplace de groupe en groupe.
 export const DancePatternIds = [
   "chase",
   "reverseChase",
@@ -106,6 +143,8 @@ export const DancePatternIds = [
 export const DancePatternIdSchema = z.enum(DancePatternIds);
 export type DancePatternId = z.infer<typeof DancePatternIdSchema>;
 
+// Position memorisee d'une lyre (pan/tilt) pour un projecteur donne.
+// Sert d'ancre (point d'ancrage) connue pour l'interpolation des mouvements.
 export const DanceLyrePositionSchema = z.object({
   fixtureId: z.string().uuid(),
   pan: z.number().int().min(0).max(255),
@@ -114,6 +153,8 @@ export const DanceLyrePositionSchema = z.object({
 
 export type DanceLyrePosition = z.infer<typeof DanceLyrePositionSchema>;
 
+// Ancre libre (pan/tilt seuls, sans projecteur associe).
+// Utilisee comme point de reference supplementaire aux extremites de la chaine.
 export const DanceFreeAnchorSchema = z.object({
   pan: z.number().int().min(0).max(255),
   tilt: z.number().int().min(0).max(255)
@@ -121,38 +162,48 @@ export const DanceFreeAnchorSchema = z.object({
 
 export type DanceFreeAnchor = z.infer<typeof DanceFreeAnchorSchema>;
 
+// Reglages du Mode Dance pour une lyre (moving head).
+// La lyre peut suivre le chenillard en se deplacant entre des positions ancrees ;
+// les valeurs ci-dessous controlent son ouverture, son intensite et sa vitesse.
 export const DanceLyreModeSchema = z.object({
   enabled: z.boolean(),
   shutterOpenValue: z.number().int().min(0).max(255),
   dimmerOnValue: z.number().int().min(0).max(255),
   followChase: z.boolean(),
   positions: z.array(DanceLyrePositionSchema),
-  // Wall edge to the right of the rightmost fixture in the visual chain. Used as an
-  // additional anchor for piecewise interpolation/extrapolation beyond the last fixture.
+  // Bord du mur a droite du projecteur le plus a droite dans la chaine visuelle.
+  // Sert d'ancre supplementaire pour interpoler/extrapoler au-dela du dernier projecteur.
   wallEdgeRight: DanceFreeAnchorSchema.nullable(),
-  // DMX value written to the lyre's "speed" capability channel (response speed).
-  // For Stairville MH-X20: 0 = fastest movement, 251 = slowest (255 = vector modes).
+  // Valeur DMX ecrite sur le canal "speed" de la lyre (vitesse de reponse).
+  // Pour la Stairville MH-X20 : 0 = mouvement le plus rapide, 251 = le plus lent
+  // (255 = modes vectoriels).
   speedValue: z.number().int().min(0).max(255),
-  // Time the lyre needs to traverse 1 DMX unit of pan or tilt, in ms. Used to compute
-  // the per-move duration based on distance — and to black out the dimmer + close the
-  // shutter while the lyre is in transit (a lyre flashing mid-flight looks bad).
-  // For Stairville MH-X20 at speed=0: ~40 ms/unit (Lava→Café = 10 units ≈ 400 ms).
+  // Temps que met la lyre pour parcourir 1 unite DMX de pan ou tilt, en ms.
+  // Sert a calculer la duree de chaque mouvement selon la distance — et a faire un
+  // blackout du dimmer + fermer le shutter pendant le deplacement (une lyre qui clignote
+  // en plein vol, ca fait moche : effet de spot volant).
+  // Pour la Stairville MH-X20 a speed=0 : ~40 ms/unite (Lava→Café = 10 unites ≈ 400 ms).
   msPerPanUnit: z.number().int().min(1).max(500)
 });
 
 export type DanceLyreMode = z.infer<typeof DanceLyreModeSchema>;
 
+// Reglages du Mode Dance pour les lampes connectees (smart lights).
 export const DanceSmartLightsModeSchema = z.object({
   enabled: z.boolean(),
-  // Smart light IDs that should join the dance. Each light contributes one group
-  // per labelled "side" of its zoneLayout (see SmartLightZoneLayout.sides). Side
-  // groups participate in the chase patterns alongside DMX fixtures, and flash in
-  // the light's current ambient color (desired.hue/sat → RGB at 100% brightness).
+  // IDs des lampes connectees qui rejoignent la dance. Chaque lampe fournit un groupe
+  // par "side" (cote) defini dans son zoneLayout (voir SmartLightZoneLayout.sides).
+  // Ces groupes participent aux motifs de chenillard a cote des projecteurs DMX et
+  // flashent dans la couleur ambiante actuelle de la lampe
+  // (desired.hue/sat → RGB a 100% de luminosite).
   lightIds: z.array(z.string().uuid())
 });
 
 export type DanceSmartLightsMode = z.infer<typeof DanceSmartLightsModeSchema>;
 
+// Configuration complete du Mode Dance.
+// Pieces concernees, plage d'intervalle entre etapes, motifs autorises, et
+// sous-configs pour les lyres et les lampes connectees.
 export const DanceConfigSchema = z.object({
   enabled: z.boolean(),
   rooms: z.array(z.string().min(1)),
@@ -168,6 +219,9 @@ export const DanceConfigSchema = z.object({
 
 export type DanceConfig = z.infer<typeof DanceConfigSchema>;
 
+// Etat courant du Mode Dance, diffuse aux clients (broadcast WebSocket).
+// Indique si le chenillard tourne, quels projecteurs sont actifs, le motif en
+// cours et le nombre de phases deja envoyees.
 export const DanceStateSchema = z.object({
   config: DanceConfigSchema,
   running: z.boolean(),
@@ -178,6 +232,10 @@ export const DanceStateSchema = z.object({
 
 export type DanceState = z.infer<typeof DanceStateSchema>;
 
+// ─── Scenes et presets ───────────────────────────────────────────────────────
+
+// Une etape de scene : pour un projecteur donne, les valeurs (0-255) a appliquer
+// canal par canal, dans l'ordre de ses canaux.
 export const SceneStepSchema = z.object({
   fixtureId: z.string().uuid(),
   values: z.array(z.number().int().min(0).max(255)).min(1)
@@ -185,6 +243,7 @@ export const SceneStepSchema = z.object({
 
 export type SceneStep = z.infer<typeof SceneStepSchema>;
 
+// Une scene : etat enregistre de plusieurs projecteurs que l'on peut rappeler.
 export const SceneSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -193,6 +252,9 @@ export const SceneSchema = z.object({
 
 export type Scene = z.infer<typeof SceneSchema>;
 
+// Un preset (reglage predefini) : un ensemble de valeurs de canaux reutilisable.
+// Le payload (contenu) associe un numero de canal (en cle, sous forme de chaine)
+// a sa valeur 0-255.
 export const PresetSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -201,6 +263,11 @@ export const PresetSchema = z.object({
 
 export type Preset = z.infer<typeof PresetSchema>;
 
+// ─── Etat de l'univers DMX et journaux ──────────────────────────────────────
+
+// Instantane (snapshot) des 512 canaux d'un univers DMX a un instant t.
+// Diffuse en continu aux clients via WebSocket (evenement universe_tick).
+// "values" fait toujours exactement 512 entrees (un univers complet).
 export const UniverseStateSchema = z.object({
   fps: z.number().nonnegative(),
   universe: z.number().int().min(0),
@@ -210,6 +277,7 @@ export const UniverseStateSchema = z.object({
 
 export type UniverseState = z.infer<typeof UniverseStateSchema>;
 
+// Un evenement de journal diffuse a l'UI (niveau, message, horodatage).
 export const LogEventSchema = z.object({
   level: z.enum(["info", "warn", "error"]),
   message: z.string(),
@@ -219,63 +287,76 @@ export const LogEventSchema = z.object({
 export type LogEvent = z.infer<typeof LogEventSchema>;
 
 // ─── Smart Lights (Nanoleaf / HomeKit / Matter externes) ────────────────────
+// Tout ce qui concerne les lampes connectees (smart lights) : type de backend
+// (marque), config d'acces, miroir DMX (mirror), etat couleur et streaming UDP.
 
 export const SmartLightBackendTypeSchema = z.enum(["nanoleaf-http"]);
 export type SmartLightBackendType = z.infer<typeof SmartLightBackendTypeSchema>;
 
-// Backend config: discriminated on `type`. Each backend describes how to reach the device.
+// Config du backend : union discriminee sur `type`. Chaque backend decrit
+// comment joindre l'appareil sur le reseau.
 export const NanoleafHttpConfigSchema = z.object({
   type: z.literal("nanoleaf-http"),
-  host: z.string().min(1),         // e.g. "192.168.0.234"
+  host: z.string().min(1),         // ex. "192.168.0.234"
   port: z.number().int().min(1).max(65535).default(16021).optional(),
-  token: z.string().min(1).optional(), // auth token from /api/v1/new (set after pairing)
-  deviceName: z.string().optional()    // device-reported name (e.g. "Light Strip 5DA6")
+  token: z.string().min(1).optional(), // jeton d'auth issu de /api/v1/new (defini apres appairage)
+  deviceName: z.string().optional()    // nom rapporte par l'appareil (ex. "Light Strip 5DA6")
 });
 export type NanoleafHttpConfig = z.infer<typeof NanoleafHttpConfigSchema>;
 
+// Liste des configs de backend supportees (union discriminee).
+// Aujourd'hui un seul backend (Nanoleaf HTTP), mais le pattern reste extensible.
 export const SmartLightBackendConfigSchema = z.discriminatedUnion("type", [
   NanoleafHttpConfigSchema
 ]);
 export type SmartLightBackendConfig = z.infer<typeof SmartLightBackendConfigSchema>;
 
-// Optional mirror: bind the smart light to DMX channels in the universe so that
-// existing scenes / Dance mode / channel sliders drive it transparently.
+// Miroir DMX (mirror) optionnel : lie la lampe connectee a des canaux DMX de
+// l'univers. Ainsi les scenes, le Mode Dance et les curseurs de canaux la
+// pilotent de maniere transparente, comme un projecteur classique.
 export const SmartLightDmxMirrorSchema = z.object({
   universe: z.number().int().min(0).default(0).optional(),
   rChannel: z.number().int().min(1).max(512).optional(),
   gChannel: z.number().int().min(1).max(512).optional(),
   bChannel: z.number().int().min(1).max(512).optional(),
-  briChannel: z.number().int().min(1).max(512).optional() // optional master dimmer override
+  briChannel: z.number().int().min(1).max(512).optional() // override optionnel du dimmer maitre
 });
 export type SmartLightDmxMirror = z.infer<typeof SmartLightDmxMirrorSchema>;
 
+// Mode couleur courant d'une lampe : teinte/saturation (hs), temperature (ct)
+// ou effet (effect).
 export const SmartLightColorModeSchema = z.enum(["hs", "ct", "effect"]);
 export type SmartLightColorMode = z.infer<typeof SmartLightColorModeSchema>;
 
+// Etat d'une lampe connectee tel qu'on le lit / souhaite (couleur HSB, etc.).
 export const SmartLightStateSchema = z.object({
   on: z.boolean(),
-  hue: z.number().min(0).max(360),       // degrees
-  sat: z.number().min(0).max(100),       // percent
-  brightness: z.number().min(0).max(100),// percent
+  hue: z.number().min(0).max(360),       // degres
+  sat: z.number().min(0).max(100),       // pourcent
+  brightness: z.number().min(0).max(100),// pourcent
   ct: z.number().min(1000).max(10000).optional(),         // Kelvin (NL72K3 ≈ 2127–6535)
   colorMode: SmartLightColorModeSchema.optional(),
-  currentEffect: z.string().optional(),  // when colorMode = "effect"
-  reachable: z.boolean().default(true).optional()
+  currentEffect: z.string().optional(),  // present quand colorMode = "effect"
+  reachable: z.boolean().default(true).optional() // l'appareil repond-il (joignable) ?
 });
 export type SmartLightState = z.infer<typeof SmartLightStateSchema>;
 
-// User-tunable streaming config (UDP extControl for Nanoleaf).
-// When enabled the SmartLightService maintains a continuous UDP stream
-// instead of HTTP coalesced PUT /state writes — dropping latency from
-// ~100 ms to ~5–15 ms, useful for DMX-mirror and music-sync use cases.
+// Config de streaming reglable par l'utilisateur (extControl UDP pour Nanoleaf).
+// Quand c'est active, le SmartLightService maintient un flux UDP continu (streaming)
+// au lieu d'ecritures HTTP coalescees (PUT /state) — la latence passe de ~100 ms
+// a ~5-15 ms. Utile pour le miroir DMX et la synchro musicale.
 export const SmartLightStreamingSchema = z.object({
   enabled: z.boolean().default(false).optional(),
-  zoneCount: z.number().int().min(1).max(500).optional() // discovered from device
+  zoneCount: z.number().int().min(1).max(500).optional() // decouvert depuis l'appareil
 });
 export type SmartLightStreaming = z.infer<typeof SmartLightStreamingSchema>;
 
-// ─── 3D Layout ──────────────────────────────────────────────────────────────
+// ─── Disposition (layout) 3D ─────────────────────────────────────────────────
+// Decrit le placement physique des zones d'un bandeau LED (strip) dans l'espace.
+// Ces positions permettent aux effets "sensibles a la position" (position-aware)
+// de calculer une couleur differente selon ou se trouve chaque zone.
 
+// Un point dans l'espace 3D (metres).
 export const Point3DSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -283,39 +364,42 @@ export const Point3DSchema = z.object({
 });
 export type Point3D = z.infer<typeof Point3DSchema>;
 
-/** A single addressable zone of an LED strip: a line segment from start to end in 3D space.
- *  Effects use start, end, and midpoint to compute per-zone colors. */
+/** Une zone adressable d'un bandeau LED : un segment de droite (de start a end) dans l'espace 3D.
+ *  Les effets utilisent start, end et le milieu pour calculer la couleur de chaque zone. */
 export const ZoneSegmentSchema = z.object({
   start: Point3DSchema,
   end: Point3DSchema
 });
 export type ZoneSegment = z.infer<typeof ZoneSegmentSchema>;
 
+// Disposition (layout) complete des zones d'un bandeau LED.
 export const SmartLightZoneLayoutSchema = z.object({
-  /** Linked = consecutive segments share an endpoint (polyline). Unlinked = every segment is free. */
+  /** Linked = les segments consecutifs partagent un point (polyligne). Unlinked = chaque segment est libre. */
   mode: z.enum(["linked", "unlinked"]).default("linked").optional(),
   segments: z.array(ZoneSegmentSchema).min(1).max(500),
-  /** Indices (0-based) of zones that are SPARE — present in the streaming protocol but no physical
-   *  LED behind them. The EffectEngine forces these to black; the 3D editor hides their segments;
-   *  the painter shows them as hatched. Example on NL72K3 where strip < 50 LEDs. */
+  /** Indices (commencant a 0) des zones SPARE (LED non cablee) — presentes dans le protocole de
+   *  streaming mais sans LED physique derriere. Le moteur d'effets (EffectEngine) les force en noir ;
+   *  l'editeur 3D masque leurs segments ; l'outil de peinture les affiche hachurees.
+   *  Cas typique sur NL72K3 quand le bandeau a moins de 50 LED. */
   spareZones: z.array(z.number().int().min(0).max(999)).optional(),
-  /** Optional logical labels for sides (e.g. "back", "left", "front", "right") with zone ranges.
-   *  Used by the U-shape preset and as guidance for the user. */
+  /** Etiquettes logiques optionnelles pour les cotes (sides) (ex. "back", "left", "front", "right")
+   *  avec leur plage de zones. Utilisees par le preset en U et comme repere pour l'utilisateur. */
   sides: z
     .array(
       z.object({
         label: z.string().min(1),
         zoneStart: z.number().int().min(0).max(499),
         zoneEnd: z.number().int().min(0).max(499),
-        color: z.string().optional() // hex for UI hint
+        color: z.string().optional() // hex pour l'indice visuel de l'UI
       })
     )
     .optional()
 });
 export type SmartLightZoneLayout = z.infer<typeof SmartLightZoneLayoutSchema>;
 
-// ─── Effects ────────────────────────────────────────────────────────────────
+// ─── Effets ─────────────────────────────────────────────────────────────────
 
+// Une couleur RGB (composantes 0-255).
 export const RgbColorSchema = z.object({
   r: z.number().int().min(0).max(255),
   g: z.number().int().min(0).max(255),
@@ -324,14 +408,15 @@ export const RgbColorSchema = z.object({
 export type RgbColor = z.infer<typeof RgbColorSchema>;
 
 /**
- * Effect config — discriminated by `kind`. The EffectEngine evaluates these every frame
- * (30 Hz) against the zone layout and pushes a per-zone color frame via the streamer.
+ * Config d'effet — union discriminee par `kind`. Le moteur d'effets (EffectEngine)
+ * evalue ces effets a chaque trame (frame), a 30 Hz, sur la disposition (layout) des
+ * zones, puis pousse une trame de couleurs (une par zone) via le streamer.
  *
- *   • "static"   — fixed per-zone palette painted in the UI
- *   • "solid"    — single color across all zones
- *   • "gradient" — interpolate between two colors along a direction in 3D space
- *   • "chase"    — a moving lit "head" of N zones traveling along the strip
- *   • "wave"     — sine wave colored from→to traveling along a direction
+ *   • "static"   — palette fixe par zone, peinte dans l'UI
+ *   • "solid"    — une seule couleur sur toutes les zones
+ *   • "gradient" — degrade entre deux couleurs le long d'une direction en 3D
+ *   • "chase"    — une "tete" lumineuse de N zones qui se deplace le long du bandeau
+ *   • "wave"     — onde sinusoidale coloree de from→to se propageant dans une direction
  */
 export const EffectStaticSchema = z.object({
   kind: z.literal("static"),
@@ -370,6 +455,8 @@ export const EffectWaveSchema = z.object({
   brightness: z.number().min(0).max(100).default(100).optional()
 });
 
+// Union discriminee de toutes les configs d'effet possibles (le champ "kind"
+// indique de quel effet il s'agit).
 export const SmartLightEffectConfigSchema = z.discriminatedUnion("kind", [
   EffectStaticSchema,
   EffectSolidSchema,
@@ -379,13 +466,17 @@ export const SmartLightEffectConfigSchema = z.discriminatedUnion("kind", [
 ]);
 export type SmartLightEffectConfig = z.infer<typeof SmartLightEffectConfigSchema>;
 
-// ─── Layout builders (pure helpers, shared between backend & frontend) ──────
+// ─── Constructeurs de layout (helpers purs, partages backend & frontend) ─────
+// Fonctions sans effet de bord qui generent une disposition (layout) 3D de zones.
+// Memes resultats cote backend et cote frontend, d'ou leur place dans le package
+// partage.
 
+// Interpolation lineaire (lerp) entre deux points 3D : a quand t=0, b quand t=1.
 function _lerpPoint(a: Point3D, b: Point3D, t: number): Point3D {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
 }
 
-/** Linear strip along the X axis from -0.5 to +0.5. Used as a default when no layout is set. */
+/** Bandeau lineaire le long de l'axe X, de -0.5 a +0.5. Layout par defaut quand aucun n'est defini. */
 export function buildLinearLayout(zoneCount: number): SmartLightZoneLayout {
   const segments: ZoneSegment[] = [];
   for (let i = 0; i < zoneCount; i++) {
@@ -400,19 +491,20 @@ export function buildLinearLayout(zoneCount: number): SmartLightZoneLayout {
 }
 
 /**
- * Build a U-shape layout around 4 sides of a rectangular room.
+ * Construit un layout en U autour des 4 cotes d'une piece rectangulaire.
  *
- * Input: number of active zones per side (back / left / front / right) + dimensions.
- * Coordinate system: X = left↔right (back/front edges), Z = back↔front (left/right edges), Y = floor.
+ * Entree : nombre de zones actives par cote (back / left / front / right) + dimensions.
+ * Repere : X = gauche↔droite (cotes back/front), Z = fond↔avant (cotes left/right), Y = sol.
  *
- * The strip is traced **counter-clockwise viewed from above**, entering at back-right and
- * running: back-right → back-left → front-left → front-right → back-right. This matches the
- * common case of a strip wrapped around a room with the controller at the back-right corner
- * and the unused (spare) end of the strip dangling near the start.
+ * Le bandeau est trace **dans le sens antihoraire vu de dessus**, en entrant par le coin
+ * arriere-droit, et en parcourant : back-right → back-left → front-left → front-right →
+ * back-right. Cela correspond au cas courant d'un bandeau enroule autour d'une piece avec le
+ * controleur dans le coin arriere-droit et le bout inutilise (spare) du bandeau pendouillant
+ * pres du depart.
  *
- * Total active = back + left + front + right. Remaining zones (totalZones - active) → auto-spare,
- * placed either at the start (default — strip enters with spare LEDs near the controller)
- * or at the end (set `spareAtStart: false`).
+ * Total actif = back + left + front + right. Les zones restantes (totalZones - actif)
+ * deviennent automatiquement des zones spare, placees soit au debut (par defaut — le bandeau
+ * entre avec des LED spare pres du controleur), soit a la fin (avec `spareAtStart: false`).
  */
 export function buildUShapeLayout(opts: {
   totalZones: number;
@@ -420,10 +512,10 @@ export function buildUShapeLayout(opts: {
   leftZones: number;
   frontZones: number;
   rightZones: number;
-  width?: number;        // back/front edges length (default 4 m)
-  depth?: number;        // left/right edges length (default 3 m)
-  height?: number;       // Y position of the strip (default 0)
-  spareAtStart?: boolean; // default true — spare segments at indices 0..k-1
+  width?: number;        // longueur des cotes back/front (defaut 4 m)
+  depth?: number;        // longueur des cotes left/right (defaut 3 m)
+  height?: number;       // position Y du bandeau (defaut 0)
+  spareAtStart?: boolean; // defaut true — segments spare aux indices 0..k-1
 }): SmartLightZoneLayout {
   const w = opts.width ?? 4;
   const d = opts.depth ?? 3;
@@ -437,6 +529,8 @@ export function buildUShapeLayout(opts: {
   const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
   const spareZones: number[] = [];
 
+  // Ajoute n zones spare, repliees dans un coin cache (legerement decalees en Z
+  // pour ne pas se superposer). Memorise leurs indices dans spareZones.
   const pushSpares = (n: number): void => {
     for (let i = 0; i < n; i++) {
       const idx = segments.length;
@@ -448,6 +542,8 @@ export function buildUShapeLayout(opts: {
     }
   };
 
+  // Ajoute un cote (side) : repartit n zones le long du segment start→end et
+  // enregistre la plage de zones sous l'etiquette (label) donnee.
   const pushSide = (
     label: string,
     n: number,
@@ -470,7 +566,7 @@ export function buildUShapeLayout(opts: {
 
   if (spareAtStart) pushSpares(spareCount);
 
-  // Counter-clockwise from above, entering at back-right corner:
+  // Sens antihoraire vu de dessus, en entrant par le coin arriere-droit :
   //   back  : x=+halfW, z=0  →  x=-halfW, z=0
   //   left  : x=-halfW, z=0  →  x=-halfW, z=d
   //   front : x=-halfW, z=d  →  x=+halfW, z=d
@@ -486,21 +582,21 @@ export function buildUShapeLayout(opts: {
 }
 
 /**
- * Build a "room loop" layout — the strip wraps around a room with vertical sections,
- * forming a closed 3D path. Sections in strip order:
+ * Construit un layout "room loop" — le bandeau fait le tour d'une piece avec des
+ * sections verticales, formant un chemin 3D ferme. Sections, dans l'ordre du bandeau :
  *
- *   1. backRightFloor    — lead-in on the floor at back-right corner (controller entry)
- *   2. backRightUp       — vertical climb at back-right (floor → ceiling)
- *   3. topRightToLeft    — top of back wall, going right to left
- *   4. backLeftDown      — vertical descent at back-left (ceiling → floor)
- *   5. leftFloorBToF     — left wall at floor, back to front
- *   6. frontFloorLToR    — front wall at floor, left to right
- *   7. rightFloorFToB    — right wall at floor, front to back (closes the loop)
+ *   1. backRightFloor    — amorce au sol dans le coin arriere-droit (entree du controleur)
+ *   2. backRightUp       — montee verticale a l'arriere-droit (sol → plafond)
+ *   3. topRightToLeft    — haut du mur arriere, de droite a gauche
+ *   4. backLeftDown      — descente verticale a l'arriere-gauche (plafond → sol)
+ *   5. leftFloorBToF     — mur gauche au sol, de l'arriere vers l'avant
+ *   6. frontFloorLToR    — mur avant au sol, de gauche a droite
+ *   7. rightFloorFToB    — mur droit au sol, de l'avant vers l'arriere (ferme la boucle)
  *
- * Coordinate system: X=left↔right (-halfW..+halfW), Y=down↔up (0..height), Z=back↔front (0..depth).
+ * Repere : X=gauche↔droite (-halfW..+halfW), Y=bas↔haut (0..height), Z=arriere↔avant (0..depth).
  *
- * All sections have a configurable zone count; the sum must equal totalZones — any deficit
- * becomes spare segments at the end of the strip. Total active is auto-checked.
+ * Chaque section a un nombre de zones configurable ; la somme doit valoir totalZones — tout
+ * manque devient des segments spare a la fin du bandeau. Le total actif est verifie automatiquement.
  */
 export function buildRoomLoopLayout(opts: {
   backRightFloorZones: number;
@@ -511,11 +607,11 @@ export function buildRoomLoopLayout(opts: {
   frontFloorLToRZones: number;
   rightFloorFToBZones: number;
   totalZones?: number;
-  width?: number;   // X span (default 4 m)
-  depth?: number;   // Z span (default 3 m)
-  height?: number;  // Y ceiling (default 2.5 m)
-  /** Lead-in horizontal length from corner — used only to give the lead-in section a real position. */
-  leadInLength?: number; // default 0.5 m
+  width?: number;   // etendue X (defaut 4 m)
+  depth?: number;   // etendue Z (defaut 3 m)
+  height?: number;  // plafond Y (defaut 2.5 m)
+  /** Longueur horizontale de l'amorce depuis le coin — sert juste a donner une vraie position a la section d'amorce. */
+  leadInLength?: number; // defaut 0.5 m
 }): SmartLightZoneLayout {
   const W = opts.width ?? 4;
   const D = opts.depth ?? 3;
@@ -534,6 +630,8 @@ export function buildRoomLoopLayout(opts: {
   const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
   const spareZones: number[] = [];
 
+  // Ajoute une section : repartit n zones le long du segment start→end et
+  // enregistre sa plage sous l'etiquette (label) donnee.
   const pushSection = (
     label: string, n: number, color: string,
     start: Point3D, end: Point3D
@@ -564,7 +662,7 @@ export function buildRoomLoopLayout(opts: {
   pushSection("rightFloorFToB",  opts.rightFloorFToBZones,  "#ffff00",
     { x: +halfW, y: 0, z: D },    { x: +halfW, y: 0, z: 0 });
 
-  // Pad spare zones at the end in a hidden corner.
+  // Place les zones spare a la fin, dans un coin cache.
   for (let i = 0; i < spareCount; i++) {
     const idx = segments.length;
     segments.push({
@@ -577,6 +675,9 @@ export function buildRoomLoopLayout(opts: {
   return { mode: "linked", segments, spareZones, sides };
 }
 
+// Une lampe connectee (smart light) complete, telle que persistee.
+// Regroupe son backend (marque), sa config d'acces, son eventuel miroir DMX,
+// son layout 3D, l'effet actif et son etat courant.
 export const SmartLightSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -585,15 +686,18 @@ export const SmartLightSchema = z.object({
   config: SmartLightBackendConfigSchema,
   dmxMirror: SmartLightDmxMirrorSchema.nullable().optional(),
   streaming: SmartLightStreamingSchema.optional(),
-  /** Per-zone physical placement (for position-aware effects). */
+  /** Placement physique par zone (pour les effets sensibles a la position). */
   zoneLayout: SmartLightZoneLayoutSchema.nullable().optional(),
-  /** Active effect — runs continuously in the EffectEngine when streaming is enabled. */
+  /** Effet actif — tourne en continu dans le moteur d'effets (EffectEngine) quand le streaming est actif. */
   currentEffect: SmartLightEffectConfigSchema.nullable().optional(),
   state: SmartLightStateSchema.optional(),
   createdAt: z.string().datetime()
 });
 export type SmartLight = z.infer<typeof SmartLightSchema>;
 
+// Contenu accepte a la creation / mise a jour d'une lampe : on retire les champs
+// generes par le serveur (id, createdAt, state). id reste accepte en option pour
+// permettre les mises a jour.
 export const SmartLightInputSchema = SmartLightSchema.omit({
   id: true,
   createdAt: true,
@@ -603,13 +707,15 @@ export const SmartLightInputSchema = SmartLightSchema.omit({
 });
 export type SmartLightInput = z.infer<typeof SmartLightInputSchema>;
 
+// Entree pour modifier l'etat d'une lampe (allumage, couleur...). Tous les champs
+// sont optionnels : on ne change que ce qui est fourni.
 export const SmartLightStateInputSchema = z.object({
   on: z.boolean().optional(),
   hue: z.number().min(0).max(360).optional(),
   sat: z.number().min(0).max(100).optional(),
   brightness: z.number().min(0).max(100).optional(),
   ct: z.number().min(1000).max(10000).optional(),
-  // Convenience: clients can pass RGB directly; backend converts to HSV.
+  // Confort : le client peut passer du RGB directement ; le backend le convertit en HSV.
   rgb: z
     .object({
       r: z.number().int().min(0).max(255),
@@ -620,8 +726,9 @@ export const SmartLightStateInputSchema = z.object({
 });
 export type SmartLightStateInput = z.infer<typeof SmartLightStateInputSchema>;
 
-// Per-zone palette (for strips like NL72K3 with addressable LEDs).
-// Each entry maps a zone index to a color; zones omitted stay at their last value.
+// Palette par zone (pour les bandeaux comme le NL72K3 a LED adressables).
+// Chaque entree associe un index de zone a une couleur ; les zones non citees
+// gardent leur derniere valeur.
 export const SmartLightZonePaletteSchema = z.object({
   zones: z
     .array(
@@ -638,12 +745,14 @@ export const SmartLightZonePaletteSchema = z.object({
 export type SmartLightZonePalette = z.infer<typeof SmartLightZonePaletteSchema>;
 
 
+// Un effet integre de la lampe (nom + actif ou non), tel que rapporte par l'appareil.
 export const SmartLightEffectSchema = z.object({
   name: z.string(),
   active: z.boolean().default(false).optional()
 });
 export type SmartLightEffect = z.infer<typeof SmartLightEffectSchema>;
 
+// Une lampe Nanoleaf trouvee lors de la decouverte (discovery mDNS) sur le reseau.
 export const NanoleafDiscoveredSchema = z.object({
   host: z.string(),
   port: z.number().int().default(16021),
@@ -652,6 +761,7 @@ export const NanoleafDiscoveredSchema = z.object({
 });
 export type NanoleafDiscovered = z.infer<typeof NanoleafDiscoveredSchema>;
 
+// Entree pour lancer l'appairage (pairing) d'une lampe : hote + port a contacter.
 export const SmartLightPairInputSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535).default(16021).optional(),
@@ -660,6 +770,10 @@ export const SmartLightPairInputSchema = z.object({
 });
 export type SmartLightPairInput = z.infer<typeof SmartLightPairInputSchema>;
 
+// ─── Evenements WebSocket et parsing QXF ─────────────────────────────────────
+
+// Tous les messages diffuses aux clients via WebSocket (union discriminee sur "type").
+// Le frontend s'abonne et met a jour son etat selon le "type" recu.
 export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("universe_tick"), data: UniverseStateSchema }),
   z.object({ type: z.literal("fixture_updated"), data: FixtureSchema }),
@@ -671,6 +785,8 @@ export const WsEventSchema = z.discriminatedUnion("type", [
 
 export type WsEvent = z.infer<typeof WsEventSchema>;
 
+// Un canal tel que decrit dans un fichier QXF (definition de projecteur QLC+).
+// Etend FixtureChannel avec les metadonnees QLC+ : nom obligatoire, groupe, preset.
 export const QxfModeChannelSchema = FixtureChannelSchema.extend({
   name: z.string().min(1),
   group: z.string().optional(),
@@ -679,6 +795,8 @@ export const QxfModeChannelSchema = FixtureChannelSchema.extend({
 
 export type QxfModeChannel = z.infer<typeof QxfModeChannelSchema>;
 
+// Un mode d'un projecteur QXF : une configuration de canaux (un projecteur peut
+// avoir plusieurs modes, ex. 8 canaux ou 16 canaux).
 export const QxfModeSchema = z.object({
   name: z.string().min(1),
   channels: z.array(QxfModeChannelSchema),
@@ -687,6 +805,7 @@ export const QxfModeSchema = z.object({
 
 export type QxfMode = z.infer<typeof QxfModeSchema>;
 
+// Resultat du parsing d'un fichier QXF : fabricant, modele et liste des modes.
 export const QxfParseResultSchema = z.object({
   manufacturer: z.string().min(1),
   model: z.string().min(1),
@@ -695,6 +814,8 @@ export const QxfParseResultSchema = z.object({
 
 export type QxfParseResult = z.infer<typeof QxfParseResultSchema>;
 
+// Une entree de la bibliotheque QXF locale : le resultat du parsing enrichi du
+// chemin du fichier et, eventuellement, de la marque (deduite du dossier).
 export const QxfLibraryFixtureSchema = QxfParseResultSchema.extend({
   path: z.string(),
   brand: z.string().optional()

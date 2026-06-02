@@ -1,3 +1,9 @@
+// Routes REST des lampes connectees (smart lights, ex. Nanoleaf).
+// Expose le CRUD, l'appairage (pairing) Nanoleaf, le pilotage d'etat bas-latence,
+// la gestion des effets, du streaming UDP, des zones, du layout 3D et la decouverte mDNS.
+// Chaque route valide son contenu (payload) avec un schema Zod, delegue la logique au
+// service ctx.smartLights / au store, puis diffuse (broadcast) la maj a tous les clients WebSocket.
+
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -13,12 +19,20 @@ import { NanoleafApiError, NanoleafClient } from "../services/smart-lights/nanol
 import { discoverNanoleaf } from "../services/smart-lights/discovery";
 import { ErrorHandler, RouteContext } from "./types";
 
+// Enregistre toutes les routes /api/smart-lights sur l'instance Fastify.
+// ctx donne acces au store (persistance) et au service smartLights (runtime),
+// handleError centralise la mise en forme des erreurs (notamment les erreurs Zod).
 export const registerSmartLightRoutes = (
   app: FastifyInstance,
   ctx: RouteContext,
   handleError: ErrorHandler
 ) => {
+  // ─── CRUD de base ─────────────────────────────────────────────────────────
+
+  // Liste toutes les lampes connectees avec leur etat runtime courant.
   app.get("/api/smart-lights", async () => ctx.smartLights.listWithState());
+
+  // Detail d'une lampe (etat runtime inclus) ; 404 si l'id est inconnu.
 
   app.get("/api/smart-lights/:id", async (request, reply) => {
     const id = (request.params as { id: string }).id;
@@ -27,6 +41,9 @@ export const registerSmartLightRoutes = (
     return light;
   });
 
+  // Cree une lampe a partir d'une config complete fournie par l'UI.
+  // On persiste d'abord (store), puis on enregistre la lampe dans le service runtime,
+  // et on previent les clients via broadcast. 201 = ressource creee.
   app.post("/api/smart-lights", async (request, reply) => {
     try {
       const parsed = SmartLightInputSchema.parse(request.body);
@@ -39,6 +56,9 @@ export const registerSmartLightRoutes = (
     }
   });
 
+  // Met a jour une lampe existante. .partial() autorise un patch partiel
+  // (seuls les champs fournis sont modifies). On re-enregistre ensuite la lampe
+  // dans le service pour que le runtime tienne compte des changements.
   app.put("/api/smart-lights/:id", async (request, reply) => {
     try {
       const parsed = SmartLightInputSchema.partial().parse(request.body);
@@ -52,6 +72,8 @@ export const registerSmartLightRoutes = (
     }
   });
 
+  // Supprime une lampe : on l'enleve du store puis du service runtime.
+  // 204 = succes sans contenu de reponse.
   app.delete("/api/smart-lights/:id", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -63,7 +85,10 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  /** Apply state — low-latency path: coalesced and pushed by the service tick. */
+  /** Applique un etat — chemin bas-latence : regroupe (coalesce) et envoye par le tick du service. */
+  // NB : applyState n'ecrit pas tout de suite sur la lampe. Le service met l'etat en
+  // attente et l'envoie au prochain tick (regroupement). C'est ce qui rend ce chemin
+  // rapide quand l'UI envoie beaucoup d'updates (ex. curseur deplace en continu).
   app.post("/api/smart-lights/:id/state", async (request, reply) => {
     try {
       const parsed = SmartLightStateInputSchema.parse(request.body);
@@ -76,21 +101,24 @@ export const registerSmartLightRoutes = (
     }
   });
 
+  // ─── Appairage (pairing) Nanoleaf ────────────────────────────────────────
+
   /**
-   * Pair a Nanoleaf device. The user must put the strip into pairing mode first
-   * (hold power button ~5–7s until the LED pulses). On success the auth token is
-   * persisted into the smart light config and the runtime client picks it up.
+   * Appaire un appareil Nanoleaf. L'utilisateur doit d'abord mettre le bandeau
+   * (strip) en mode appairage (maintenir le bouton power ~5 a 7 s jusqu'a ce que
+   * la LED clignote). En cas de succes, le token d'authentification est persiste
+   * dans la config de la lampe et le client runtime le reprend.
    *
-   * Two modes:
-   *   • POST /api/smart-lights/pair          → creates a brand-new smart light entry
-   *   • POST /api/smart-lights/:id/pair     → re-pairs an existing entry (refresh token)
+   * Deux modes :
+   *   • POST /api/smart-lights/pair          → cree une toute nouvelle lampe connectee
+   *   • POST /api/smart-lights/:id/pair     → re-appaire une entree existante (rafraichit le token)
    */
   app.post("/api/smart-lights/pair", async (request, reply) => {
     try {
       const parsed = SmartLightPairInputSchema.parse(request.body);
       const token = await NanoleafClient.pair(parsed.host, parsed.port, app.log);
 
-      // Fetch device name/model for nicer defaults.
+      // Recupere le nom/modele de l'appareil pour proposer de meilleurs defauts.
       const probeClient = new NanoleafClient({
         host: parsed.host,
         port: parsed.port,
@@ -102,7 +130,7 @@ export const registerSmartLightRoutes = (
         const info = await probeClient.getInfo();
         deviceName = deviceName ?? info.name;
       } catch {
-        // Non-fatal: keep going with whatever name the user supplied.
+        // Non bloquant : on continue avec le nom fourni par l'utilisateur.
       }
 
       const light = await ctx.store.createSmartLight({
@@ -121,6 +149,8 @@ export const registerSmartLightRoutes = (
       ctx.broadcast({ type: "smart_light_updated", data: light });
       reply.code(201).send(light);
     } catch (err) {
+      // 403 Nanoleaf = pas en mode appairage : on le traduit en 409 (Conflit) cote API,
+      // plus parlant pour l'UI. Les autres erreurs gardent leur code HTTP d'origine.
       if (err instanceof NanoleafApiError) {
         return reply.code(err.status === 403 ? 409 : err.status).send({ message: err.message });
       }
@@ -128,6 +158,8 @@ export const registerSmartLightRoutes = (
     }
   });
 
+  // Re-appairage d'une lampe deja enregistree : rafraichit son token sans recreer
+  // l'entree. Reserve aux lampes Nanoleaf HTTP (seul backend gerant l'appairage ici).
   app.post("/api/smart-lights/:id/pair", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -144,6 +176,7 @@ export const registerSmartLightRoutes = (
       ctx.broadcast({ type: "smart_light_updated", data: updated });
       reply.send(updated);
     } catch (err) {
+      // Meme traduction 403 → 409 que pour l'appairage initial (voir ci-dessus).
       if (err instanceof NanoleafApiError) {
         return reply.code(err.status === 403 ? 409 : err.status).send({ message: err.message });
       }
@@ -151,8 +184,9 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── Effects ──────────────────────────────────────────────────────────────
+  // ─── Effets (effects natifs Nanoleaf) ─────────────────────────────────────
 
+  // Liste les effets disponibles sur la lampe (effets embarques dans l'appareil).
   app.get("/api/smart-lights/:id/effects", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -163,6 +197,7 @@ export const registerSmartLightRoutes = (
     }
   });
 
+  // Active un effet existant par son nom sur la lampe.
   app.post("/api/smart-lights/:id/effects/select", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -176,8 +211,10 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── Streaming (UDP extControl) ──────────────────────────────────────────
+  // ─── Streaming UDP (extControl Nanoleaf) ─────────────────────────────────
 
+  // Active/desactive le mode streaming UDP (flux basse latence ~5-15 ms).
+  // zoneCount fixe le nombre de zones pilotees (borne a 500 par securite).
   app.post("/api/smart-lights/:id/streaming", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -193,8 +230,10 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── Per-zone palette (requires streaming.enabled = true) ─────────────────
+  // ─── Palette par zone (necessite streaming.enabled = true) ───────────────
 
+  // Applique une palette : une couleur par zone du bandeau. NB : ne fonctionne
+  // que si le streaming UDP est actif, sinon le service n'a pas de canal d'envoi.
   app.post("/api/smart-lights/:id/zones", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -207,8 +246,10 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── 3D Zone Layout ──────────────────────────────────────────────────────
+  // ─── Disposition 3D des zones (layout) ───────────────────────────────────
 
+  // Enregistre le placement physique 3D des zones du bandeau. Sert aux effets
+  // sensibles a la position (position-aware). null = pas de layout defini.
   app.post("/api/smart-lights/:id/layout", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -222,8 +263,10 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── Active position-aware Effect ────────────────────────────────────────
+  // ─── Effet actif sensible a la position (position-aware) ─────────────────
 
+  // Definit l'effet anime evalue par le moteur d'effets (EffectEngine) cote backend,
+  // a distinguer des effets natifs Nanoleaf. null = arrete l'effet en cours.
   app.post("/api/smart-lights/:id/effect", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
@@ -237,8 +280,10 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── Discovery (mDNS) ────────────────────────────────────────────────────
+  // ─── Decouverte (discovery mDNS) ─────────────────────────────────────────
 
+  // Scanne le reseau en mDNS pour trouver les Nanoleaf. timeoutMs = delai de scan
+  // (defaut 3000 ms, borne 500-10000) ; renvoie la liste des appareils detectes.
   app.post("/api/smart-lights/discover", async (request, reply) => {
     try {
       const parsed = z
@@ -251,21 +296,24 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  /** Quick reachability probe — returns whether the Nanoleaf HTTP API is responding. */
+  /** Test rapide de joignabilite (reachable) — indique si l'API HTTP Nanoleaf repond. */
   app.post("/api/smart-lights/probe", async (request, reply) => {
     try {
       const parsed = z.object({ host: z.string().min(1), port: z.number().int().optional() }).parse(request.body);
+      // 16021 = port HTTP par defaut de l'API Nanoleaf.
       const port = parsed.port ?? 16021;
+      // On borne la requete a 2,5 s pour ne pas bloquer si l'appareil ne repond pas.
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 2500);
       try {
+        // On appelle l'endpoint d'appairage : meme refus (403), il prouve que l'API est vivante.
         const res = await fetch(`http://${parsed.host}:${port}/api/v1/new`, {
           method: "POST",
           signal: ctrl.signal
         });
         reply.send({
           reachable: true,
-          // 403 = API alive but not in pairing mode (most common); 200 = pairing succeeded
+          // 403 = API vivante mais pas en mode appairage (cas le plus frequent) ; 200 = appairage reussi
           inPairingMode: res.status === 200,
           status: res.status
         });
@@ -273,6 +321,7 @@ export const registerSmartLightRoutes = (
         clearTimeout(timeout);
       }
     } catch {
+      // Toute erreur (timeout, refus de connexion...) signifie : appareil non joignable.
       reply.send({ reachable: false, inPairingMode: false });
     }
   });

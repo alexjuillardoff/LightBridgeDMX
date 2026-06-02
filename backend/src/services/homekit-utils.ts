@@ -1,17 +1,32 @@
+// Utilitaires du pont HomeKit.
+// Ce module ne touche pas au reseau : il ne fait que des conversions de couleurs
+// (HSB <-> RGB) et resout, pour chaque projecteur (fixture), quels canaux DMX
+// piloter et comment l'exposer dans l'app Maison.
+// Trois familles de projecteurs sont gerees :
+//   - lumiere RGB classique (Service.Lightbulb couleur),
+//   - "channel fixture" : pilotage canal par canal (R/G/B/W/intensite),
+//   - lyre (moving head) : pan/tilt + dimmer/shutter/color/gobo.
+// Le service homekit.ts appelle ces fonctions pour construire les accessoires.
+
 import { Fixture, FixtureHomeKitMovingHeadChannels } from "@lightbridgedmx/shared";
 
+// Couleur en HSB (Hue/Saturation/Brightness) telle qu'exposee par HomeKit.
 export type HsbColor = {
   hue: number;
   saturation: number;
   brightness: number;
 };
 
+// Couleur en RGB (0-255 par composante) telle qu'envoyee sur les canaux DMX.
 export type RgbColor = {
   r: number;
   g: number;
   b: number;
 };
 
+// Resultat de la resolution RGB : quels canaux DMX absolus piloter pour
+// les composantes r/g/b, dans quel univers DMX, et d'ou vient le mapping
+// (source "config" = canaux forces a la main, "capability" = deduits des capabilities).
 export type DmxRgbMapping = {
   r: number;
   g: number;
@@ -21,6 +36,7 @@ export type DmxRgbMapping = {
   address: number;
 };
 
+// Un projecteur RGB pret a etre expose en accessoire HomeKit (ampoule couleur).
 export type HomeKitLight = {
   fixture: Fixture;
   name: string;
@@ -28,12 +44,19 @@ export type HomeKitLight = {
   mapping: DmxRgbMapping;
 };
 
+// Union discriminee : soit on a une lumiere exploitable (light),
+// soit une raison (reason) qui explique pourquoi le projecteur est ignore.
 export type HomeKitLightResolution =
   | { light: HomeKitLight; reason?: undefined }
   | { light?: undefined; reason: string };
 
+// Borne une valeur dans l'intervalle [min, max].
 export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+// Convertit une couleur HomeKit (HSB) en RGB 0-255 pour le DMX.
+// Implementation standard HSV->RGB par secteurs de 60 degres de teinte.
+// On normalise d'abord : teinte ramenee dans [0, 360), saturation/luminosite en [0, 1].
+// Les valeurs non finies (NaN, Infinity) sont remplacees par 0 pour eviter des sorties incoherentes.
 export const hsbToRgb = ({ hue, saturation, brightness }: HsbColor): RgbColor => {
   const h = ((Number.isFinite(hue) ? hue : 0) % 360 + 360) % 360;
   const s = clamp(Number.isFinite(saturation) ? saturation : 0, 0, 100) / 100;
@@ -74,6 +97,8 @@ export const hsbToRgb = ({ hue, saturation, brightness }: HsbColor): RgbColor =>
   };
 };
 
+// Conversion inverse RGB 0-255 -> HSB pour renvoyer l'etat couleur a HomeKit.
+// Saturation et luminosite sont rendues en pourcentage (0-100), teinte en degres.
 export const rgbToHsb = ({ r, g, b }: RgbColor): HsbColor => {
   const rn = clamp(r, 0, 255) / 255;
   const gn = clamp(g, 0, 255) / 255;
@@ -109,9 +134,16 @@ export const rgbToHsb = ({ r, g, b }: RgbColor): HsbColor => {
   };
 };
 
+// Un projecteur est une lyre (moving head) des qu'il possede un canal pan ou tilt.
+// Sert a aiguiller chaque projecteur vers le bon traitement HomeKit.
 export const isMovingHead = (fixture: Fixture): boolean =>
   fixture.channels.some((ch) => ch.capability === "pan" || ch.capability === "tilt");
 
+// Decide si un projecteur peut etre expose comme ampoule RGB HomeKit.
+// Renvoie soit la lumiere resolue, soit une raison de rejet :
+//   - HomeKit explicitement desactive dans la config,
+//   - lyre (geree ailleurs par le service moving head),
+//   - aucun mapping RGB exploitable.
 export const resolveHomeKitLight = (fixture: Fixture): HomeKitLightResolution => {
   if (fixture.homekit?.enabled === false) {
     return { reason: "HomeKit disabled in fixture config" };
@@ -126,6 +158,7 @@ export const resolveHomeKitLight = (fixture: Fixture): HomeKitLightResolution =>
     return { reason: "Missing RGB channel mapping for HomeKit" };
   }
 
+  // On prefere les overrides HomeKit (deviceId/name) ; sinon on retombe sur l'id et le nom du projecteur.
   const deviceId = fixture.homekit?.deviceId?.trim() || fixture.id;
   const name = fixture.homekit?.name?.trim() || fixture.name;
 
@@ -139,6 +172,9 @@ export const resolveHomeKitLight = (fixture: Fixture): HomeKitLightResolution =>
   };
 };
 
+// Determine les canaux DMX absolus r/g/b d'un projecteur.
+// Priorite aux canaux forces a la main (homekit.dmxChannels) ; a defaut, on deduit
+// le mapping a partir des capabilities r/g/b declarees sur les canaux.
 export const resolveRgbChannels = (fixture: Fixture): DmxRgbMapping | null => {
   const explicit = fixture.homekit?.dmxChannels;
   if (explicit) {
@@ -155,6 +191,8 @@ export const resolveRgbChannels = (fixture: Fixture): DmxRgbMapping | null => {
   return null;
 };
 
+// Parcourt tous les projecteurs et separe ceux exposables en ampoule RGB
+// de ceux ignores (avec leur raison), pour les logs et le diagnostic.
 export const collectHomeKitLights = (fixtures: Fixture[]) => {
   const lights: HomeKitLight[] = [];
   const skipped: Array<{ fixtureId: string; reason: string }> = [];
@@ -171,6 +209,8 @@ export const collectHomeKitLights = (fixtures: Fixture[]) => {
   return { lights, skipped };
 };
 
+// Deduit les canaux r/g/b a partir des capabilities du projecteur.
+// Renvoie null s'il manque l'une des trois composantes.
 const inferFromCapabilities = (fixture: Fixture) => {
   const r = fixture.channels.find((ch) => ch.capability === "r")?.channel;
   const g = fixture.channels.find((ch) => ch.capability === "g")?.channel;
@@ -180,6 +220,10 @@ const inferFromCapabilities = (fixture: Fixture) => {
   return toAbsoluteChannels(fixture.address, { r, g, b });
 };
 
+// Convertit des numeros de canal relatifs au projecteur en canaux DMX absolus,
+// puis valide le resultat. Renvoie null si :
+//   - un canal sort de la plage 1-512 (debordement de l'univers DMX),
+//   - deux composantes pointent sur le meme canal (mapping incoherent).
 const toAbsoluteChannels = (
   address: number,
   channels: { r: number; g: number; b: number }
@@ -193,18 +237,23 @@ const toAbsoluteChannels = (
   return { r, g, b };
 };
 
+// Passe d'un canal relatif (1 = premier canal du projecteur) au canal DMX absolu.
+// L'adresse de depart occupe deja le canal 1, d'ou le "- 1".
 const toAbsolute = (address: number, channel: number) => address + channel - 1;
 
-// ─── Channel Fixture (per-channel RGB/W/Master) ──────────────────────────────
+// ─── Channel Fixture (pilotage canal par canal R/G/B/W/intensite) ────────────
 
+// Canaux DMX absolus (1-512) d'un projecteur pilote canal par canal.
+// Tous optionnels : on n'expose que les canaux reellement presents.
 export type ChannelFixtureChannels = {
-  r?: number;       // absolute DMX channel (1-512)
+  r?: number;       // canal DMX absolu (1-512)
   g?: number;
   b?: number;
   w?: number;
   intensity?: number;
 };
 
+// Projecteur pret a etre expose en pilotage canal par canal dans HomeKit.
 export type HomeKitChannelFixture = {
   fixture: Fixture;
   name: string;
@@ -213,10 +262,14 @@ export type HomeKitChannelFixture = {
   universe: number;
 };
 
+// Soit le projecteur est exploitable (cf), soit une raison de rejet est fournie.
 type HomeKitChannelFixtureResolution =
   | { cf: HomeKitChannelFixture; reason?: undefined }
   | { cf?: undefined; reason: string };
 
+// Resout les canaux pilotables (r/g/b/w/intensite) d'un projecteur.
+// Rejete si HomeKit est desactive, si c'est une lyre (geree ailleurs),
+// ou si aucun canal controlable n'est trouve.
 const resolveChannelFixture = (fixture: Fixture): HomeKitChannelFixtureResolution => {
   if (fixture.homekit?.enabled === false) {
     return { reason: "HomeKit disabled in fixture config" };
@@ -226,6 +279,7 @@ const resolveChannelFixture = (fixture: Fixture): HomeKitChannelFixtureResolutio
     return { reason: "Moving head — handled by moving head service" };
   }
 
+  // Helper local : trouve le canal portant cette capability et le rend en canal DMX absolu.
   const resolve = (cap: string): number | undefined => {
     const ch = fixture.channels.find((c) => c.capability === cap);
     return ch ? toAbsolute(fixture.address, ch.channel) : undefined;
@@ -248,6 +302,8 @@ const resolveChannelFixture = (fixture: Fixture): HomeKitChannelFixtureResolutio
   return { cf: { fixture, name, deviceId, channels, universe: fixture.universe } };
 };
 
+// Collecte les projecteurs pilotables canal par canal et liste les ignores.
+// Les lyres sont ecartees d'emblee (elles ont leur propre service).
 export const collectHomeKitChannelFixtures = (fixtures: Fixture[]) => {
   const channelFixtures: HomeKitChannelFixture[] = [];
   const skipped: Array<{ fixtureId: string; reason: string }> = [];
@@ -265,10 +321,13 @@ export const collectHomeKitChannelFixtures = (fixtures: Fixture[]) => {
   return { channelFixtures, skipped };
 };
 
-// ─── Moving Head ────────────────────────────────────────────────────────────
+// ─── Lyre (moving head) ──────────────────────────────────────────────────────
 
+// Canaux DMX absolus d'une lyre : intensite (dimmer), shutter (obturateur),
+// pan (rotation horizontale), tilt (inclinaison verticale),
+// color (roue de couleurs) et gobo. Tous optionnels.
 export type MovingHeadChannels = {
-  dimmer?: number; // absolute DMX channel (1-512)
+  dimmer?: number; // canal DMX absolu (1-512)
   shutter?: number;
   pan?: number;
   tilt?: number;
@@ -276,11 +335,14 @@ export type MovingHeadChannels = {
   gobo?: number;
 };
 
+// Valeurs DMX de repos pour pan/tilt : position prise quand HomeKit demande 0 %.
+// Permet de recentrer la lyre plutot que de l'envoyer en butee.
 export type MovingHeadDefaults = {
-  pan?: number;  // DMX value 0-255
-  tilt?: number; // DMX value 0-255
+  pan?: number;  // valeur DMX 0-255
+  tilt?: number; // valeur DMX 0-255
 };
 
+// Lyre prete a etre exposee en accessoire HomeKit multi-services.
 export type HomeKitMovingHead = {
   fixture: Fixture;
   name: string;
@@ -290,20 +352,27 @@ export type HomeKitMovingHead = {
   universe: number;
 };
 
-/** Convert HomeKit 0-100% to DMX value, mapping 0% to defaultDmx and 100% to 255 */
+/** Convertit un pourcentage HomeKit (0-100 %) en valeur DMX : 0 % -> defaultDmx, 100 % -> 255. */
 export const pctToDmxDefault = (pct: number, defaultDmx: number = 0): number =>
   Math.round(defaultDmx + (clamp(pct, 0, 100) / 100) * (255 - defaultDmx));
 
-/** Convert DMX value to HomeKit 0-100%, mapping defaultDmx to 0% and 255 to 100% */
+/**
+ * Conversion inverse : valeur DMX -> pourcentage HomeKit (0-100 %), defaultDmx -> 0 %, 255 -> 100 %.
+ * NB : si defaultDmx vaut deja 255, la plage est nulle, on renvoie 0 % pour eviter une division par zero.
+ */
 export const dmxToPctDefault = (dmx: number, defaultDmx: number = 0): number => {
   if (defaultDmx >= 255) return 0;
   return clamp(Math.round(((dmx - defaultDmx) / (255 - defaultDmx)) * 100), 0, 100);
 };
 
+// Soit la lyre est exploitable (mh), soit une raison de rejet est fournie.
 type HomeKitMovingHeadResolution =
   | { mh: HomeKitMovingHead; reason?: undefined }
   | { mh?: undefined; reason: string };
 
+// Resout les canaux d'une lyre pour HomeKit.
+// Les overrides (homekit.movingHeadChannels) ont priorite sur les capabilities :
+// ils permettent de forcer un canal precis quand l'auto-detection ne suffit pas.
 const resolveMovingHead = (fixture: Fixture): HomeKitMovingHeadResolution => {
   if (fixture.homekit?.enabled === false) {
     return { reason: "HomeKit disabled in fixture config" };
@@ -311,6 +380,8 @@ const resolveMovingHead = (fixture: Fixture): HomeKitMovingHeadResolution => {
 
   const overrides: Partial<FixtureHomeKitMovingHeadChannels> = fixture.homekit?.movingHeadChannels ?? {};
 
+  // Trouve un canal absolu : on prend d'abord l'override (relatif a l'adresse de depart),
+  // sinon on cherche la capability correspondante sur les canaux du projecteur.
   const resolveAbsolute = (cap: string, override?: number): number | undefined => {
     if (override !== undefined) return toAbsolute(fixture.address, override);
     const ch = fixture.channels.find((c) => c.capability === cap);
@@ -320,6 +391,7 @@ const resolveMovingHead = (fixture: Fixture): HomeKitMovingHeadResolution => {
   const pan = resolveAbsolute("pan", overrides.panChannel);
   const tilt = resolveAbsolute("tilt", overrides.tiltChannel);
 
+  // Sans pan ni tilt, ce n'est pas une lyre pilotable : on l'ecarte.
   if (!pan && !tilt) {
     return { reason: "No pan/tilt channels found" };
   }
@@ -344,6 +416,7 @@ const resolveMovingHead = (fixture: Fixture): HomeKitMovingHeadResolution => {
   return { mh: { fixture, name, deviceId, channels, defaults, universe: fixture.universe } };
 };
 
+// Collecte uniquement les lyres exposables en HomeKit et liste les ignorees.
 export const collectHomeKitMovingHeads = (fixtures: Fixture[]) => {
   const movingHeads: HomeKitMovingHead[] = [];
   const skipped: Array<{ fixtureId: string; reason: string }> = [];

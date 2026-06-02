@@ -1,3 +1,7 @@
+// Panneau React du "Mode Dance" : strobe coordonne avec des patterns spatiaux
+// (chenillards, vagues, paires...) sur les projecteurs, la lyre et les lampes connectees.
+// L'UI lit/ecrit la config Dance via l'API backend (React Query) et affiche l'etat live.
+// Tout le pilotage reel est fait cote backend ; ce fichier ne fait que la configuration.
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,6 +15,7 @@ import {
 } from "@lightbridgedmx/shared";
 import { api } from "../lib/api";
 
+// Libelles FR affiches dans l'UI pour chaque pattern de chase (les ids restent en anglais).
 const PATTERN_LABELS: Record<DancePatternId, string> = {
   chase: "Chase L→R",
   reverseChase: "Chase R→L",
@@ -26,6 +31,8 @@ const PATTERN_LABELS: Record<DancePatternId, string> = {
   bookendOut: "Intérieurs ↔ Extérieurs"
 };
 
+// Liste des capabilities (fonctions de canal) qu'on peut choisir d'exclure du strobe.
+// Sert a alimenter les boutons de la section "Exclusions".
 const CAPABILITY_OPTIONS = [
   "intensity",
   "r",
@@ -49,13 +56,18 @@ const CAPABILITY_OPTIONS = [
 export const DancePanel = () => {
   const queryClient = useQueryClient();
 
+  // Etat live du Mode Dance : on le rafraichit toutes les 1,5 s pour afficher
+  // le pattern courant, le nombre de phases envoyees, etc. pendant que ca tourne.
   const stateQuery = useQuery<DanceState>(["dance", "state"], api.dance.state, {
     refetchInterval: 1500
   });
+  // Donnees de reference servant a construire les selecteurs de l'UI.
   const roomsQuery = useQuery<string[]>(["rooms"], api.rooms.list);
   const fixturesQuery = useQuery<Fixture[]>(["fixtures"], api.fixtures.list);
   const smartLightsQuery = useQuery<SmartLight[]>(["smart-lights"], api.smartLights.list);
 
+  // Mutations : chaque action renvoie l'etat Dance complet, qu'on reinjecte
+  // directement dans le cache React Query pour un retour visuel immediat.
   const updateConfig = useMutation<DanceState, Error, Partial<DanceConfig>>(
     (patch) => api.dance.updateConfig(patch),
     {
@@ -69,6 +81,7 @@ export const DancePanel = () => {
     onSuccess: (state) => queryClient.setQueryData(["dance", "state"], state)
   });
 
+  // Raccourcis vers les donnees chargees, avec valeurs par defaut tant que ca charge.
   const state = stateQuery.data;
   const config = state?.config;
   const rooms = roomsQuery.data ?? [];
@@ -76,13 +89,14 @@ export const DancePanel = () => {
   const smartLights = smartLightsQuery.data ?? [];
   const running = state?.running ?? false;
 
-  // Only smart lights that have a layout with labelled sides are useful for Dance —
-  // each side becomes one chase group. Lights without sides are hidden from the picker.
+  // Seules les lampes connectees ayant un layout avec des cotes nommes servent au Dance :
+  // chaque cote devient un groupe du chase. Les lampes sans cotes sont masquees du selecteur.
   const danceableSmartLights = useMemo(
     () => smartLights.filter((l) => (l.zoneLayout?.sides?.length ?? 0) > 0),
     [smartLights]
   );
 
+  // Ajoute ou retire une lampe connectee de la selection (bascule par id).
   const toggleSmartLight = (id: string) => {
     if (!config) return;
     const has = config.smartLights.lightIds.includes(id);
@@ -94,7 +108,8 @@ export const DancePanel = () => {
     });
   };
 
-  // Fixtures eligible as lyre targets: non-lyre fixtures (no pan/tilt capability).
+  // Projecteurs (fixtures) que la lyre peut viser : on exclut les lyres elles-memes,
+  // c.-a-d. tout projecteur ayant une capability pan ou tilt.
   const targetableFixtures = useMemo(
     () =>
       fixtures.filter(
@@ -103,9 +118,12 @@ export const DancePanel = () => {
     [fixtures]
   );
 
+  // Retrouve la position pan/tilt enregistree pour viser un projecteur donne (si elle existe).
   const positionForFixture = (fixtureId: string): DanceLyrePosition | undefined =>
     config?.lyre.positions.find((p) => p.fixtureId === fixtureId);
 
+  // Cree ou met a jour la position d'ancrage pan/tilt d'un projecteur (upsert).
+  // On conserve l'axe non touche : si on ne change que le pan, le tilt existant est garde.
   const upsertPosition = (fixtureId: string, patch: Partial<Pick<DanceLyrePosition, "pan" | "tilt">>) => {
     if (!config) return;
     const existing = positionForFixture(fixtureId);
@@ -118,6 +136,7 @@ export const DancePanel = () => {
     updateConfig.mutate({ lyre: { ...config.lyre, positions: [...others, next] } });
   };
 
+  // Supprime l'ancre d'un projecteur : sa position sera alors extrapolee depuis les autres.
   const removePosition = (fixtureId: string) => {
     if (!config) return;
     updateConfig.mutate({
@@ -128,6 +147,7 @@ export const DancePanel = () => {
     });
   };
 
+  // Bascule une piece dans/hors du filtre de ciblage.
   const toggleRoom = (room: string) => {
     if (!config) return;
     const next = config.rooms.includes(room)
@@ -136,6 +156,7 @@ export const DancePanel = () => {
     updateConfig.mutate({ rooms: next });
   };
 
+  // Active ou desactive un pattern de chase dans la rotation.
   const togglePattern = (pattern: DancePatternId) => {
     if (!config) return;
     const next = config.patterns.includes(pattern)
@@ -144,6 +165,7 @@ export const DancePanel = () => {
     updateConfig.mutate({ patterns: next });
   };
 
+  // Bascule une capability dans la liste des canaux a ne jamais flasher pendant le Dance.
   const toggleExcludedCap = (cap: string) => {
     if (!config) return;
     const has = (config.excludeCapabilities as string[]).includes(cap);
@@ -153,11 +175,13 @@ export const DancePanel = () => {
     updateConfig.mutate({ excludeCapabilities: next });
   };
 
+  // Met a jour une des deux bornes de l'intervalle aleatoire entre flashs (en ms).
   const setInterval = (field: "intervalMinMs" | "intervalMaxMs", value: number) => {
     if (!config) return;
     updateConfig.mutate({ [field]: value } as Partial<DanceConfig>);
   };
 
+  // Premier message d'erreur disponible parmi les mutations/queries, pour l'afficher a l'utilisateur.
   const errorMessage = useMemo(() => {
     const e =
       (updateConfig.error as Error | null) ||
@@ -169,6 +193,8 @@ export const DancePanel = () => {
 
   return (
     <div className="card" style={{ gridColumn: "1 / -1" }}>
+      {/* En-tete : titre + badge d'etat (en cours / arrete) + bouton Demarrer/Arreter. */}
+      {/* On ne peut demarrer que si au moins une piece est ciblee OU la lyre est activee. */}
       <div className="flex-between" style={{ marginBottom: 12 }}>
         <div>
           <h2>Mode Dance</h2>
@@ -208,6 +234,8 @@ export const DancePanel = () => {
         <p className="muted">Chargement…</p>
       ) : (
         <div style={{ display: "grid", gap: 16 }}>
+          {/* ----- Section : pieces ciblees -----
+              Filtre par piece : seuls les projecteurs des pieces selectionnees participent au Dance. */}
           <section>
             <h3 style={{ margin: "0 0 8px" }}>Pièces ciblées</h3>
             {rooms.length === 0 ? (
@@ -239,6 +267,8 @@ export const DancePanel = () => {
             ) : null}
           </section>
 
+          {/* ----- Section : vitesse -----
+              Deux curseurs qui bornent l'intervalle aleatoire (ms) entre deux flashs : min = rapide, max = lent. */}
           <section>
             <h3 style={{ margin: "0 0 8px" }}>Vitesse (intervalle aléatoire entre flashs)</h3>
             <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 60px", gap: 8, alignItems: "center" }}>
@@ -265,6 +295,8 @@ export const DancePanel = () => {
             </div>
           </section>
 
+          {/* ----- Section : patterns -----
+              Cases a cocher pour choisir quels patterns de chase entrent dans la rotation. */}
           <section>
             <h3 style={{ margin: "0 0 8px" }}>Patterns activés</h3>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
@@ -284,6 +316,10 @@ export const DancePanel = () => {
             </div>
           </section>
 
+          {/* ----- Section : lyre -----
+              Inclut la lyre (moving head) dans le strobe. Principe : on maintient le shutter ouvert
+              et on pulse le dimmer au rythme du pattern. La lyre devient alors un groupe a droite
+              de la chaine spatiale. Cette section est independante du filtre par piece. */}
           <section>
             <h3 style={{ margin: "0 0 8px" }}>Lyre (shutter ouvert + dimmer pulsé)</h3>
             <label style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
@@ -399,6 +435,9 @@ export const DancePanel = () => {
               />
               Lyre suit le chase (pan/tilt vise le groupe actif)
             </label>
+            {/* Si "followChase" est actif, la lyre pointe vers le groupe en cours d'allumage.
+                On saisit ici les ancres pan/tilt connues ; les projecteurs sans ancre sont
+                positionnes par extrapolation lineaire a partir des positions saisies. */}
             {config.lyre.followChase ? (
               <div style={{ marginTop: 10 }}>
                 <p className="muted" style={{ marginBottom: 6 }}>
@@ -547,6 +586,10 @@ export const DancePanel = () => {
             ) : null}
           </section>
 
+          {/* ----- Section : lampes connectees -----
+              Chaque cote du layout 3D d'un bandeau LED devient un groupe du chase.
+              Les zones flashent dans la couleur ambiante courante du strip.
+              NB : ne marche que si le streaming UDP de la lampe est active (sinon affiche "streaming OFF"). */}
           <section>
             <h3 style={{ margin: "0 0 8px" }}>Lampes connectées</h3>
             <label style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
@@ -614,6 +657,9 @@ export const DancePanel = () => {
             )}
           </section>
 
+          {/* ----- Section : exclusions -----
+              Empeche certains canaux d'etre flashes. Exclure pan/tilt est recommande pour les lyres,
+              sinon elles bougeraient au rythme du strobe. On peut aussi exclure d'autres capabilities. */}
           <section>
             <h3 style={{ margin: "0 0 8px" }}>Exclusions</h3>
             <label style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
@@ -643,6 +689,8 @@ export const DancePanel = () => {
             </div>
           </section>
 
+          {/* ----- Section : etat live -----
+              Affiche le pattern courant et le nombre de groupes actifs, mis a jour via le refetch a 1,5 s. */}
           {state ? (
             <section>
               <h3 style={{ margin: "0 0 8px" }}>État live</h3>

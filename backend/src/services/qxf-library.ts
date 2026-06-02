@@ -1,19 +1,29 @@
+// Bibliotheque de definitions de projecteurs (fixtures) au format QXF de QLC+.
+// Au premier acces, on telecharge le depot qlcplus de GitHub (~50 Mo zippe) et
+// on extrait uniquement les fichiers .qxf vers backend/data/fixtures/.
+// Ensuite, on peut lister et lire ces definitions pour creer des projecteurs.
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import AdmZip, { IZipEntry } from "adm-zip";
 import { QxfParseResult } from "@lightbridgedmx/shared";
 import { parseQxf } from "./qxf";
 
+// Archive zip du depot qlcplus (branche master) servie par GitHub.
 const ZIP_URL = "https://codeload.github.com/mcallegari/qlcplus/zip/refs/heads/master";
+// Prefixe interne au zip : on ne garde que les fichiers sous ce dossier.
 const ZIP_PREFIX = "qlcplus-master/resources/fixtures/";
+// Dossier local ou la bibliotheque est extraite et lue.
 const LIB_ROOT = path.resolve(process.cwd(), "backend/data/fixtures");
 
+// S'assure que la bibliotheque est presente sur le disque.
+// Ne fait rien si elle existe deja, sauf si force=true (re-telechargement force).
 export const ensureFixtureLibrary = async (opts?: { force?: boolean }) => {
   const exists = await hasAnyFixture();
   if (exists && !opts?.force) return;
   await downloadAndExtract();
 };
 
+// Liste toutes les definitions QXF et les parse en objets exploitables.
 export const listFixtureLibrary = async (): Promise<Array<{ path: string; data: QxfParseResult }>> => {
   await ensureFixtureLibrary();
   const files = await walkFiles(LIB_ROOT);
@@ -25,19 +35,22 @@ export const listFixtureLibrary = async (): Promise<Array<{ path: string; data: 
       const parsed = parseQxf(xml);
       results.push({ path: rel, data: parsed });
     } catch {
-      // Ignore malformed files to keep the list responsive.
+      // On ignore les fichiers malformes pour garder la liste reactive.
       continue;
     }
   }
   return results;
 };
 
+// Renvoie le contenu XML brut d'une definition QXF a partir de son chemin relatif.
 export const readFixtureFromLibrary = async (relativePath: string): Promise<string> => {
   await ensureFixtureLibrary();
   const target = path.join(LIB_ROOT, relativePath);
   return fs.readFile(target, "utf8");
 };
 
+// Telecharge le zip GitHub puis extrait seulement les .qxf vers LIB_ROOT.
+// On repart d'un dossier propre a chaque fois pour eviter les fichiers obsoletes.
 const downloadAndExtract = async () => {
   await fs.rm(LIB_ROOT, { recursive: true, force: true });
   await fs.mkdir(LIB_ROOT, { recursive: true });
@@ -48,6 +61,7 @@ const downloadAndExtract = async () => {
   }
   const buffer = Buffer.from(await res.arrayBuffer());
   const zip = new AdmZip(buffer);
+  // On ne garde que les vrais fichiers .qxf du dossier fixtures (pas les dossiers).
   const entries = zip
     .getEntries()
     .filter(
@@ -55,6 +69,8 @@ const downloadAndExtract = async () => {
         !entry.isDirectory && entry.entryName.startsWith(ZIP_PREFIX) && entry.entryName.endsWith(".qxf")
     );
 
+  // Pour chaque .qxf : on retire le prefixe du zip pour obtenir un chemin relatif
+  // propre, on recree l'arborescence de dossiers, puis on ecrit le fichier.
   for (const entry of entries) {
     const relative = entry.entryName.slice(ZIP_PREFIX.length);
     const target = path.join(LIB_ROOT, relative);
@@ -64,12 +80,15 @@ const downloadAndExtract = async () => {
   }
 };
 
+// Parcourt recursivement un dossier et renvoie les chemins relatifs des .qxf.
+// Le prefixe sert a la recursion (chemin du sous-dossier en cours).
 const walkFiles = async (root: string, prefix = ""): Promise<string[]> => {
   let entries: string[] = [];
   let dirents;
   try {
     dirents = await fs.readdir(path.join(root, prefix), { withFileTypes: true });
   } catch {
+    // Dossier absent (bibliotheque pas encore telechargee) : liste vide.
     return [];
   }
 
@@ -85,6 +104,8 @@ const walkFiles = async (root: string, prefix = ""): Promise<string[]> => {
   return entries;
 };
 
+// Indique si au moins une definition QXF est deja presente sur le disque.
+// Sert a decider s'il faut (re)telecharger la bibliotheque.
 const hasAnyFixture = async (): Promise<boolean> => {
   const files = await walkFiles(LIB_ROOT);
   return files.length > 0;

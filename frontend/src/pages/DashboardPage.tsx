@@ -1,3 +1,8 @@
+// Onglet "Tableau de bord" : page de synthese de l'application.
+// Elle affiche en cartes l'etat global du pont DMX <-> HomeKit (univers DMX, projecteurs,
+// scenes, HomeKit, Mode Dance), des actions rapides (Blackout, Stop Dance, Refresh QXF)
+// et le journal d'activite recente. Les donnees viennent des contextes partages et de
+// quelques requetes React Query.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Power, RefreshCw, Square } from "lucide-react";
 import { DanceState } from "@lightbridgedmx/shared";
@@ -7,6 +12,7 @@ import { countActiveChannels } from "../lib/fixtures";
 import { api } from "../lib/api";
 import { setActiveTabHash } from "../shell/navigate";
 
+// Style commun des petits boutons "pilule" qui renvoient vers un autre onglet.
 const NAV_LINK_STYLE: React.CSSProperties = {
   background: "transparent",
   border: "1px solid var(--border)",
@@ -32,14 +38,18 @@ export const DashboardPage = () => {
   const { universeState } = useUniverseState();
   const queryClient = useQueryClient();
 
+  // Etat du Mode Dance, rafraichi toutes les 1,5 s par polling (le backend ne pousse
+  // pas cet etat par WebSocket). stopDance arrete le chenillard et met a jour le cache.
   const danceQuery = useQuery<DanceState>(["dance", "state"], api.dance.state, { refetchInterval: 1500 });
   const stopDance = useMutation<DanceState, Error, void>(() => api.dance.stop(), {
     onSuccess: (state) => queryClient.setQueryData(["dance", "state"], state)
   });
   const danceRunning = danceQuery.data?.running ?? false;
 
+  // Indicateurs de l'univers DMX courant pour la carte "Universe".
   const activeChannels = countActiveChannels(universeState);
   const fps = universeState?.fps ?? 0;
+  // Heure du dernier tick recu, ou "—" tant qu'aucun flux DMX n'est arrive.
   const tick = universeState ? new Date(universeState.timestamp).toLocaleTimeString() : "—";
 
   return (
@@ -50,6 +60,7 @@ export const DashboardPage = () => {
       </div>
 
       <section className="grid dashboard-grid" aria-label="Status">
+        {/* Carte Universe : FPS, nombre de canaux actifs sur 512, heure du dernier tick */}
         <div className="card">
           <h2>Universe</h2>
           {universeState ? (
@@ -87,6 +98,8 @@ export const DashboardPage = () => {
           </button>
         </div>
 
+        {/* Carte HomeKit : etat du pont. Trois cas : chargement, desactive (HOMEKIT_ENABLED
+            absent), ou actif avec le nombre de projecteurs exportes et un lien vers le QR/PIN */}
         <div className="card">
           <h2>HomeKit</h2>
           {homekitStatusLoading ? (
@@ -136,6 +149,8 @@ export const DashboardPage = () => {
           </button>
         </div>
 
+        {/* Carte Actions rapides : Blackout (extinction totale), Stop Dance (arrete le
+            chenillard, desactive si rien ne tourne) et Refresh QXF (recharge la bibliotheque) */}
         <div className="card quick-actions">
           <h2>Actions rapides</h2>
           <div className="quick-actions-grid">
@@ -164,6 +179,8 @@ export const DashboardPage = () => {
           </div>
         </div>
 
+        {/* Carte Activite recente : journal des derniers evenements backend.
+            Si l'historique est vide, on affiche le dernier message courant. */}
         <div className="card activity-card">
           <h2>Activité récente</h2>
           {logHistory.length === 0 ? (

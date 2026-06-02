@@ -1,16 +1,30 @@
+// Service DMX : maintient en memoire les 512 canaux de l'univers DMX et les
+// pousse en continu (a N FPS) vers le materiel, soit via Art-Net (UDP), soit
+// via une interface Enttec Open DMX USB. Si aucune sortie n'est disponible, il
+// bascule en mode simulation (aucun envoi materiel) tout en gardant l'etat.
+//
+// Place dans le flux : c'est le composant le plus bas du backend cote sortie.
+// Le reste du backend ecrit des valeurs de canaux ici ; ce service se charge de
+// les transmettre physiquement et d'emettre un evenement "tick" a chaque trame.
 import { EventEmitter } from "node:events";
 import type { FastifyBaseLogger } from "fastify";
 import { DMX, EnttecOpenUSBDMXDriver } from "dmx-ts";
 import { SerialPort } from "serialport";
 import { UniverseState } from "@lightbridgedmx/shared";
 
+// Une ecriture DMX : on pose une suite de valeurs a partir d'une adresse de
+// depart (premier canal occupe par le projecteur dans l'univers).
 export type DmxWrite = {
   address: number;
   values: number[];
 };
 
+// Mode de sortie courant : "hardware" = on envoie reellement, "simulation" =
+// on garde l'etat en memoire mais on n'ecrit sur aucun materiel.
 type DmxMode = "hardware" | "simulation";
+// Interface minimale du client Art-Net (paquet "artnet") dont on a besoin.
 type ArtnetClient = { set: (universe: number, channel: number, values: number[]) => void; close: () => void };
+// Type d'un element retourne par SerialPort.list() (un port serie detecte).
 type SerialPortInfo = Awaited<ReturnType<typeof SerialPort.list>>[number];
 
 export type DmxServiceOptions = {
@@ -23,21 +37,32 @@ export type DmxServiceOptions = {
   artnetUniverse?: number;
 };
 
+// Service DMX. Herite d'EventEmitter pour emettre un evenement "tick" a chaque
+// trame poussee (le reste du backend s'y abonne pour diffuser l'etat).
 export class DmxService extends EventEmitter {
   private readonly logger: FastifyBaseLogger;
   private readonly universeId: number;
+  // Etat des 512 canaux DMX (valeurs 0-255). C'est la source de verite poussee
+  // a chaque trame.
   private universe: number[] = Array(512).fill(0);
+  // Minuteur de la boucle de trames (un setTimeout reprogramme a chaque tick).
   private tickTimer: NodeJS.Timeout | null = null;
+  // Horodatage cible du prochain tick, sert a corriger la derive du minuteur.
   private nextTickAt: number | null = null;
   private fps: number;
   private lastTick = Date.now();
   private mode: DmxMode = "simulation";
+  // Port serie demande par la config (peut etre absent : on auto-detecte alors).
   private configuredPort?: string;
+  // Port serie reellement ouvert (apres detection).
   private activePort?: string;
   private dmx: DMX | null = null;
   private driver: EnttecOpenUSBDMXDriver | null = null;
   private readonly universeName = "main";
+  // Verrou anti-reentrance : empeche deux pushFrame() de se chevaucher.
   private pushing = false;
+  // Une trame a ete demandee pendant qu'un push etait deja en cours : on la
+  // rejouera juste apres pour ne pas perdre la derniere valeur.
   private pendingFrame = false;
   private readonly output: "enttec" | "artnet";
   private artnet: ArtnetClient | null = null;
@@ -57,14 +82,18 @@ export class DmxService extends EventEmitter {
     this.artnetUniverse = options?.artnetUniverse ?? 0;
   }
 
+  // Prepare le client Art-Net (sortie UDP). N'est appele que si output=artnet.
   private async initializeArtnet() {
-    // Lazy require to avoid bringing the dependency when unused.
+    // require differe (lazy) : on ne charge la dependance que si elle sert,
+    // pour ne pas l'embarquer quand on utilise l'autre sortie.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const artnet = require("artnet");
     this.artnet = artnet({ host: this.artnetHost, port: this.artnetPort, sendAll: true });
     this.logger.info({ host: this.artnetHost, port: this.artnetPort, universe: this.artnetUniverse }, "Art-Net output ready");
   }
 
+  // Demarre le service : initialise la sortie choisie puis lance la boucle de
+  // trames. Sans effet si elle tourne deja.
   async start() {
     if (this.tickTimer) return;
     if (this.output === "enttec") {
@@ -87,11 +116,14 @@ export class DmxService extends EventEmitter {
     );
   }
 
+  // Arrete la boucle de trames et libere le materiel.
   async stop() {
     this.clearTick();
     await this.teardownHardware();
   }
 
+  // Change la cadence (FPS) en cours de route. Si la boucle tourne deja, on la
+  // reprogramme immediatement avec le nouvel intervalle.
   setFrameRate(fps: number) {
     this.fps = clampFps(fps);
     if (this.tickTimer) {
@@ -102,6 +134,9 @@ export class DmxService extends EventEmitter {
     }
   }
 
+  // Applique une ecriture DMX : pose les valeurs a partir de l'adresse de depart.
+  // NB : address est 1-based (canal 1 = 1er canal), d'ou le "- 1" pour l'index
+  // du tableau. Les canaux hors univers sont ignores en silence.
   applyWrite(write: DmxWrite) {
     const { address, values } = write;
     values.forEach((value, idx) => {
@@ -112,25 +147,30 @@ export class DmxService extends EventEmitter {
     });
   }
 
+  // Ecrit un seul canal (numerote 1 a 512).
   setChannel(channel: number, value: number) {
     if (channel < 1 || channel > 512) return;
     this.universe[channel - 1] = clampValue(value);
   }
 
+  // Renvoie une copie figee (instantane) des 512 canaux courants.
   getUniverseSnapshot(): number[] {
     return [...this.universe];
   }
 
-  // Apply previously-persisted values to the universe buffer. Safe to call
-  // before start() so the first emitted Art-Net frame already carries the
-  // restored state — projectors keep their last on-state across backend
-  // restarts.
+  // Restaure des valeurs deja persistees dans le buffer de l'univers. On peut
+  // l'appeler avant start() : ainsi la toute premiere trame Art-Net porte deja
+  // l'etat restaure. Les projecteurs gardent donc leur derniere valeur "allume"
+  // au redemarrage du backend.
   restoreUniverse(values: number[]) {
     for (let i = 0; i < Math.min(values.length, this.universe.length); i++) {
       this.universe[i] = clampValue(values[i]);
     }
   }
 
+  // Construit l'etat publie a chaque tick (diffuse via WebSocket).
+  // Le FPS renvoye est mesure (et non theorique) : on le deduit du temps ecoule
+  // depuis le tick precedent, ce qui reflete la cadence reelle.
   getState(): UniverseState {
     const now = Date.now();
     const delta = now - this.lastTick;
@@ -145,6 +185,8 @@ export class DmxService extends EventEmitter {
     };
   }
 
+  // Un battement de la boucle : pousse la trame courante puis emet "tick".
+  // Tout est protege par try/catch pour qu'une erreur n'arrete jamais la boucle.
   private safeTick() {
     try {
       this.pendingFrame = true;
@@ -156,6 +198,10 @@ export class DmxService extends EventEmitter {
     }
   }
 
+  // Programme le prochain tick avec correction de derive : au lieu d'un
+  // setInterval fixe (qui accumule du retard), on vise un horodatage cible
+  // (nextTickAt) et on ajuste le delai a chaque fois pour rester aligne sur le
+  // FPS demande.
   private scheduleNextTick() {
     const interval = 1000 / this.fps;
     const now = Date.now();
@@ -165,25 +211,33 @@ export class DmxService extends EventEmitter {
     this.tickTimer = setTimeout(() => {
       this.safeTick();
       const next = (this.nextTickAt ?? now) + interval;
+      // Ne jamais cibler une date deja passee : si on a pris du retard, on
+      // repart de maintenant pour eviter une rafale de ticks de rattrapage.
       const driftCorrected = Math.max(next, Date.now());
       this.nextTickAt = driftCorrected;
       this.scheduleNextTick();
     }, delay);
   }
 
+  // Stoppe et oublie le minuteur de boucle.
   private clearTick() {
     if (this.tickTimer) clearTimeout(this.tickTimer);
     this.tickTimer = null;
     this.nextTickAt = null;
   }
 
+  // Envoie une trame complete des 512 canaux vers la sortie active.
+  // Anti-reentrance : si un push est deja en cours, on note pendingFrame et on
+  // sort ; le push courant rejouera la trame en fin via setImmediate. On evite
+  // ainsi d'envoyer deux trames concurrentes et on garde toujours la derniere.
   private pushFrame() {
     if (this.pushing) return;
     if (this.output === "artnet") {
       this.pendingFrame = false;
       this.pushing = true;
       try {
-        // Explicit channel offset 1 to avoid dropping channel 1.
+        // Offset de canal explicite a 1 : sinon le client Art-Net partirait du
+        // canal 0 et perdrait le canal 1.
         this.artnet?.set(this.artnetUniverse, 1, this.universe);
       } catch (err) {
         this.logger.error({ err }, "Failed to push Art-Net frame");
@@ -197,6 +251,7 @@ export class DmxService extends EventEmitter {
     }
     if (this.mode !== "hardware" || !this.dmx) return;
     this.pendingFrame = false;
+    // La lib dmx-ts attend une map canal->valeur indexee a partir de 1.
     const frame: Record<number, number> = {};
     for (let i = 0; i < this.universe.length; i++) {
       frame[i + 1] = this.universe[i];
@@ -204,9 +259,11 @@ export class DmxService extends EventEmitter {
 
     this.pushing = true;
     try {
-      // Enttec Open DMX USB is synchronous; push and return immediately.
+      // L'Enttec Open DMX USB est synchrone : l'envoi rend la main aussitot.
       this.dmx.update(this.universeName, frame);
     } catch (err) {
+      // Une erreur d'ecriture signifie souvent que le materiel a disparu :
+      // on retombe en simulation pour ne pas spammer d'erreurs a chaque trame.
       this.logger.error({ err }, "Failed to push DMX frame, switching to simulation mode");
       this.mode = "simulation";
       void this.teardownHardware();
@@ -218,6 +275,8 @@ export class DmxService extends EventEmitter {
     }
   }
 
+  // Initialise la sortie Enttec Open DMX USB. Detecte/ouvre le port serie ;
+  // si rien ne convient, bascule proprement en mode simulation.
   private async initializeDriver() {
     const port = await this.detectPort();
     if (!port) {
@@ -232,12 +291,16 @@ export class DmxService extends EventEmitter {
 
     const candidates = this.expandPortCandidates(port);
 
+    // On tente chaque variante de port (ex. /dev/tty.* puis /dev/cu.*) ;
+    // le premier qui s'ouvre gagne, sinon on finit en simulation.
     for (const candidate of candidates) {
       try {
         this.logger.info({ port: candidate }, "Initializing Enttec Open DMX USB driver");
         this.driver = new EnttecOpenUSBDMXDriver(candidate, { dmxSpeed: this.fps });
 
-        // Allow opening the port even if another process holds a lock (common on macOS with FTDI).
+        // Astuce : on force les options du port serie interne du driver pour
+        // pouvoir ouvrir le port meme si un autre processus pose un verrou
+        // (frequent sur macOS avec les puces FTDI). D'ou lock: false.
         type DriverWithOptions = { _serialPortOptions?: Record<string, unknown> };
         const driverHack = this.driver as unknown as DriverWithOptions;
         const serialOptions = driverHack._serialPortOptions ?? {};
@@ -247,7 +310,7 @@ export class DmxService extends EventEmitter {
           stopBits: 2,
           parity: "none",
           highWaterMark: 1024,
-          latencyTimer: 1, // match QLC+ (libftdi) to reduce buffering delays
+          latencyTimer: 1, // aligne sur QLC+ (libftdi) pour reduire le delai de bufferisation
           ...serialOptions,
           lock: false
         };
@@ -275,12 +338,14 @@ export class DmxService extends EventEmitter {
     );
   }
 
+  // Ferme et oublie toutes les ressources materielles (Art-Net + driver DMX),
+  // puis repasse en mode simulation. Tolere les erreurs de fermeture.
   private async teardownHardware() {
     if (this.artnet) {
       try {
         this.artnet.close();
       } catch {
-        // ignore
+        // on ignore : la fermeture peut echouer si le socket est deja perdu
       }
     }
     this.artnet = null;
@@ -297,6 +362,11 @@ export class DmxService extends EventEmitter {
     this.activePort = undefined;
   }
 
+  // Determine quel port serie ouvrir pour l'Enttec :
+  // 1) si un port est configure, on le privilegie (et on l'ouvre meme s'il
+  //    n'apparait pas dans le scan, car l'enumeration peut etre incomplete) ;
+  // 2) sinon on cherche un port qui ressemble a une Enttec Open DMX (FTDI).
+  // Renvoie null si rien n'est trouve -> le service ira en simulation.
   private async detectPort(): Promise<string | null> {
     let ports: SerialPortInfo[] = [];
     try {
@@ -330,6 +400,9 @@ export class DmxService extends EventEmitter {
     return null;
   }
 
+  // Heuristique pour reconnaitre une interface Enttec Open DMX a partir des
+  // identifiants USB : soit le fabricant mentionne "enttec", soit c'est une
+  // puce FTDI (vendorId 0403) avec un productId typique (6001/6015) ou absent.
   private isEnttecOpenDMX(port: SerialPortInfo): boolean {
     const vendorId = port.vendorId?.toLowerCase();
     const productId = port.productId?.toLowerCase();
@@ -342,6 +415,9 @@ export class DmxService extends EventEmitter {
     return mentionsEnttec || (isFtdi && looksLikeOpenDmx);
   }
 
+  // Sur macOS, un meme peripherique expose souvent deux chemins : /dev/tty.* et
+  // /dev/cu.*. On ajoute la variante /dev/cu.* comme candidat de secours, car
+  // c'est generalement celle qui s'ouvre sans bloquer.
   private expandPortCandidates(port: string): string[] {
     const candidates = [port];
     if (port.startsWith("/dev/tty.")) {
@@ -352,9 +428,12 @@ export class DmxService extends EventEmitter {
   }
 }
 
+// Borne une valeur de canal dans la plage DMX valide 0-255 (entier).
+// Un NaN devient 0 pour ne jamais envoyer de valeur invalide au materiel.
 const clampValue = (value: number) => {
   if (Number.isNaN(value)) return 0;
   return Math.max(0, Math.min(255, Math.round(value)));
 };
 
+// Borne le FPS demande dans une plage raisonnable (1 a 60 trames/seconde).
 const clampFps = (fps: number) => Math.max(1, Math.min(fps, 60));

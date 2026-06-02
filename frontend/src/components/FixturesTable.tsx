@@ -1,3 +1,7 @@
+// Tableau listant les projecteurs (fixtures) configures : nom, adresse DMX,
+// univers, canaux et bouton de suppression. Affiche un badge "HomeKit" quand le
+// projecteur est expose dans l'app Maison. Composant d'affichage pur : il recoit
+// tout via ses props et delegue la suppression au parent.
 import { Fixture } from "@lightbridgedmx/shared";
 
 type FixturesTableProps = {
@@ -10,6 +14,11 @@ type FixturesTableProps = {
   homekitEnabled?: boolean;
 };
 
+// Determine si un projecteur serait expose en RGB sur HomeKit. Sert de
+// repli pour afficher le badge quand la liste reelle des projecteurs HomeKit
+// n'est pas encore connue cote backend.
+// Regles : explicitement desactive -> non ; canaux DMX HomeKit forces -> oui ;
+// sinon il faut posseder les trois capabilities r, g et b.
 const isRgbFixture = (fixture: Fixture) => {
   if (fixture.homekit?.enabled === false) return false;
   if (fixture.homekit?.dmxChannels) return true;
@@ -48,6 +57,9 @@ export const FixturesTable = ({
               <td data-label="Name">
                 <div className="flex-between" style={{ gap: 6, alignItems: "center" }}>
                   <span>{fixture.name}</span>
+                  {/* Badge HomeKit : visible si le pont est actif ET soit ce
+                      projecteur figure dans la liste HomeKit fournie, soit
+                      (liste absente) on devine via isRgbFixture en repli. */}
                   {homekitEnabled !== false &&
                   (homekitFixtureIds?.has(fixture.id) || (!homekitFixtureIds?.size && isRgbFixture(fixture))) ? (
                     <span className="badge-pill">HomeKit</span>

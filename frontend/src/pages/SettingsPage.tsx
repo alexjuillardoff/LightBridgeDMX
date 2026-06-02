@@ -1,7 +1,11 @@
+// Onglet Reglages : page de synthese en lecture seule.
+// Montre l'etat du pont HomeKit, des infos runtime du frontend (WebSocket, mode)
+// et un rappel des variables backend (qui, elles, se reglent cote serveur).
 import { HomeKitCard } from "../components/HomeKitCard";
 import { useAppData } from "../contexts/AppDataContext";
 import { wsUrl } from "../lib/api";
 
+// Base de l'API : variable d'env Vite si definie, sinon on passe par le proxy Vite vers :5000.
 const apiBase = (import.meta.env.VITE_API_BASE as string | undefined) || "(proxy Vite → :5000)";
 
 export const SettingsPage = () => {
@@ -14,10 +18,12 @@ export const SettingsPage = () => {
         <span className="muted">HomeKit, système et infos backend</span>
       </div>
       <div className="grid">
+        {/* Carte du pont HomeKit : etat, code d'appairage, accessoires exposes. */}
         <div className="card grid-span-full">
           <HomeKitCard status={homekitStatus} isLoading={homekitStatusLoading} error={homekitStatusError ?? undefined} />
         </div>
 
+        {/* Infos runtime cote frontend : etat WebSocket, base API, mode dev/prod. */}
         <div className="card">
           <h2>Système</h2>
           <p className="muted" style={{ marginTop: 0 }}>
@@ -27,6 +33,7 @@ export const SettingsPage = () => {
             <div>
               <dt>WebSocket</dt>
               <dd>
+                {/* Badge vert (badge-on) seulement quand la connexion WebSocket est ouverte. */}
                 <span className={`badge ${wsStatus === "open" ? "badge-on" : ""}`}>{wsBadge}</span>
                 <small className="muted" style={{ marginLeft: 8 }}>
                   <code>{wsUrl()}</code>
@@ -46,6 +53,8 @@ export const SettingsPage = () => {
           </dl>
         </div>
 
+        {/* Rappel des variables backend. Valeurs affichees en dur ici : elles ne
+            sont pas lues dynamiquement, elles servent juste de pense-bete a l'utilisateur. */}
         <div className="card">
           <h2>Variables backend</h2>
           <p className="muted" style={{ marginTop: 0 }}>

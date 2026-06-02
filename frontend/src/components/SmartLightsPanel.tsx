@@ -1,3 +1,8 @@
+// Panneau UI des lampes connectees (smart lights).
+// Affiche la liste des lampes WiFi (Nanoleaf...), une carte d'appairage (pairing),
+// et pour chaque lampe : on/off, couleur, curseurs, streaming UDP, painter,
+// effets, layout 3D et mirror DMX. Toutes les actions passent par l'API REST
+// (`api.smartLights.*`) et le cache react-query est mis a jour localement.
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,18 +16,23 @@ import { ZonePainter } from "./smart-lights/ZonePainter";
 import { EffectDesigner } from "./smart-lights/EffectDesigner";
 import { lightMatchesBackend, SmartLightBackendId } from "./smart-lights/backendRegistry";
 
-// Lazy-load the 3D editor — three.js + drei is ~600KB, only paid for when opened.
+// Chargement differe (lazy) de l'editeur 3D : three.js + drei pesent ~600 Ko.
+// On ne paie ce poids que si l'utilisateur ouvre vraiment l'onglet Layout 3D.
 const LayoutEditor3D = lazy(() =>
   import("./smart-lights/LayoutEditor3D").then((m) => ({ default: m.LayoutEditor3D }))
 );
 
+// Resultat d'un test (probe) de lampe : joignable ? en mode appairage ?
 type Probe = { reachable: boolean; inPairingMode: boolean; status?: number } | null;
 
 type SmartLightsPanelProps = {
+  // Filtre par marque/type de lampe ("all" = toutes).
   backendFilter?: SmartLightBackendId | "all";
+  // Masque le titre de section (utile quand le panneau est integre dans un onglet deja titre).
   hideSectionTitle?: boolean;
 };
 
+// Composant racine du panneau : liste les lampes filtrees + carte d'appairage.
 export const SmartLightsPanel = ({
   backendFilter = "all",
   hideSectionTitle = false
@@ -30,6 +40,8 @@ export const SmartLightsPanel = ({
   const queryClient = useQueryClient();
   const lightsQuery = useQuery<SmartLight[]>(["smart-lights"], api.smartLights.list);
 
+  // Met a jour le cache react-query sans refetch : remplace la lampe si elle
+  // existe deja, sinon l'ajoute (upsert). Evite un aller-retour reseau a chaque action.
   const upsertLight = (light: SmartLight) => {
     queryClient.setQueryData<SmartLight[]>(["smart-lights"], (prev = []) => {
       const idx = prev.findIndex((l) => l.id === light.id);
@@ -41,12 +53,14 @@ export const SmartLightsPanel = ({
       return [...prev, light];
     });
   };
+  // Retire une lampe du cache local apres suppression cote serveur.
   const removeLight = (id: string) => {
     queryClient.setQueryData<SmartLight[]>(["smart-lights"], (prev = []) =>
       prev.filter((l) => l.id !== id)
     );
   };
 
+  // Ne garde que les lampes qui correspondent au filtre de backend demande.
   const lights = (lightsQuery.data ?? []).filter((l) => lightMatchesBackend(l, backendFilter));
 
   return (
@@ -79,8 +93,10 @@ export const SmartLightsPanel = ({
   );
 };
 
-// ─── Pairing + Discovery ────────────────────────────────────────────────────
+// ─── Appairage (pairing) + decouverte (discovery) ───────────────────────────
 
+// Carte permettant d'ajouter un Nanoleaf : saisie/scan de l'IP, test de
+// joignabilite, puis appairage. Le strip doit etre en mode pairing (LED qui pulse).
 const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
   const [host, setHost] = useState("");
   const [name, setName] = useState("");
@@ -89,6 +105,7 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
   const [error, setError] = useState<string | null>(null);
   const [discovered, setDiscovered] = useState<NanoleafDiscovered[]>([]);
 
+  // Test (probe) : verifie que l'API du Nanoleaf repond a l'IP donnee.
   const probeMutation = useMutation(api.smartLights.probe, {
     onSuccess: (data) => {
       setProbe(data);
@@ -96,6 +113,7 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
     },
     onError: (err) => setError((err as Error).message)
   });
+  // Appairage : recupere un token et enregistre la lampe (le strip doit etre en pairing).
   const pairMutation = useMutation(api.smartLights.pair, {
     onSuccess: (light) => {
       onPaired(light);
@@ -106,6 +124,7 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
     },
     onError: (err) => setError((err as Error).message)
   });
+  // Decouverte (discovery mDNS) : scanne le reseau ~4 s pour trouver les Nanoleaf.
   const discoverMutation = useMutation(() => api.smartLights.discover({ timeoutMs: 4000 }), {
     onSuccess: (data) => {
       setDiscovered(data.devices);
@@ -139,6 +158,7 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
             {discoverMutation.isLoading ? "Scan…" : "Scanner"}
           </button>
         </div>
+        {/* Liste des lampes detectees par le scan : un clic pre-remplit l'IP et le nom. */}
         {discovered.length > 0 ? (
           <div style={{ fontSize: 12 }}>
             <span className="muted">Détectés : </span>
@@ -194,8 +214,10 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
   );
 };
 
-// ─── Per-light card ─────────────────────────────────────────────────────────
+// ─── Carte d'une lampe ──────────────────────────────────────────────────────
 
+// Carte de controle d'une lampe : etat, couleur, curseurs HSB + temperature,
+// bascule streaming UDP, onglets (painter / effets / layout 3D) et reglages avances.
 const SmartLightCard = ({
   light,
   onUpdated,
@@ -205,19 +227,23 @@ const SmartLightCard = ({
   onUpdated: (light: SmartLight) => void;
   onDeleted: (id: string) => void;
 }) => {
+  // Etat affiche : celui de la lampe, ou des valeurs neutres par defaut si inconnu.
   const state = light.state ?? { on: false, hue: 0, sat: 0, brightness: 0, reachable: true };
   const streaming = light.streaming?.enabled ?? false;
-  // When streaming is active the device's reported colorMode ("effect" → "*ExtControl*")
-  // is uninformative. Show the actual driver: which kind of effect is being streamed.
-  // Otherwise fall back to whatever the device reports (hs/ct/effect).
+  // En streaming UDP, le colorMode renvoye par l'appareil ("effect" → "*ExtControl*")
+  // n'apprend rien. On affiche plutot ce que LightBridge envoie reellement : le type
+  // d'effet streame. Sinon on retombe sur ce que l'appareil declare (hs/ct/effect).
   const colorMode: string = streaming
     ? light.currentEffect
       ? `stream · ${light.currentEffect.kind}`
       : "stream · uniform"
     : state.colorMode ?? "hs";
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Onglet ouvert sous la carte ("none" = aucun).
   const [tab, setTab] = useState<"none" | "painter" | "effect" | "layout3d">("none");
 
+  // --- Mutations : chaque action met a jour le cache via onUpdated/onDeleted ---
+  // Applique un nouvel etat (on, couleur, luminosite...) a la lampe.
   const setState = useMutation(
     (body: SmartLightStateInput) => api.smartLights.setState(light.id, body),
     { onSuccess: onUpdated }
@@ -225,14 +251,18 @@ const SmartLightCard = ({
   const deleteLight = useMutation(() => api.smartLights.delete(light.id), {
     onSuccess: () => onDeleted(light.id)
   });
+  // Met a jour la config de la lampe (ex. le mirror DMX).
   const updateLight = useMutation(
     (body: Parameters<typeof api.smartLights.update>[1]) => api.smartLights.update(light.id, body),
     { onSuccess: onUpdated }
   );
+  // Active/desactive le streaming UDP (flux basse latence vers la lampe).
   const toggleStreaming = useMutation(
     (next: boolean) => api.smartLights.setStreaming(light.id, next),
     { onSuccess: onUpdated }
   );
+  // Liste des effets builtin de la lampe. Charge seulement si le panneau avance
+  // est ouvert ET que la lampe possede un token (sinon l'API n'est pas accessible).
   const effectsQuery = useQuery(["smart-lights", light.id, "effects"], () => api.smartLights.listEffects(light.id), {
     enabled: showAdvanced && !!light.config.token
   });
@@ -241,7 +271,10 @@ const SmartLightCard = ({
     { onSuccess: onUpdated }
   );
 
+  // Couleur du selecteur natif <input type=color> : on force V=100 % pour
+  // afficher la teinte pure (la luminosite a son propre curseur).
   const hexColor = useMemo(() => hsvToHex(state.hue, state.sat, 100), [state.hue, state.sat]);
+  // Pastille de couleur (badge) : temperature de couleur si mode ct, sinon HSB.
   const swatch = useMemo(
     () => (colorMode === "ct" && state.ct ? ctToCss(state.ct) : hsvToCss(state.hue, state.sat, state.brightness)),
     [state, colorMode]
@@ -278,12 +311,14 @@ const SmartLightCard = ({
         </span>
       </div>
 
+      {/* Alerte si la lampe n'est pas joignable (reachable) sur le reseau. */}
       {state.reachable === false ? (
         <p style={{ color: "var(--danger)", fontSize: 12, margin: "4px 0" }}>
           Injoignable — vérifie le réseau ou re-paire.
         </p>
       ) : null}
 
+      {/* Ligne d'actions rapides : on/off, selecteur de couleur, bascule streaming UDP. */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
         <button
           type="button"
@@ -296,6 +331,7 @@ const SmartLightCard = ({
           type="color"
           value={hexColor}
           onChange={(e) => {
+            // Choisir une couleur rallume forcement la lampe (on: true).
             const { r, g, b } = hexToRgb(e.target.value);
             setState.mutate({ rgb: { r, g, b }, on: true });
           }}
@@ -313,6 +349,7 @@ const SmartLightCard = ({
         </label>
       </div>
 
+      {/* Curseurs HSB + temperature de couleur. Pour la luminosite, 0 % eteint la lampe. */}
       <SliderRow label="Luminosité" value={Math.round(state.brightness)} min={0} max={100} unit="%"
         onChange={(v) => setState.mutate({ brightness: v, on: v > 0 })} />
       <SliderRow label="Teinte" value={Math.round(state.hue)} min={0} max={360} unit="°"
@@ -322,6 +359,7 @@ const SmartLightCard = ({
       <SliderRow label="Temp. couleur" value={Math.round(state.ct ?? 2700)} min={2127} max={6535} unit=" K"
         onChange={(v) => setState.mutate({ ct: v })} />
 
+      {/* Barre d'onglets : chaque bouton bascule (toggle) son panneau, sauf Avance et Supprimer. */}
       <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button type="button" onClick={() => setTab(tab === "painter" ? "none" : "painter")}
           style={tab === "painter" ? buttonStylePrimary : buttonStyleSecondary}>🎨 Painter</button>
@@ -353,6 +391,7 @@ const SmartLightCard = ({
           <EffectDesigner light={light} onUpdated={onUpdated} />
         </div>
       ) : null}
+      {/* Editeur 3D charge en differe (Suspense) : voir le lazy() en haut du fichier. */}
       {tab === "layout3d" ? (
         <div style={{ marginTop: 10 }}>
           <Suspense fallback={<p className="muted" style={{ fontSize: 12 }}>Chargement de l'éditeur 3D…</p>}>
@@ -361,6 +400,7 @@ const SmartLightCard = ({
         </div>
       ) : null}
 
+      {/* Panneau avance : choix d'un effet builtin de la lampe + edition du mirror DMX. */}
       {showAdvanced ? (
         <div style={{ marginTop: 10, padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
           <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>Effets builtin</p>
@@ -389,6 +429,8 @@ const SmartLightCard = ({
   );
 };
 
+// Ligne de curseur (slider) reutilisable : libelle + valeur + unite au-dessus
+// d'un <input type=range>. Remonte la nouvelle valeur (nombre) via onChange.
 const SliderRow = ({
   label, value, min, max, unit, onChange
 }: {
@@ -407,6 +449,9 @@ const SliderRow = ({
   </label>
 );
 
+// Editeur du mirror DMX : lie les composantes R/G/B/Dimmer de la lampe a des
+// canaux DMX (1-512). Etablit la liaison bidirectionnelle entre la smart light
+// et les canaux. Les champs sont des chaines pour permettre la saisie/le vide.
 const MirrorEditor = ({
   mirror, onSave
 }: {
@@ -418,6 +463,7 @@ const MirrorEditor = ({
   const [b, setB] = useState<string>(mirror?.bChannel?.toString() ?? "");
   const [bri, setBri] = useState<string>(mirror?.briChannel?.toString() ?? "");
 
+  // Convertit la saisie en numero de canal valide (entier 1-512), sinon undefined.
   const parseChan = (s: string): number | undefined => {
     const n = parseInt(s, 10);
     return Number.isFinite(n) && n >= 1 && n <= 512 ? n : undefined;
@@ -442,6 +488,7 @@ const MirrorEditor = ({
               rChannel: parseChan(r), gChannel: parseChan(g),
               bChannel: parseChan(b), briChannel: parseChan(bri)
             };
+            // Si aucun canal n'est renseigne, on enregistre null (mirror desactive).
             const hasAny = next.rChannel || next.gChannel || next.bChannel || next.briChannel;
             onSave(hasAny ? next : null);
           }}
@@ -455,6 +502,7 @@ const MirrorEditor = ({
   );
 };
 
+// Petit champ de saisie d'un numero de canal DMX (libelle + input numerique).
 const ChanInput = ({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) => (
   <label className="muted" style={{ fontSize: 12 }}>
     {label}
@@ -462,7 +510,7 @@ const ChanInput = ({ label, value, onChange }: { label: string; value: string; o
   </label>
 );
 
-// ─── styles ──────────────────────────────────────────────────────────────────
+// ─── styles inline partages par les composants de ce fichier ─────────────────
 
 const inputStyle: React.CSSProperties = {
   display: "block", width: "100%", marginTop: 4, padding: "6px 8px",
@@ -478,21 +526,24 @@ const buttonStyleSecondary: React.CSSProperties = {
   border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer", fontSize: 13
 };
 
-// ─── color utils ────────────────────────────────────────────────────────────
+// ─── utilitaires couleur ─────────────────────────────────────────────────────
 
+// HSB/HSV → couleur CSS pour la pastille. On divise V par 2 (luminosite max 50 %)
+// pour que la pastille reste lisible sur le fond sombre de l'UI.
 function hsvToCss(h: number, s: number, v: number): string {
   return `hsl(${h.toFixed(0)} ${s.toFixed(0)}% ${(v * 0.5).toFixed(0)}%)`;
 }
 
-/** Rough Kelvin → CSS color (warm orange ≈ 2000K, neutral white ≈ 4000K, cool blue ≈ 6500K). */
+/** Temperature de couleur (Kelvin) → couleur CSS approximative (orange chaud ≈ 2000K, blanc neutre ≈ 4000K, bleu froid ≈ 6500K). */
 function ctToCss(ct: number): string {
-  // Clamp to a visually meaningful range and map to hue.
+  // Borne (clamp) la temperature sur 2000-6500K, plage visuellement parlante.
   const t = Math.max(0, Math.min(1, (ct - 2000) / (6500 - 2000)));
-  // 30° (warm orange) → 220° (cool blue) along an arc skipping greens.
+  // Teinte de 30° (orange chaud) a 220° (bleu froid), sur un arc qui evite les verts.
   const hue = 30 + t * 190;
   return `hsl(${hue.toFixed(0)} 60% 60%)`;
 }
 
+// HSB/HSV → couleur hex (#RRGGBB) pour le selecteur natif <input type=color>.
 function hsvToHex(h: number, s: number, v: number): string {
   const sn = s / 100;
   const vn = v / 100;
@@ -511,6 +562,7 @@ function hsvToHex(h: number, s: number, v: number): string {
   return `#${toHex(to255(r))}${toHex(to255(g))}${toHex(to255(b))}`;
 }
 
+// Couleur hex (#RRGGBB) → composantes RGB 0-255 (sortie du selecteur de couleur).
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const clean = hex.replace(/^#/, "");
   return {
