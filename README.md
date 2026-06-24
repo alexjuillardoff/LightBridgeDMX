@@ -122,9 +122,10 @@ LightBridgeDMX/
 | `src/services/dmx.ts` | Boucle d'émission DMX (Art-Net ou Enttec USB) |
 | `src/services/homekit.ts` | Pont HomeKit : crée les accessories, gère la synchro bidirectionnelle |
 | `src/services/homekit-utils.ts` | Conversions HSB↔RGB, résolution des canaux RGB d'une fixture |
+| `src/services/meross-plug.ts` | Allume une prise Meross (pilotage local LAN) quand un projecteur surveillé change en DMX |
 | `src/services/qxf.ts` | Parsing XML des fichiers QXF (définitions de projecteurs QLC+) |
 | `src/services/qxf-library.ts` | Téléchargement et cache de la bibliothèque QXF depuis GitHub |
-| `src/routes/` | Tous les endpoints REST (fixtures, scènes, presets, univers, HomeKit) |
+| `src/routes/` | Tous les endpoints REST (fixtures, scènes, presets, univers, HomeKit, Meross) |
 
 ### Frontend (`frontend/`)
 
@@ -136,7 +137,7 @@ Le tableau de bord React est organisé en **5 onglets responsive** avec routing 
 | Projecteurs | `#projecteurs` | Ajout / import QXF / liste des fixtures DMX |
 | Lampes connectées | `#lampes` | Nanoleaf et futurs backends (Hue, Matter…) avec filtre par marque |
 | Live | `#live` | Console DMX 512 sliders, Mode Dance, Scènes |
-| Réglages | `#reglages` | QR code HomeKit, PIN, infos système |
+| Réglages | `#reglages` | QR code HomeKit, prise Meross (config + état), infos système, redémarrage |
 
 Sur desktop/tablet : barre d'onglets en haut. Sur mobile (<640px) : bottom nav iOS-style.
 
@@ -153,6 +154,7 @@ Sur desktop/tablet : barre d'onglets en haut. Sur mobile (<640px) : bottom nav i
 | `src/components/ChannelGrid.tsx` | Grille des 512 canaux (8 → 6 → 4 colonnes selon viewport) |
 | `src/components/QxfLibraryPanel.tsx` | Navigateur de la bibliothèque de projecteurs |
 | `src/components/HomeKitCard.tsx` | Statut HomeKit avec QR code de couplage |
+| `src/components/MerossCard.tsx` | Config (IP, device key, canal) + état de la prise Meross |
 | `src/components/SmartLightsPanel.tsx` | Section smart lights (Nanoleaf + futurs) |
 | `src/components/smart-lights/backendRegistry.ts` | Registre extensible des backends affichables |
 | `src/lib/api.ts` | Client fetch vers l'API backend |

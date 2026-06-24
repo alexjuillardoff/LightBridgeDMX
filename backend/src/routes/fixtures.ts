@@ -37,9 +37,11 @@ export const registerFixtureRoutes = (app: FastifyInstance, ctx: RouteContext, h
     try {
       const parsed = fixtureUpdateSchema.parse(request.body);
       const fixture = await ctx.store.updateFixture((request.params as { id: string }).id, parsed);
-      // Resynchronise le pont HomeKit avec la liste a jour, puis previent les
-      // clients WebSocket par une diffusion (broadcast) du projecteur modifie.
-      await ctx.homekit.syncFixtures(await ctx.store.listFixtures());
+      // Resynchronise le pont HomeKit (et la prise Meross) avec la liste a jour, puis previent
+      // les clients WebSocket par une diffusion (broadcast) du projecteur modifie.
+      const fixtures = await ctx.store.listFixtures();
+      await ctx.homekit.syncFixtures(fixtures);
+      ctx.meross.syncFixtures(fixtures);
       ctx.broadcast({ type: "fixture_updated", data: fixture });
       reply.send(fixture);
     } catch (err) {
@@ -51,7 +53,9 @@ export const registerFixtureRoutes = (app: FastifyInstance, ctx: RouteContext, h
   app.delete("/api/fixtures/:id", async (request, reply) => {
     try {
       await ctx.store.deleteFixture((request.params as { id: string }).id);
-      await ctx.homekit.syncFixtures(await ctx.store.listFixtures());
+      const fixtures = await ctx.store.listFixtures();
+      await ctx.homekit.syncFixtures(fixtures);
+      ctx.meross.syncFixtures(fixtures);
       reply.code(204).send();
     } catch (err) {
       handleError(err, reply);

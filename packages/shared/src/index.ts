@@ -219,6 +219,42 @@ export const DanceConfigSchema = z.object({
 
 export type DanceConfig = z.infer<typeof DanceConfigSchema>;
 
+// ─── Prise connectee Meross (pilotee en local sur le LAN) ────────────────────
+
+// Configuration persistee de la prise Meross. Source de verite cote backend
+// (remplace la config par variables d'environnement). channel = sortie ciblee
+// (0 pour un Plug Mini a une seule prise).
+export const MerossConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  host: z.string().default(""),
+  key: z.string().default(""),
+  channel: z.number().int().min(0).max(31).default(0),
+  updatedAt: z.string().datetime()
+});
+
+export type MerossConfig = z.infer<typeof MerossConfigSchema>;
+
+// Entree de mise a jour de la config (PUT) : tous les champs optionnels (patch).
+export const MerossConfigInputSchema = MerossConfigSchema.omit({ updatedAt: true }).partial();
+
+export type MerossConfigInput = z.infer<typeof MerossConfigInputSchema>;
+
+// Etat de la prise renvoye par l'API (lecture seule, pour l'UI Reglages).
+export const MerossStatusSchema = z.object({
+  enabled: z.boolean(),                 // drapeau de config (interrupteur logiciel)
+  active: z.boolean(),                  // reellement operationnel (enabled + host + key)
+  host: z.string(),
+  key: z.string(),                      // renvoyee pour pre-remplir le formulaire (app LAN sans auth)
+  channel: z.number().int(),
+  on: z.boolean().nullable(),           // dernier etat connu de la prise (null = inconnu)
+  reachable: z.boolean().nullable(),    // succes du dernier echange reseau (null = jamais tente)
+  watchedFixtures: z.array(z.string()), // noms des projecteurs surveilles
+  watchedChannelCount: z.number().int(),
+  lastError: z.string().nullable()      // dernier message d'erreur reseau, le cas echeant
+});
+
+export type MerossStatus = z.infer<typeof MerossStatusSchema>;
+
 // Etat courant du Mode Dance, diffuse aux clients (broadcast WebSocket).
 // Indique si le chenillard tourne, quels projecteurs sont actifs, le motif en
 // cours et le nombre de phases deja envoyees.

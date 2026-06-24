@@ -45,6 +45,17 @@ model Preset {
   payload String // JSON: Record<string, number>
 }
 
+// Configuration de la prise Meross pilotee en local (LAN). Ligne unique "singleton".
+// Source de verite pour l'IP, la device key et le canal ; remplace la config par env.
+model MerossConfig {
+  id        String  @id @default("singleton")
+  enabled   Boolean @default(false)
+  host      String  @default("")
+  key       String  @default("")
+  channel   Int     @default(0)
+  updatedAt String
+}
+
 model SmartLight {
   id            String  @id
   name          String

@@ -195,6 +195,7 @@ L'état est persisté dans **SQLite via Prisma**. Il est géré par `backend/src
 | `presets` | UUID | Presets (mapping canal → valeur) |
 | `smart_lights` | UUID | Lampes WiFi (Nanoleaf etc.) — backend, config, mirror DMX, layout 3D, effet courant |
 | `dance_config` | singleton | Config du Dance mode (pièces, patterns, intervalles, lyre) |
+| `meross_config` | singleton | Config de la prise Meross (enabled, host, key, channel) — pilotage local LAN |
 | `universe_snapshots` | universe (int) | Dernier état persisté des 512 canaux DMX (Bytes), restauré au démarrage |
 
 ### Univers DMX
@@ -402,6 +403,14 @@ interface SmartLight {
 | `POST` | `/api/smart-lights/probe` | `{ host, port? }` | Test rapide de reachability sans pairing |
 | `POST` | `/api/smart-lights/discover` | `{ timeoutMs? }` | Scan mDNS (~3 s par défaut) — retourne les Nanoleaf trouvés |
 
+### Prise Meross
+
+| Méthode | Endpoint | Corps | Description |
+|---------|----------|-------|-------------|
+| `GET` | `/api/meross` | — | Statut de la prise (`MerossStatus` : enabled, active, host, key, channel, on, reachable, projecteurs surveillés, lastError) |
+| `PUT` | `/api/meross` | `MerossConfigInput` | Met à jour la config (persiste en base) puis reconfigure le service à chaud |
+| `POST` | `/api/meross/test` | — | Teste la connexion locale à la prise (`{ reachable, on, error }`) |
+
 ### Système
 
 | Méthode | Endpoint | Description |
@@ -409,6 +418,7 @@ interface SmartLight {
 | `GET` | `/api/health` | Healthcheck (retourne `{ ok: true }`) |
 | `GET` | `/api/homekit` | Statut HomeKit (enabled, setupUri, fixtures, QR code) |
 | `GET` | `/api/rooms` | Liste des pièces (union des fixtures et smart lights ayant `room`) |
+| `POST` | `/api/system/restart` | Redémarre les 3 services launchd (backend, frontend, QLC+) via `launchctl kickstart -k` — macOS uniquement |
 | `WS` | `/ws` | WebSocket temps réel |
 
 ---
@@ -569,6 +579,18 @@ For each panel:
 
 ---
 
+## Service Prise Meross (`backend/src/services/meross-plug.ts`)
+
+`MerossPlugService` allume automatiquement une prise connectée Meross dès qu'un changement de valeur DMX survient sur certains projecteurs (cas d'usage : la prise alimente ces projecteurs).
+
+- **Déclenchement** : s'abonne à l'évènement `tick` du `DmxService` (comme HomeKit et Smart Lights). À chaque tick, compare les valeurs des canaux surveillés à la frame précédente ; tout écart → `ensureOn()`.
+- **Pilotage local LAN** : protocole Meross local (`POST http://<host>/config`, namespace `Appliance.Control.ToggleX`, header signé MD5 `md5(messageId + key + timestamp)`). Aucun cloud — la prise reste appairée à l'app Maison en parallèle.
+- **Projecteurs surveillés** : résolus **par nom** (défaut `Stairville MH X20`, `Par 56 Lava`, `Par 56 Cafe`) en canaux DMX absolus ; re-résolus à chaque mutation de fixture (`syncFixtures`).
+- **Garde-fous** : 1er tick = baseline (un redémarrage backend ne rallume pas la prise) ; commande idempotente ; ré-affirmation au plus toutes les `reassertMs` (défaut 30 s) pendant l'activité ; backoff 2 s sur échec réseau ; un seul appel HTTP en vol à la fois.
+- **Config à chaud** : `reconfigure(config)` reconstruit le client sans redémarrer le backend ; la config vient de la base (`store.getMerossConfig` / `saveMerossConfig`, singleton). `getStatus()` et `testConnection()` alimentent l'UI Réglages.
+
+---
+
 ## Parser QXF (`backend/src/services/qxf.ts`)
 
 QXF = format XML de définition de projecteur QLC+.
@@ -610,6 +632,13 @@ QXF = format XML de définition de projecteur QLC+.
 | `HOMEKIT_PORT` | auto | Port HAP |
 | `HOMEKIT_SETUP_ID` | auto | Setup ID HomeKit |
 | `HOMEKIT_STORAGE` | `".homekit/"` | Dossier de stockage HAP |
+| `MEROSS_PLUG_HOST` | — | **Seed seulement** (1er lancement, base vide) : IP de la prise Meross |
+| `MEROSS_PLUG_KEY` | — | **Seed seulement** : device key Meross (signature locale) |
+| `MEROSS_PLUG_CHANNEL` | `0` | **Seed seulement** : canal de la prise (0 = Plug Mini) |
+| `MEROSS_PLUG_REASSERT_MS` | `30000` | Délai max avant de ré-affirmer l'état « allumé » pendant l'activité DMX |
+| `MEROSS_TRIGGER_FIXTURES` | `Stairville MH X20,Par 56 Lava,Par 56 Cafe` | Noms (CSV) des projecteurs dont un changement DMX rallume la prise |
+
+> La config de la prise (host/key/channel/enabled) est **persistée en base** et réglable depuis l'UI (Réglages → carte Prise Meross). Les variables `MEROSS_PLUG_*` ci-dessus ne servent qu'à **amorcer** la ligne `meross_config` au tout premier démarrage (base vide) ; ensuite la base fait foi.
 
 ### Frontend
 

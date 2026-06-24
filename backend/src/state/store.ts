@@ -10,6 +10,9 @@ import {
   DanceConfigSchema,
   Fixture,
   FixtureSchema,
+  MerossConfig,
+  MerossConfigInput,
+  MerossConfigSchema,
   Preset,
   PresetSchema,
   Scene,
@@ -338,6 +341,49 @@ export class Store {
       update: data
     });
     return parsed;
+  }
+
+  // ----- Config prise Meross (ligne unique "singleton") -----
+
+  // Lit la config de la prise Meross. Auto-amorce une ligne par defaut si absente,
+  // en partant des valeurs fournies (seed depuis l'environnement au premier lancement).
+  async getMerossConfig(seed?: MerossConfigInput): Promise<MerossConfig> {
+    const row = await this.prisma.merossConfig.findUnique({ where: { id: "singleton" } });
+    if (!row) {
+      return this.saveMerossConfig(seed ?? {});
+    }
+    return MerossConfigSchema.parse({
+      enabled: row.enabled,
+      host: row.host,
+      key: row.key,
+      channel: row.channel,
+      updatedAt: row.updatedAt
+    });
+  }
+
+  // Met a jour (patch) la config Meross : fusionne avec l'existant puis upsert.
+  async saveMerossConfig(patch: MerossConfigInput): Promise<MerossConfig> {
+    const existing = await this.prisma.merossConfig.findUnique({ where: { id: "singleton" } });
+    const merged = MerossConfigSchema.parse({
+      enabled: patch.enabled ?? existing?.enabled ?? false,
+      host: patch.host ?? existing?.host ?? "",
+      key: patch.key ?? existing?.key ?? "",
+      channel: patch.channel ?? existing?.channel ?? 0,
+      updatedAt: new Date().toISOString()
+    });
+    const data = {
+      enabled: merged.enabled,
+      host: merged.host,
+      key: merged.key,
+      channel: merged.channel,
+      updatedAt: merged.updatedAt
+    };
+    await this.prisma.merossConfig.upsert({
+      where: { id: "singleton" },
+      create: { id: "singleton", ...data },
+      update: data
+    });
+    return merged;
   }
 
   // ----- Lampes connectees (smart lights) -----

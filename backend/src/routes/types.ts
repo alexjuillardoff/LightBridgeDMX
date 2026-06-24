@@ -9,6 +9,7 @@ import { WsEvent } from "@lightbridgedmx/shared";
 import { DmxService } from "../services/dmx";
 import { HomeKitBridge } from "../services/homekit";
 import { DanceService } from "../services/dance";
+import { MerossPlugService } from "../services/meross-plug";
 import { SmartLightService } from "../services/smart-lights";
 import { Store } from "../state/store";
 
@@ -23,6 +24,7 @@ export type RouteContext = {
   homekit: HomeKitBridge;
   dance: DanceService;
   smartLights: SmartLightService;
+  meross: MerossPlugService;
   broadcast: Broadcast;
 };
 

@@ -8,6 +8,8 @@ import {
   DanceConfig,
   DanceState,
   Fixture,
+  MerossConfigInput,
+  MerossStatus,
   NanoleafDiscovered,
   QxfLibraryFixture,
   Scene,
@@ -117,6 +119,21 @@ export const api = {
   // Etat du pont HomeKit (lecture seule).
   homekit: {
     status: () => fetchJSON<HomeKitStatus>("/api/homekit")
+  },
+  // Prise connectee Meross (pilotage local LAN) : statut, mise a jour de config, test.
+  meross: {
+    status: () => fetchJSON<MerossStatus>("/api/meross"),
+    update: (patch: MerossConfigInput) =>
+      fetchJSON<MerossStatus>("/api/meross", { method: "PUT", body: JSON.stringify(patch) }),
+    test: () =>
+      fetchJSON<{ reachable: boolean; on: boolean | null; error: string | null }>("/api/meross/test", {
+        method: "POST"
+      })
+  },
+  // Operations systeme : redemarrage complet de LightBridgeDMX (backend + frontend + QLC+).
+  system: {
+    restart: () =>
+      fetchJSON<{ status: string; services: string[] }>("/api/system/restart", { method: "POST" })
   },
   // Liste des pieces (rooms) connues, pour le rangement des projecteurs/lampes.
   rooms: {

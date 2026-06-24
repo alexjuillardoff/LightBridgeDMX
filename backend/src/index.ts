@@ -12,6 +12,7 @@ import { createErrorHandler } from "./routes/errors";
 import { DanceService } from "./services/dance";
 import { DmxService } from "./services/dmx";
 import { HomeKitBridge } from "./services/homekit";
+import { MerossPlugService } from "./services/meross-plug";
 import { SmartLightService } from "./services/smart-lights";
 import { createWebsocketManager } from "./websocket";
 import { Store } from "./state/store";
@@ -32,6 +33,28 @@ const HOMEKIT_USERNAME = process.env.HOMEKIT_USERNAME ?? "11:22:33:44:55:66";
 const HOMEKIT_PORT = process.env.HOMEKIT_PORT ? parseInt(process.env.HOMEKIT_PORT, 10) : undefined;
 const HOMEKIT_SETUP_ID = process.env.HOMEKIT_SETUP_ID;
 const HOMEKIT_STORAGE = process.env.HOMEKIT_STORAGE ?? path.join(process.cwd(), ".homekit");
+// ----- Prise connectee Meross (pilotee en local sur le LAN) -----
+// La config (IP, device key, canal, activation) est persistee en base et reglable
+// depuis l'UI. Les variables d'env ci-dessous ne servent qu'a AMORCER (seed) la
+// ligne de config au tout premier lancement (base vide).
+const MEROSS_PLUG_HOST = process.env.MEROSS_PLUG_HOST;
+const MEROSS_PLUG_KEY = process.env.MEROSS_PLUG_KEY;
+const MEROSS_PLUG_CHANNEL = process.env.MEROSS_PLUG_CHANNEL ? parseInt(process.env.MEROSS_PLUG_CHANNEL, 10) : 0;
+const MEROSS_PLUG_REASSERT_MS = process.env.MEROSS_PLUG_REASSERT_MS
+  ? parseInt(process.env.MEROSS_PLUG_REASSERT_MS, 10)
+  : 30000;
+// Projecteurs dont un changement de valeur DMX doit garantir que la prise est allumee.
+const MEROSS_TRIGGER_FIXTURES = (process.env.MEROSS_TRIGGER_FIXTURES ?? "Stairville MH X20,Par 56 Lava,Par 56 Cafe")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+// Amorce de config (utilisee seulement si la base ne contient pas encore de ligne).
+const MEROSS_SEED = {
+  enabled: Boolean(MEROSS_PLUG_HOST && MEROSS_PLUG_KEY),
+  host: MEROSS_PLUG_HOST ?? "",
+  key: MEROSS_PLUG_KEY ?? "",
+  channel: Number.isNaN(MEROSS_PLUG_CHANNEL) ? 0 : MEROSS_PLUG_CHANNEL
+};
 
 const app = Fastify({ logger: true });
 
@@ -60,6 +83,11 @@ const homekit = new HomeKitBridge(app.log, dmx, {
   setupId: HOMEKIT_SETUP_ID,
   storagePath: HOMEKIT_STORAGE
 });
+const meross = new MerossPlugService(app.log, dmx, store, {
+  triggerFixtureNames: MEROSS_TRIGGER_FIXTURES,
+  reassertMs: Number.isNaN(MEROSS_PLUG_REASSERT_MS) ? 30000 : MEROSS_PLUG_REASSERT_MS,
+  requestTimeoutMs: 4000
+});
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });
 // SmartLightService est cree AVANT DanceService pour pouvoir lui etre injecte : Dance s'en
 // sert pour reserver/liberer (claim/release) les lampes connectees et lire leurs dispositions
@@ -70,7 +98,7 @@ const handleError = createErrorHandler(app.log);
 
 registerRoutes(
   app,
-  { store, dmx, homekit, dance, smartLights, broadcast: websocket.broadcast },
+  { store, dmx, homekit, dance, smartLights, meross, broadcast: websocket.broadcast },
   handleError
 );
 
@@ -139,6 +167,7 @@ app.addHook("onClose", async () => {
   }
   await dance.stop();
   await smartLights.stop();
+  await meross.stop();
   await dmx.stop();
   await homekit.stop();
   await store.disconnect();
@@ -164,7 +193,11 @@ const start = async () => {
       app.log.warn({ err }, "Failed to load universe snapshot, starting from zero");
     }
     await dmx.start();
-    await homekit.start(await store.listFixtures());
+    const fixtures = await store.listFixtures();
+    await homekit.start(fixtures);
+    // Pilotage de la prise Meross : surveille les changements DMX des projecteurs cibles.
+    // MEROSS_SEED n'amorce la config que si la base est vide (1er lancement).
+    await meross.start(fixtures, MEROSS_SEED);
     // SmartLightService doit demarrer AVANT DanceService.init() : Dance lit les dispositions
     // (layouts) via smartLights.listWithState() pour l'auto-amorcage (auto-seed) et la
     // construction des groupes lateraux du chenillard.

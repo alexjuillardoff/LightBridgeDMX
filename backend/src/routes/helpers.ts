@@ -11,7 +11,10 @@ import { RouteContext } from "./types";
 // creation a tous les clients WebSocket pour que l'UI se mette a jour en direct.
 export const createFixtureAndSync = async (ctx: RouteContext, input: FixtureInput): Promise<Fixture> => {
   const fixture = await ctx.store.createFixture(input);
-  await ctx.homekit.syncFixtures(await ctx.store.listFixtures());
+  const fixtures = await ctx.store.listFixtures();
+  await ctx.homekit.syncFixtures(fixtures);
+  // La prise Meross re-resout aussi les canaux surveilles (un projecteur cible a pu changer).
+  ctx.meross.syncFixtures(fixtures);
   ctx.broadcast({ type: "fixture_updated", data: fixture });
   return fixture;
 };

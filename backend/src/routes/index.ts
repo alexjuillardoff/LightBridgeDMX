@@ -4,6 +4,7 @@
 import type { FastifyInstance } from "fastify";
 import { registerDanceRoutes } from "./dance";
 import { registerFixtureRoutes } from "./fixtures";
+import { registerMerossRoutes } from "./meross";
 import { registerPresetRoutes } from "./presets";
 import { registerQxfRoutes } from "./qxf";
 import { registerSceneRoutes } from "./scenes";
@@ -21,6 +22,7 @@ export const registerRoutes = (app: FastifyInstance, ctx: RouteContext, handleEr
   registerSystemRoutes(app);
   registerHomeKitRoutes(app, ctx);
   registerFixtureRoutes(app, ctx, handleError);
+  registerMerossRoutes(app, ctx, handleError);
   registerQxfRoutes(app, ctx, handleError);
   registerSceneRoutes(app, ctx, handleError);
   registerPresetRoutes(app, ctx, handleError);
