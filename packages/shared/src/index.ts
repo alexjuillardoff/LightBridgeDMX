@@ -248,8 +248,12 @@ export const MerossStatusSchema = z.object({
   channel: z.number().int(),
   on: z.boolean().nullable(),           // dernier etat connu de la prise (null = inconnu)
   reachable: z.boolean().nullable(),    // succes du dernier echange reseau (null = jamais tente)
-  watchedFixtures: z.array(z.string()), // noms des projecteurs surveilles
+  watchedFixtures: z.array(z.string()), // noms des projecteurs surveilles (declenchent l'allumage)
   watchedChannelCount: z.number().int(),
+  // Extinction automatique : tous les canaux surveilles a 0 pendant offTimeoutMs -> on coupe.
+  offWatchedChannelCount: z.number().int(),
+  offTimeoutMs: z.number().int(),
+  offCountdownMs: z.number().nullable(), // ms restantes avant extinction auto (null = condition non remplie / prise deja eteinte)
   lastError: z.string().nullable()      // dernier message d'erreur reseau, le cas echeant
 });
 

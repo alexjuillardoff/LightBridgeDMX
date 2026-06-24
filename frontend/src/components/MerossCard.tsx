@@ -7,9 +7,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MerossStatus } from "@lightbridgedmx/shared";
 import { api } from "../lib/api";
 
+// Formate un compte a rebours en ms vers "Xm Ys" (ou "Ys" sous la minute).
+const formatCountdown = (ms: number): string => {
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m} min ${s}s` : `${s}s`;
+};
+
 export const MerossCard = () => {
   const queryClient = useQueryClient();
-  const statusQuery = useQuery<MerossStatus>(["meross", "status"], api.meross.status);
+  // Rafraichissement leger : garde l'etat de la prise et le compte a rebours d'extinction a jour.
+  const statusQuery = useQuery<MerossStatus>(["meross", "status"], api.meross.status, {
+    refetchInterval: 15000
+  });
 
   // Etat local du formulaire, initialise depuis le statut backend.
   const [enabled, setEnabled] = useState(false);
@@ -183,6 +194,15 @@ export const MerossCard = () => {
           <div>
             <dt>Canaux surveillés</dt>
             <dd>{status.watchedChannelCount}</dd>
+          </div>
+          <div>
+            <dt>Extinction auto</dt>
+            <dd>
+              {status.offWatchedChannelCount} canaux à 0 pendant {Math.round(status.offTimeoutMs / 60000)} min
+              {status.offCountdownMs !== null
+                ? ` — coupure dans ${formatCountdown(status.offCountdownMs)}`
+                : ""}
+            </dd>
           </div>
           {status.lastError ? (
             <div>

@@ -40,6 +40,7 @@ Tu as des projecteurs DMX (PAR LED, lyres, dimmers…) que tu veux contrôler de
 - Il expose chaque lyre comme un **accessory HomeKit multi-contrôles** (dimmer, pan, tilt, roue couleur, gobo)
 - Il envoie les commandes de couleur en **DMX réel** vers tes projecteurs via le protocole Art-Net
 - Il fournit un **tableau de bord web** pour monitorer et contrôler en direct les 512 canaux DMX
+- Il **coupe/rétablit automatiquement l'alimentation** d'une prise connectée Meross (en local sur le LAN) selon l'activité DMX des projecteurs qu'elle alimente
 
 ### Cas d'utilisation typiques
 
@@ -49,6 +50,7 @@ Tu as des projecteurs DMX (PAR LED, lyres, dimmers…) que tu veux contrôler de
 - Importer des définitions de projecteurs depuis la bibliothèque QLC+ (plus de 3000 modèles)
 - **Piloter une Nanoleaf Lightstrip Essentials (NL72K3) en temps réel** : sliders couleur, painter par zone, effets dynamiques (chase / wave / gradient), édition 3D de la disposition physique
 - **Mixer mondes DMX et WiFi dans une même scène** : un projecteur Stairville DMX et un strip Nanoleaf prennent la même couleur grâce au mirror DMX bidirectionnel
+- **Allumer/éteindre une prise Meross automatiquement** : la prise se met sous tension dès qu'un projecteur surveillé change en DMX, et se coupe après un blackout complet prolongé (5 min) — configurable dans l'onglet Réglages
 
 ---
 

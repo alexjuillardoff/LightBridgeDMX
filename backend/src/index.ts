@@ -43,6 +43,10 @@ const MEROSS_PLUG_CHANNEL = process.env.MEROSS_PLUG_CHANNEL ? parseInt(process.e
 const MEROSS_PLUG_REASSERT_MS = process.env.MEROSS_PLUG_REASSERT_MS
   ? parseInt(process.env.MEROSS_PLUG_REASSERT_MS, 10)
   : 30000;
+// Extinction auto : duree (ms) de blackout DMX complet avant de couper la prise (defaut 5 min).
+const MEROSS_OFF_TIMEOUT_MS = process.env.MEROSS_OFF_TIMEOUT_MS
+  ? parseInt(process.env.MEROSS_OFF_TIMEOUT_MS, 10)
+  : 5 * 60 * 1000;
 // Projecteurs dont un changement de valeur DMX doit garantir que la prise est allumee.
 const MEROSS_TRIGGER_FIXTURES = (process.env.MEROSS_TRIGGER_FIXTURES ?? "Stairville MH X20,Par 56 Lava,Par 56 Cafe")
   .split(",")
@@ -86,6 +90,7 @@ const homekit = new HomeKitBridge(app.log, dmx, {
 const meross = new MerossPlugService(app.log, dmx, store, {
   triggerFixtureNames: MEROSS_TRIGGER_FIXTURES,
   reassertMs: Number.isNaN(MEROSS_PLUG_REASSERT_MS) ? 30000 : MEROSS_PLUG_REASSERT_MS,
+  offTimeoutMs: Number.isNaN(MEROSS_OFF_TIMEOUT_MS) ? 5 * 60 * 1000 : MEROSS_OFF_TIMEOUT_MS,
   requestTimeoutMs: 4000
 });
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });

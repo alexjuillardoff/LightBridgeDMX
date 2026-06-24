@@ -407,7 +407,7 @@ interface SmartLight {
 
 | Méthode | Endpoint | Corps | Description |
 |---------|----------|-------|-------------|
-| `GET` | `/api/meross` | — | Statut de la prise (`MerossStatus` : enabled, active, host, key, channel, on, reachable, projecteurs surveillés, lastError) |
+| `GET` | `/api/meross` | — | Statut de la prise (`MerossStatus` : enabled, active, host, key, channel, on, reachable, projecteurs surveillés, extinction auto : offWatchedChannelCount/offTimeoutMs/offCountdownMs, lastError) |
 | `PUT` | `/api/meross` | `MerossConfigInput` | Met à jour la config (persiste en base) puis reconfigure le service à chaud |
 | `POST` | `/api/meross/test` | — | Teste la connexion locale à la prise (`{ reachable, on, error }`) |
 
@@ -581,13 +581,55 @@ For each panel:
 
 ## Service Prise Meross (`backend/src/services/meross-plug.ts`)
 
-`MerossPlugService` allume automatiquement une prise connectée Meross dès qu'un changement de valeur DMX survient sur certains projecteurs (cas d'usage : la prise alimente ces projecteurs).
+`MerossPlugService` synchronise l'alimentation d'une prise connectée Meross avec l'activité DMX : il **allume** la prise dès qu'un projecteur surveillé bouge, et l'**éteint** après une période de blackout complet. Cas d'usage : la prise alimente physiquement ces projecteurs, on veut donc qu'elle soit sous tension uniquement quand ils servent.
 
-- **Déclenchement** : s'abonne à l'évènement `tick` du `DmxService` (comme HomeKit et Smart Lights). À chaque tick, compare les valeurs des canaux surveillés à la frame précédente ; tout écart → `ensureOn()`.
-- **Pilotage local LAN** : protocole Meross local (`POST http://<host>/config`, namespace `Appliance.Control.ToggleX`, header signé MD5 `md5(messageId + key + timestamp)`). Aucun cloud — la prise reste appairée à l'app Maison en parallèle.
-- **Projecteurs surveillés** : résolus **par nom** (défaut `Stairville MH X20`, `Par 56 Lava`, `Par 56 Cafe`) en canaux DMX absolus ; re-résolus à chaque mutation de fixture (`syncFixtures`).
-- **Garde-fous** : 1er tick = baseline (un redémarrage backend ne rallume pas la prise) ; commande idempotente ; ré-affirmation au plus toutes les `reassertMs` (défaut 30 s) pendant l'activité ; backoff 2 s sur échec réseau ; un seul appel HTTP en vol à la fois.
-- **Config à chaud** : `reconfigure(config)` reconstruit le client sans redémarrer le backend ; la config vient de la base (`store.getMerossConfig` / `saveMerossConfig`, singleton). `getStatus()` et `testConnection()` alimentent l'UI Réglages.
+S'abonne à l'évènement `tick` du `DmxService` (même mécanisme que HomeKit et Smart Lights) : `onTick(state)` est appelé à chaque frame (~30 Hz) et ne fait que lire l'univers — le service n'écrit jamais dans le DMX, il ne pilote que la prise.
+
+### Pilotage local LAN (aucun cloud)
+
+`MerossLocalClient` parle le **protocole local Meross** : `POST http://<host>/config` avec une enveloppe JSON `{ header, payload }`. Le `header` est signé : `sign = md5(messageId + key + timestamp)` (où `key` = device key du compte Meross, `messageId` = 16 octets hex aléatoires, `timestamp` = secondes Unix).
+
+| Action | Namespace | Méthode | Payload |
+|--------|-----------|---------|---------|
+| Allumer/éteindre | `Appliance.Control.ToggleX` | `SET` | `{ togglex: { channel, onoff: 0\|1 } }` |
+| Lire l'état | `Appliance.System.All` | `GET` | `{}` → `payload.all.digest.togglex[*].onoff` |
+
+Timeout HTTP de 4 s (AbortController). La prise reste appairée à l'app Maison en parallèle (le protocole local coexiste avec HomeKit/Matter).
+
+### Allumage (déclencheur)
+
+À chaque tick, le service compare les **canaux surveillés** (déclencheurs) à la frame précédente ; tout écart → `ensureOn()`. Canaux surveillés = **tous** les canaux des projecteurs listés dans `MEROSS_TRIGGER_FIXTURES` (défaut `Stairville MH X20`, `Par 56 Lava`, `Par 56 Cafe`), résolus **par nom de projecteur** en canaux DMX absolus (`address + (channel - 1)`), soit 23 canaux.
+
+### Extinction automatique (condition ET)
+
+Si **tous** les canaux de la condition d'extinction restent à 0 **en continu** pendant `offTimeoutMs` (env `MEROSS_OFF_TIMEOUT_MS`, défaut **5 min**) → `ensureOff()` coupe la prise. Le compteur `zeroSince` est armé quand la condition devient vraie et **remis à `null` dès qu'un seul canal repasse > 0** (vrai ET logique). La prise n'est coupée qu'une fois par épisode (`ensureOff` sort tôt si `onState === false`), donc aucun combat contre un rallumage manuel.
+
+Canaux de la condition (`DEFAULT_OFF_CONDITIONS`), résolus **par nom de canal** dans la définition de chaque fixture (13 canaux au total) :
+
+| Projecteur | Adresse | Canaux (nom) | Canaux absolus |
+|------------|---------|--------------|----------------|
+| Par 56 Lava | 1 | Red, Green, Blue, Full Color, Mode | 1, 2, 3, 4, 6 |
+| Par 56 Cafe | 7 | Red, Green, Blue, Full Color, Mode | 7, 8, 9, 10, 12 |
+| Par 56 Lampe | 25 | Master | 32 |
+| Stairville MH X20 | 13 | Shutter, Dimmer | 19, 20 |
+
+> Asymétrie volontaire : `Par 56 Lampe` figure dans la **condition d'extinction** (sa présence empêche la coupure) mais **pas** dans les déclencheurs d'allumage — utiliser uniquement la Lampe ne rallume donc pas la prise.
+
+### Machine à états (état interne)
+
+- `onState: boolean | null` — état cru de la prise (`null` = inconnu au démarrage).
+- `reachable: boolean | null`, `lastError: string | null` — diagnostic réseau (exposés à l'UI).
+- `zeroSince: number | null` — instant depuis lequel la condition d'extinction est remplie.
+- `lastValues[] / offValues[]` — dernières valeurs des canaux surveillés / d'extinction.
+- `primed` — le **1er tick** ne fait qu'établir la référence (un redémarrage backend, univers restauré, ne déclenche donc ni allumage ni extinction).
+- Garde-fous d'envoi communs à `ensureOn`/`ensureOff` : un seul appel HTTP en vol (`inflight`), backoff 2 s après échec (`nextAttemptAt`), et pour l'allumage une ré-affirmation au plus toutes les `reassertMs` (env `MEROSS_PLUG_REASSERT_MS`, défaut 30 s) tant que la prise est crue allumée.
+
+### Configuration & cycle de vie
+
+- Config persistée en base (`MerossConfig` singleton : `enabled`, `host`, `key`, `channel`) via `store.getMerossConfig(seed)` / `saveMerossConfig(patch)`. Les variables `MEROSS_PLUG_*` ne servent qu'à **amorcer** la 1re ligne (base vide).
+- `reconfigure(config)` applique une nouvelle config **à chaud** (reconstruit le client, ré-interroge l'état) — pas de redémarrage backend nécessaire.
+- `syncFixtures(fixtures)` re-résout déclencheurs + condition d'extinction à chaque mutation de projecteur (appelé depuis les routes fixtures).
+- `getStatus()` (→ `GET /api/meross`) et `testConnection()` (→ `POST /api/meross/test`) alimentent la carte Réglages, qui affiche aussi le compte à rebours d'extinction (`offCountdownMs`).
 
 ---
 
@@ -636,6 +678,7 @@ QXF = format XML de définition de projecteur QLC+.
 | `MEROSS_PLUG_KEY` | — | **Seed seulement** : device key Meross (signature locale) |
 | `MEROSS_PLUG_CHANNEL` | `0` | **Seed seulement** : canal de la prise (0 = Plug Mini) |
 | `MEROSS_PLUG_REASSERT_MS` | `30000` | Délai max avant de ré-affirmer l'état « allumé » pendant l'activité DMX |
+| `MEROSS_OFF_TIMEOUT_MS` | `300000` | Durée de blackout DMX (tous les canaux d'extinction à 0) avant de couper la prise (5 min) |
 | `MEROSS_TRIGGER_FIXTURES` | `Stairville MH X20,Par 56 Lava,Par 56 Cafe` | Noms (CSV) des projecteurs dont un changement DMX rallume la prise |
 
 > La config de la prise (host/key/channel/enabled) est **persistée en base** et réglable depuis l'UI (Réglages → carte Prise Meross). Les variables `MEROSS_PLUG_*` ci-dessus ne servent qu'à **amorcer** la ligne `meross_config` au tout premier démarrage (base vide) ; ensuite la base fait foi.

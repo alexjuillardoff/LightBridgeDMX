@@ -31,12 +31,25 @@ export type MerossServiceOptions = {
   // Au-dela de ce delai, un nouveau changement DMX re-affirme l'etat "allume"
   // (garde-fou si la prise a ete eteinte par ailleurs). En millisecondes.
   reassertMs: number;
+  // Extinction automatique : duree (ms) pendant laquelle TOUS les canaux de la
+  // condition d'extinction doivent rester a 0 avant de couper la prise.
+  offTimeoutMs: number;
   // Timeout d'une requete HTTP vers la prise (millisecondes).
   requestTimeoutMs: number;
 };
 
 // Un canal DMX surveille : son univers et son index 0-based dans le tableau de 512.
 type WatchedChannel = { universe: number; index: number };
+
+// Condition d'extinction automatique : pour chaque projecteur (par nom), la liste
+// des canaux (par nom d'affichage) qui doivent etre a 0. La prise n'est coupee que
+// si TOUS les canaux de TOUS ces projecteurs sont a 0 (ET logique) pendant offTimeoutMs.
+const DEFAULT_OFF_CONDITIONS: Array<{ fixture: string; channels: string[] }> = [
+  { fixture: "Par 56 Lava", channels: ["Red", "Green", "Blue", "Full Color", "Mode"] },
+  { fixture: "Par 56 Cafe", channels: ["Red", "Green", "Blue", "Full Color", "Mode"] },
+  { fixture: "Par 56 Lampe", channels: ["Master"] },
+  { fixture: "Stairville MH X20", channels: ["Shutter", "Dimmer"] }
+];
 
 // Apres un echec reseau, on attend ce delai avant de retenter (anti-martelage).
 const RETRY_BACKOFF_MS = 2000;
@@ -132,6 +145,11 @@ export class MerossPlugService extends EventEmitter {
   private cachedFixtures: Fixture[] = [];
   private watched: WatchedChannel[] = [];
   private lastValues: number[] = [];
+  // Canaux de la condition d'extinction + leur derniere valeur connue (aligne par index).
+  private offWatched: WatchedChannel[] = [];
+  private offValues: number[] = [];
+  // Instant depuis lequel TOUS les canaux d'extinction sont a 0 (null si au moins un est > 0).
+  private zeroSince: number | null = null;
   // Tant qu'on n'a pas etabli une premiere valeur de reference, on ne declenche
   // rien : un redemarrage du backend (univers restaure) ne doit pas rallumer la prise.
   private primed = false;
@@ -175,6 +193,7 @@ export class MerossPlugService extends EventEmitter {
     this.lastError = null;
     this.lastAssertAt = 0;
     this.nextAttemptAt = 0;
+    this.zeroSince = null;
   }
 
   // Demarre le service : charge la config (seed depuis l'env au 1er lancement),
@@ -244,8 +263,18 @@ export class MerossPlugService extends EventEmitter {
       reachable: this.reachable,
       watchedFixtures: this.options.triggerFixtureNames,
       watchedChannelCount: this.watched.length,
+      offWatchedChannelCount: this.offWatched.length,
+      offTimeoutMs: this.options.offTimeoutMs,
+      offCountdownMs: this.computeOffCountdownMs(),
       lastError: this.lastError
     };
+  }
+
+  // ms restantes avant l'extinction auto, ou null si la condition n'est pas remplie
+  // (au moins un canal > 0) ou si la prise est deja eteinte.
+  private computeOffCountdownMs(): number | null {
+    if (this.zeroSince === null || this.onState === false) return null;
+    return Math.max(0, this.options.offTimeoutMs - (Date.now() - this.zeroSince));
   }
 
   // Lit l'etat reel de la prise et met a jour onState/reachable/lastError.
@@ -296,12 +325,50 @@ export class MerossPlugService extends EventEmitter {
     if (missing.length) {
       this.logger.warn({ missing }, "Some Meross trigger fixtures were not found");
     }
+
+    this.resolveOffChannels(fixtures);
   }
 
-  // A chaque tick DMX : detecte un changement de valeur sur un canal surveille.
-  private onTick(state: UniverseState): void {
-    if (!this.client || !this.watched.length) return;
+  // Resout les canaux de la condition d'extinction (par nom de projecteur + nom de canal).
+  private resolveOffChannels(fixtures: Fixture[]): void {
+    const byName = new Map(fixtures.map((f) => [f.name.trim().toLowerCase(), f]));
+    const offWatched: WatchedChannel[] = [];
+    const missing: string[] = [];
 
+    for (const cond of DEFAULT_OFF_CONDITIONS) {
+      const fixture = byName.get(cond.fixture.trim().toLowerCase());
+      if (!fixture) {
+        missing.push(cond.fixture);
+        continue;
+      }
+      for (const chName of cond.channels) {
+        const ch = fixture.channels.find((c) => (c.name ?? "").trim().toLowerCase() === chName.trim().toLowerCase());
+        if (!ch) {
+          missing.push(`${cond.fixture} → ${chName}`);
+          continue;
+        }
+        const index = fixture.address + (ch.channel - 1) - 1;
+        if (index >= 0 && index < 512) {
+          offWatched.push({ universe: fixture.universe, index });
+        }
+      }
+    }
+
+    this.offWatched = offWatched;
+    this.offValues = new Array(offWatched.length).fill(0);
+    this.zeroSince = null;
+    if (missing.length) {
+      this.logger.warn({ missing }, "Some Meross auto-off channels were not found");
+    }
+  }
+
+  // A chaque tick DMX : detecte un changement de valeur (-> allumage) et evalue la
+  // condition d'extinction automatique (tous les canaux a 0 depuis offTimeoutMs).
+  private onTick(state: UniverseState): void {
+    if (!this.client) return;
+    if (!this.watched.length && !this.offWatched.length) return;
+
+    // 1) Detection de changement sur les canaux qui declenchent l'allumage.
     let changed = false;
     for (let i = 0; i < this.watched.length; i++) {
       const w = this.watched[i];
@@ -313,13 +380,40 @@ export class MerossPlugService extends EventEmitter {
       }
     }
 
-    // Premier passage : on ne fait qu'etablir la reference, sans declencher la prise.
+    // 2) Mise a jour des valeurs des canaux de la condition d'extinction.
+    for (let i = 0; i < this.offWatched.length; i++) {
+      const w = this.offWatched[i];
+      if (w.universe !== state.universe) continue;
+      this.offValues[i] = state.values[w.index] ?? 0;
+    }
+
+    // Premier passage : on etablit la reference sans rien declencher.
     if (!this.primed) {
       this.primed = true;
       return;
     }
 
     if (changed) this.ensureOn();
+    this.evaluateAutoOff();
+  }
+
+  // Condition ET : si TOUS les canaux d'extinction sont a 0 depuis offTimeoutMs,
+  // on coupe la prise. Le compteur repart a zero des qu'un canal repasse > 0.
+  private evaluateAutoOff(): void {
+    if (!this.offWatched.length) return;
+    const allZero = this.offValues.every((v) => v === 0);
+    if (!allZero) {
+      this.zeroSince = null;
+      return;
+    }
+    const now = Date.now();
+    if (this.zeroSince === null) {
+      this.zeroSince = now;
+      return;
+    }
+    if (now - this.zeroSince >= this.options.offTimeoutMs) {
+      this.ensureOff();
+    }
   }
 
   // S'assure que la prise est allumee, avec garde-fous (anti-concurrence, backoff,
@@ -354,6 +448,42 @@ export class MerossPlugService extends EventEmitter {
         this.lastError = err instanceof Error ? err.message : String(err);
         this.nextAttemptAt = Date.now() + RETRY_BACKOFF_MS;
         this.logger.warn({ err }, "Failed to turn on Meross plug");
+      })
+      .finally(() => {
+        this.inflight = false;
+      });
+  }
+
+  // Coupe la prise (condition d'extinction remplie). Garde-fous identiques a ensureOn.
+  // On ne tente rien si on la croit deja eteinte : on n'eteint qu'une fois par episode,
+  // sans lutter contre un rallumage manuel ulterieur.
+  private ensureOff(): void {
+    if (!this.client) return;
+    const now = Date.now();
+    if (this.inflight) return;
+    if (now < this.nextAttemptAt) return;
+    if (this.onState === false) return; // deja eteinte (croyance)
+
+    this.inflight = true;
+    const client = this.client;
+    void client
+      .setOn(false)
+      .then(() => {
+        this.onState = false;
+        this.reachable = true;
+        this.lastError = null;
+        this.lastAssertAt = Date.now();
+        this.logger.info(
+          { idleMs: this.zeroSince ? Date.now() - this.zeroSince : null },
+          "Meross plug turned off after sustained DMX blackout"
+        );
+        this.emit("status", this.getStatus());
+      })
+      .catch((err) => {
+        this.reachable = false;
+        this.lastError = err instanceof Error ? err.message : String(err);
+        this.nextAttemptAt = Date.now() + RETRY_BACKOFF_MS;
+        this.logger.warn({ err }, "Failed to turn off Meross plug");
       })
       .finally(() => {
         this.inflight = false;
