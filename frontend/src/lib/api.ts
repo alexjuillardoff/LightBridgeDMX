@@ -212,10 +212,16 @@ export const api = {
  * Ordre de priorite des sources :
  *   1. VITE_WS_URL force tout (override explicite).
  *   2. VITE_API_BASE si defini : on reutilise sa base en convertissant http→ws / https→wss.
- *   3. En dev : on vise directement le backend sur :5000 pour eviter les soucis de proxy WS.
- *      ATTENTION : on prend le hostname de la page (pas "localhost") pour que l'acces
- *      depuis un telephone sur le LAN fonctionne.
- *   4. En prod : meme host que la page, protocole ws/wss aligne sur http/https.
+ *   3. Defaut : meme origine que la page (host ET port), protocole ws/wss aligne sur
+ *      http/https. On passe donc par le proxy /ws (dev server Vite en dev, reverse
+ *      proxy en facade sinon), exactement comme les appels REST /api.
+ *
+ * Historique : le mode dev visait auparavant `ws://<hostname>:5000` en dur pour
+ * court-circuiter le proxy. Deux defauts rendaient l'app inutilisable derriere une
+ * facade HTTPS (ex. https://light.alexjuillard.fr) : le `ws://` en dur declenchait un
+ * blocage Mixed Content du navigateur, et le port 5000 n'est de toute facon pas expose
+ * par le reverse proxy. Le proxy WS de Vite (`ws: true`) fonctionne, donc suivre
+ * l'origine de la page est correct dans tous les cas et marche aussi depuis un mobile.
  */
 export const wsUrl = () => {
   const override = import.meta.env.VITE_WS_URL as string | undefined;
@@ -227,12 +233,8 @@ export const wsUrl = () => {
     url.pathname = "/ws";
     return url.toString();
   }
-  // Defaut en dev : taper le backend directement pour eviter les soucis de proxy WS
-  // (on utilise le host de la page, pas localhost, pour l'acces depuis le LAN).
-  if (import.meta.env.DEV) {
-    const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-    return `ws://${host}:5000/ws`;
-  }
+  // `host` (et non `hostname`) inclut le port : on reste ainsi sur la meme origine,
+  // que la page soit servie sur :5173 en direct ou sur 443 derriere le reverse proxy.
   const { protocol, host } = window.location;
   const wsProtocol = protocol === "https:" ? "wss" : "ws";
   return `${wsProtocol}://${host}/ws`;
