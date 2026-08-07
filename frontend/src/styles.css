@@ -673,9 +673,12 @@ input[type="range"] {
 }
 
 input[type="range"].vertical {
-  writing-mode: bt-lr;
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
+  /* Curseur vertical, valeurs croissantes vers le haut. `vertical-lr` + `direction: rtl`
+     est la forme standardisee ; elle remplace l'ancien couple `writing-mode: bt-lr`
+     (valeur IE jamais standardisee) + `appearance: slider-vertical`, que Chrome deprecie
+     et s'apprete a retirer (l'avertissement polluait la console). */
+  writing-mode: vertical-lr;
+  direction: rtl;
   width: 28px;
   height: 160px;
   padding: 0;
