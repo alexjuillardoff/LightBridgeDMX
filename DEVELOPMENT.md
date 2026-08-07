@@ -425,7 +425,11 @@ interface SmartLight {
 
 ## WebSocket
 
-**Connexion :** `ws://localhost:5000/ws` (en dev)
+**Connexion :** `ws://localhost:5000/ws` en direct sur le backend.
+
+Le frontend, lui, ne code jamais cette URL en dur : `wsUrl()` (`frontend/src/lib/api.ts`) dérive l'URL de **l'origine de la page** — `wss://` si la page est servie en HTTPS, et `window.location.host` (port inclus). Il emprunte donc le proxy `/ws` exactement comme les appels `/api` : Vite en dev, reverse proxy en façade. Voir [Exposition réseau](#exposition-réseau-reverse-proxy).
+
+> ⚠️ Ne pas « optimiser » en visant `ws://<host>:5000` en dur. Derrière une façade HTTPS, le navigateur bloque la connexion (Mixed Content) et le port 5000 n'est de toute façon pas exposé par le proxy — l'erreur remonte jusqu'à `AppDataProvider` et vide l'interface.
 
 ### Messages serveur → client
 
@@ -688,7 +692,7 @@ QXF = format XML de définition de projecteur QLC+.
 | Variable | Défaut | Description |
 |----------|--------|-------------|
 | `VITE_API_BASE` | `` | URL de base API (vide = proxy Vite) |
-| `VITE_WS_URL` | auto | URL WebSocket (auto depuis `window.location`) |
+| `VITE_WS_URL` | auto | Force l'URL WebSocket. Par défaut : `/ws` sur l'origine de la page (`window.location`, protocole `ws`/`wss` aligné) |
 
 ---
 
@@ -755,6 +759,37 @@ ARTNET_HOST=192.168.0.200
 ARTNET_UNIVERSE=0
 DMX_FPS=30
 ```
+
+---
+
+## Exposition réseau (reverse proxy)
+
+En plus de `http://192.168.0.200:5173`, le tableau de bord est servi sous un nom de domaine par un **reverse proxy Caddy** tournant sur la même machine.
+
+```
+Navigateur ──HTTPS/WSS──► Caddy (:443) ──HTTP/WS──► Vite (:5173) ──proxy──► Fastify (:5000)
+```
+
+⚠️ **La config Caddy n'est pas dans le dépôt** : elle vit dans `/usr/local/etc/Caddyfile`, servie par le launchd `homebrew.mxcl.caddy` (`brew services list`), logs dans `/usr/local/var/log/caddy.log`, admin API sur `127.0.0.1:2019`.
+
+Points structurants :
+
+| Sujet | Détail |
+|---|---|
+| Upstream unique | Caddy ne vise que `:5173`. C'est Vite qui proxie `/api` et `/ws` vers Fastify — pas besoin d'une route dédiée au backend. |
+| WebSocket | Traverse deux proxys (Caddy relaie l'upgrade nativement, Vite a `ws: true`). Testé de bout en bout en `wss://`. |
+| En-tête `Host` | Vite ≥ 5.4.12 renvoie **403** sur tout `Host` absent de `server.allowedHosts`. Le proxy lui présente donc son propre `IP:port` via `header_up Host {upstream_hostport}` (une IP littérale passe toujours). Le nom réel reste dans `X-Forwarded-Host`. |
+| Accès LAN uniquement | Matcher `remote_ip` sur les **plages privées** → sinon page 403. La règle ne peut pas porter sur l'IP publique de la box : en hairpin NAT, les clients du LAN arrivent avec `192.168.0.254`. |
+| Let's Encrypt | `/.well-known/acme-challenge/*` est exempté du filtre LAN, sinon le renouvellement du certificat (qui vient d'Internet) prendrait un 403. |
+
+Après édition du Caddyfile :
+
+```bash
+caddy validate --config /usr/local/etc/Caddyfile
+caddy reload   --config /usr/local/etc/Caddyfile   # rechargement à chaud, sans coupure
+```
+
+Les avertissements `Unnecessary header_up X-Forwarded-*` au chargement sont attendus et sans effet.
 
 ---
 
@@ -865,6 +900,9 @@ L'endpoint `/api/v1/<token>/panelLayout/layout` n'existe pas sur le Lightstrip E
 ### Smart Lights : streaming + Apple Home conflict
 Quand notre `NanoleafStreamer` est actif (extControl mode), Apple Home perd temporairement la possibilité de modifier le strip — le streaming "owns" l'output. C'est attendu. Pour rendre la main à HomeKit/Nanoleaf app, désactiver le streaming via UI ou `POST /streaming` avec `enabled: false` — le service revient à HTTP coalescé.
 
+### WebSocket derrière un reverse proxy HTTPS — Mixed Content
+Si `wsUrl()` produit une URL `ws://` en dur (ou vise le port 5000 directement), une page servie en HTTPS échoue avec `SecurityError: Failed to construct 'WebSocket'` + `Mixed Content: ... attempted to connect to the insecure WebSocket endpoint`. L'exception remonte jusqu'à `AppDataProvider` et l'interface reste vide. `wsUrl()` doit **suivre l'origine de la page** : `wss` si `location.protocol === "https:"`, et `location.host` (avec son port) — jamais `location.hostname` seul. Voir [WebSocket](#websocket).
+
 ### Forward references dans le schéma Zod partagé
 Les schémas qui s'utilisent l'un l'autre (ex: `SmartLightSchema` référence `SmartLightZoneLayoutSchema`) **doivent** être déclarés dans l'ordre topologique dans `packages/shared/src/index.ts`. Le type-check passe mais le runtime crash avec `ReferenceError`. Si tu ajoutes un nouveau type composé, mets ses dépendances AU-DESSUS de lui.
 
@@ -891,7 +929,7 @@ pnpm -C backend test --coverage  # avec couverture
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          FRONTEND (React 18)                         │
 │  App.tsx → React Query → api.ts → fetch /api/*                      │
-│  useDmxWebsocket → ws://localhost:5000/ws                           │
+│  useDmxWebsocket → {ws,wss}://<origine de la page>/ws               │
 │  ChannelGrid (sliders) → POST /api/universe/:channel                │
 │  SmartLightsPanel → POST /api/smart-lights/:id/{state,effect,zones} │
 │  LayoutEditor3D (R3F lazy) → POST /api/smart-lights/:id/layout      │

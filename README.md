@@ -317,6 +317,20 @@ HOMEKIT_ENABLED=true HOMEKIT_PIN="031-45-154" DMX_OUTPUT=artnet pnpm -C backend 
 
 Ouvre ton navigateur sur **[http://localhost:5173](http://localhost:5173)**
 
+Depuis un autre appareil du réseau (téléphone, tablette), utilise l'IP de la machine : **http://192.168.0.200:5173**. Le serveur Vite est configuré avec `host: true`, il écoute donc sur toutes les interfaces.
+
+#### Via un nom de domaine (optionnel)
+
+Un **reverse proxy Caddy** installé sur la machine sert aussi le tableau de bord sous un nom de domaine, en HTTPS, avec un certificat Let's Encrypt automatique :
+
+```
+Navigateur ──HTTPS/WSS──► Caddy (:443) ──► Vite (:5173) ──► Backend (:5000)
+```
+
+L'accès est **restreint au réseau local** : le proxy ne répond qu'aux appareils dont l'IP est dans les plages privées. Depuis Internet (4G par exemple), la page affiche un message d'accès refusé au lieu du tableau de bord. Pratique pour avoir une URL mémorisable sur son téléphone sans exposer l'installation.
+
+> ⚠️ La configuration du proxy **ne fait pas partie de ce dépôt** : elle vit dans `/usr/local/etc/Caddyfile`. Les détails techniques (réécriture du `Host` pour Vite, filtre par IP, exemption Let's Encrypt) sont documentés dans [DEVELOPMENT.md → Exposition réseau](DEVELOPMENT.md#exposition-réseau-reverse-proxy).
+
 ---
 
 ## Utiliser le tableau de bord
@@ -862,7 +876,9 @@ GET /api/rooms
 
 ## WebSocket temps réel
 
-Le frontend se connecte au WebSocket sur `ws://localhost:5000/ws`.
+Le frontend se connecte au WebSocket sur `/ws`, **sur la même origine que la page** : `ws://localhost:5173/ws` en accès direct, `wss://<domaine>/ws` derrière le reverse proxy. Le protocole (`ws` / `wss`) suit celui de la page, ce qui évite tout blocage Mixed Content en HTTPS. La connexion est ensuite relayée jusqu'au backend `:5000`.
+
+Un script externe, lui, peut viser le backend directement sur `ws://localhost:5000/ws`.
 
 ### Messages reçus (serveur → client)
 
@@ -983,6 +999,14 @@ curl -X POST http://localhost:5000/api/qxf/library/refresh
 Le badge dans l'en-tête indique l'état du WebSocket. En cas de déconnexion :
 1. Vérifie que le backend tourne sur le port 5000 : `lsof -i :5000`
 2. Rafraîchis la page — le frontend se reconnecte automatiquement
+
+### En HTTPS, la page reste vide et la console affiche "Mixed Content"
+
+Symptôme : `Mixed Content: ... attempted to connect to the insecure WebSocket endpoint 'ws://...'` suivi de `SecurityError: Failed to construct 'WebSocket'`. L'exception fait échouer le provider de données et l'interface ne s'affiche pas.
+
+Cause : l'URL du WebSocket est en `ws://` (ou vise le port 5000) alors que la page est servie en HTTPS. Un navigateur refuse toute connexion non chiffrée depuis une page chiffrée.
+
+Correctif : `wsUrl()` dans `frontend/src/lib/api.ts` doit dériver l'URL de l'origine de la page — `wss` quand `location.protocol` vaut `https:`, et `location.host` (qui inclut le port) plutôt que `location.hostname`. Vérifie aussi qu'aucune variable `VITE_WS_URL` ne force une URL `ws://`.
 
 ### Performances DMX (jitter)
 

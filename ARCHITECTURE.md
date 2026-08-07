@@ -122,7 +122,7 @@ Navigation **par onglets** responsive (5 onglets : Tableau de bord, Projecteurs,
   - `SmartLightsPage.tsx` — pills filtre backend depuis `backendRegistry` + `SmartLightsPanel`
   - `LivePage.tsx` (lazy via React.lazy) — sous-nav d'ancres Console / Dance / Scènes + `ChannelGrid` + `DancePanel` + `ScenesSection`
   - `SettingsPage.tsx` — `HomeKitCard` + cartes Système / Variables backend
-- `src/lib/api.ts` : client REST (fetch JSON) + wsUrl + namespaces `fixtures` / `scenes` / `universe` / `qxf` / `homekit` / `dance` / `smartLights`.
+- `src/lib/api.ts` : client REST (fetch JSON) + `wsUrl()` + namespaces `fixtures` / `scenes` / `universe` / `qxf` / `homekit` / `dance` / `smartLights`. `wsUrl()` suit **l'origine de la page** (`wss://` si la page est en HTTPS, `host` avec son port) et passe donc par le même proxy `/ws` que les appels `/api` — indispensable derrière un reverse proxy TLS, cf. [Exposition réseau](#exposition-réseau-reverse-proxy).
 - `src/lib/fixtures.ts`, `fixtureTemplates.ts`, `math.ts` : helpers UI.
 - `src/hooks/useDmxWebsocket.ts` : hook WS — écoute `universe_tick`, `fixture_updated`, `smart_light_updated`, `dance_state`, `log` ; expose `logHistory: LogEntry[]` (rolling 10).
 - `src/components/` :
@@ -152,13 +152,29 @@ Navigation **par onglets** responsive (5 onglets : Tableau de bord, Projecteurs,
 - Logs : `logs/backend-dev.{out,err}.log`, `logs/frontend-dev.{out,err}.log`.
 - Commandes utiles : `launchctl kickstart -k gui/501/com.lightbridgedmx.backend.dev`, `launchctl bootout gui/501 ~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` (idem frontend), `lsof -i :5000|:5173` pour vérifier l'écoute.
 
+## Exposition réseau (reverse proxy)
+
+Le tableau de bord est joignable sous un nom de domaine en plus de `192.168.0.200:5173`, via un **reverse proxy Caddy** installé sur la même machine. Sa configuration vit **hors du dépôt**, dans `/usr/local/etc/Caddyfile` (service launchd `homebrew.mxcl.caddy`, logs `/usr/local/var/log/caddy.log`).
+
+```
+Navigateur ──HTTPS/WSS──► Caddy (:443) ──HTTP/WS──► Vite (:5173) ──proxy──► Fastify (:5000)
+```
+
+Trois points de conception :
+
+1. **Un seul upstream.** Caddy vise uniquement `:5173` ; c'est le dev server Vite qui proxie déjà `/api` et `/ws` vers Fastify. Le WebSocket traverse donc deux proxys, ce qui fonctionne (`ws: true` côté Vite, relais d'upgrade natif côté Caddy).
+2. **Réécriture du `Host`.** Vite ≥ 5.4.12 renvoie 403 sur tout `Host` absent de `server.allowedHosts`. Le proxy présente donc à Vite son propre `IP:port` (`header_up Host {upstream_hostport}`) — une IP littérale est toujours acceptée. Le nom réel reste lisible dans `X-Forwarded-Host`.
+3. **Restriction au réseau local.** Un matcher `remote_ip` limite l'accès aux sources privées et renvoie sinon une page 403. La règle porte sur les **plages privées**, pas sur l'IP publique de la box : en hairpin NAT, les clients du LAN arrivent avec l'IP de la box (`192.168.0.254`), pas avec l'IP publique. Le chemin `/.well-known/acme-challenge/*` est exempté, sans quoi le renouvellement Let's Encrypt échouerait.
+
+Conséquence côté frontend : `wsUrl()` doit suivre l'origine de la page. Une URL en dur du type `ws://<host>:5000` casse l'accès HTTPS (blocage Mixed Content, et le port 5000 n'est pas exposé par le proxy).
+
 ## Schéma de flux complet
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                       FRONTEND (React 18 + Vite)                     │
 │  App.tsx → React Query → api.ts → fetch /api/*                      │
-│  useDmxWebsocket → ws://localhost:5000/ws                           │
+│  useDmxWebsocket → {ws,wss}://<origine de la page>/ws               │
 │  ChannelGrid (sliders DMX) → POST /api/universe/:channel            │
 │  SmartLightsPanel → POST /api/smart-lights/:id/{state,effect,zones} │
 │  LayoutEditor3D (lazy R3F) → POST /api/smart-lights/:id/layout      │
