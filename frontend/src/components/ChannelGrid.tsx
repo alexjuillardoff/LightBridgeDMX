@@ -2,6 +2,11 @@
 // C'est la "Fader View" du pupitre : chaque tranche montre son numéro de canal,
 // son niveau en pourcent, le fader lui-même, la fixture à laquelle le canal
 // appartient et un champ de saisie directe en 0-255.
+//
+// Tous les projecteurs patchés y sont visibles, y compris ceux qui ne sont pas
+// du DMX physique (un strip Nanoleaf exposé en projecteur par zone, par exemple) :
+// la vue lit l'univers, pas le matériel. Le sélecteur "Aller au projecteur"
+// permet de sauter directement sur leur plage de canaux.
 import { useMemo, useState } from "react";
 import { Fixture, UniverseState } from "@lightbridgedmx/shared";
 import { computeVisibleChannels, FixtureColor, VisibleChannel } from "../lib/fixtures";
@@ -39,6 +44,29 @@ export const ChannelGrid = ({ universeState, fixtures, fixtureColors, onUpdate, 
   const first = visibleChannels[0]?.channel ?? 1;
   const last = visibleChannels[visibleChannels.length - 1]?.channel ?? 1;
 
+  // Raccourci "aller au projecteur" : la vue ne montre que 32 canaux a la fois,
+  // et un projecteur peut vivre loin dans l'univers (un strip a zones occupe des
+  // centaines de canaux). On liste donc les projecteurs par adresse croissante avec
+  // leur plage, pour sauter directement dessus au lieu de pager a l'aveugle.
+  const fixtureJumps = useMemo(
+    () =>
+      [...fixtures]
+        .map((fixture) => ({
+          id: fixture.id,
+          name: fixture.name,
+          address: fixture.address,
+          // Un projecteur n'occupe pas forcement des canaux contigus : on prend
+          // le canal relatif le plus haut pour borner sa plage.
+          lastChannel: fixture.address + Math.max(...fixture.channels.map((ch) => ch.channel)) - 1,
+          count: fixture.channels.length
+        }))
+        .sort((a, b) => a.address - b.address),
+    [fixtures]
+  );
+  // Le projecteur dont l'adresse de depart tombe dans la page affichee (pour que
+  // le selecteur reflete ou on se trouve au lieu de rester bloque sur "—").
+  const currentJump = fixtureJumps.find((f) => f.address >= first && f.address <= last)?.id ?? "";
+
   return (
     <div className="card channel-card">
       <h2>
@@ -50,6 +78,25 @@ export const ChannelGrid = ({ universeState, fixtures, fixtureColors, onUpdate, 
 
       <div className="channel-toolbar">
         <div className="input-inline">
+          <label>
+            Aller au projecteur
+            <select
+              className="channel-jump"
+              value={currentJump}
+              onChange={(e) => {
+                const target = fixtureJumps.find((f) => f.id === e.target.value);
+                if (target) setChannelStart(target.address);
+              }}
+            >
+              <option value="">— Choisir —</option>
+              {fixtureJumps.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name} · {f.address}
+                  {f.lastChannel > f.address ? `–${f.lastChannel}` : ""} ({f.count} ch.)
+                </option>
+              ))}
+            </select>
+          </label>
           <label>
             Premier canal
             <input

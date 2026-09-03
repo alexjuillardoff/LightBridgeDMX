@@ -7,6 +7,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
+  buildZoneRgbChannels,
+  Fixture,
   SmartLight,
   SmartLightEffectConfigSchema,
   SmartLightInputSchema,
@@ -18,6 +20,35 @@ import {
 import { NanoleafApiError, NanoleafClient } from "../services/smart-lights/nanoleaf-client";
 import { discoverNanoleaf } from "../services/smart-lights/discovery";
 import { ErrorHandler, RouteContext } from "./types";
+
+/** Nombre de zones par defaut quand l'appareil ne sait pas le dire.
+ *  Le NL72K3 (Lightstrip Essentials) expose 50 zones adressables en extControl ;
+ *  son firmware n'a pas d'endpoint panelLayout pour le confirmer. */
+const DEFAULT_ZONE_COUNT = 50;
+
+/** Cherche le premier bloc de `size` canaux DMX consecutifs libres (1-512), en
+ *  ignorant eventuellement un projecteur (celui qu'on est en train de redimensionner).
+ *  Renvoie l'adresse de depart, ou null si l'univers est trop encombre. */
+const findFreeChannelBlock = (fixtures: Fixture[], size: number, ignoreId?: string): number | null => {
+  const used = new Set<number>();
+  for (const fixture of fixtures) {
+    if (fixture.id === ignoreId) continue;
+    for (const ch of fixture.channels) used.add(fixture.address + ch.channel - 1);
+  }
+  for (let start = 1; start + size - 1 <= 512; start++) {
+    let free = true;
+    for (let c = start; c < start + size; c++) {
+      if (used.has(c)) {
+        // Rien a tester avant ce canal occupe : on redemarre juste apres.
+        start = c;
+        free = false;
+        break;
+      }
+    }
+    if (free) return start;
+  }
+  return null;
+};
 
 // Enregistre toutes les routes /api/smart-lights sur l'instance Fastify.
 // ctx donne acces au store (persistance) et au service smartLights (runtime),
@@ -241,6 +272,129 @@ export const registerSmartLightRoutes = (
       const light = ctx.smartLights.applyZones(id, parsed);
       if (!light) return reply.code(404).send({ message: "Smart light not found" });
       reply.send(light);
+    } catch (err) {
+      handleError(err, reply);
+    }
+  });
+
+  // ─── Exposition en projecteur DMX (une cellule R/G/B par zone) ───────────
+
+  /**
+   * Rend le bandeau pilotable comme un projecteur DMX classique : cree (ou met a
+   * jour) un projecteur de `zoneCount * 3` canaux — rouge, vert, bleu pour chaque
+   * zone — et branche le miroir DMX par zone de la lampe sur ce bloc de canaux.
+   *
+   * A partir de la, tout ce qui ecrit dans l'univers DMX (curseurs de la fixture
+   * sheet, scenes, presets, Art-Net entrant) peint le bandeau zone par zone.
+   *
+   * Le corps est entierement optionnel : sans adresse, on alloue automatiquement le
+   * premier bloc libre ; sans zoneCount, on prend celui du streaming (50 par defaut).
+   */
+  app.post("/api/smart-lights/:id/dmx-fixture", async (request, reply) => {
+    try {
+      const id = (request.params as { id: string }).id;
+      const light = await ctx.store.getSmartLight(id);
+      if (!light) return reply.code(404).send({ message: "Smart light not found" });
+
+      const parsed = z
+        .object({
+          zoneCount: z.number().int().min(1).max(170).optional(),
+          startChannel: z.number().int().min(1).max(512).optional(),
+          universe: z.number().int().min(0).optional(),
+          name: z.string().min(1).optional(),
+          room: z.string().min(1).optional()
+        })
+        .parse(request.body ?? {});
+
+      const zoneCount = parsed.zoneCount ?? light.streaming?.zoneCount ?? DEFAULT_ZONE_COUNT;
+      const size = zoneCount * 3;
+      const universe = parsed.universe ?? light.dmxMirror?.zones?.universe ?? 0;
+
+      // Le projecteur deja genere pour cette lampe, s'il existe encore en base.
+      const existingId = light.dmxMirror?.zones?.fixtureId;
+      const existingFixture = existingId ? await ctx.store.getFixture(existingId) : undefined;
+
+      const fixtures = await ctx.store.listFixtures();
+      const startChannel =
+        parsed.startChannel ??
+        // On garde l'adresse actuelle si le bloc n'a pas grossi, sinon on realloue.
+        (existingFixture && existingFixture.address + size - 1 <= 512
+          ? existingFixture.address
+          : findFreeChannelBlock(fixtures, size, existingFixture?.id));
+      if (startChannel === null || startChannel === undefined) {
+        return reply
+          .code(409)
+          .send({ message: `Aucun bloc de ${size} canaux DMX libres dans l'univers` });
+      }
+      if (startChannel + size - 1 > 512) {
+        return reply.code(400).send({
+          message: `${zoneCount} zones demandent ${size} canaux : l'adresse ${startChannel} depasse le canal 512`
+        });
+      }
+
+      const payload = {
+        name: parsed.name ?? existingFixture?.name ?? light.name,
+        address: startChannel,
+        universe,
+        channels: buildZoneRgbChannels(zoneCount),
+        // Pas d'accessoire HomeKit : la lampe est deja exposee nativement par Nanoleaf,
+        // et un projecteur multi-cellules se resumerait a la premiere zone dans Maison.
+        homekit: { enabled: false },
+        ...(parsed.room ?? existingFixture?.room ?? light.room
+          ? { room: (parsed.room ?? existingFixture?.room ?? light.room) as string }
+          : {})
+      };
+
+      const fixture = existingFixture
+        ? await ctx.store.updateFixture(existingFixture.id, payload)
+        : await ctx.store.createFixture(payload);
+
+      // On branche le miroir par zone sur le bloc qu'on vient de reserver, en gardant
+      // le miroir uniforme eventuellement deja configure sur cette lampe.
+      const updated = await ctx.store.updateSmartLight(id, {
+        dmxMirror: {
+          ...(light.dmxMirror ?? {}),
+          zones: { universe, startChannel, zoneCount, fixtureId: fixture.id }
+        }
+      });
+      await ctx.smartLights.register(updated);
+
+      const allFixtures = await ctx.store.listFixtures();
+      await ctx.homekit.syncFixtures(allFixtures);
+      ctx.meross.syncFixtures(allFixtures);
+      ctx.broadcast({ type: "fixture_updated", data: fixture });
+      ctx.broadcast({ type: "smart_light_updated", data: updated });
+      reply.send({ light: updated, fixture });
+    } catch (err) {
+      handleError(err, reply);
+    }
+  });
+
+  /** Retire l'exposition DMX : supprime le projecteur genere et debranche le
+   *  miroir par zone. Le miroir uniforme et le reste de la config sont conserves. */
+  app.delete("/api/smart-lights/:id/dmx-fixture", async (request, reply) => {
+    try {
+      const id = (request.params as { id: string }).id;
+      const light = await ctx.store.getSmartLight(id);
+      if (!light) return reply.code(404).send({ message: "Smart light not found" });
+
+      const fixtureId = light.dmxMirror?.zones?.fixtureId;
+      if (fixtureId) await ctx.store.deleteFixture(fixtureId);
+
+      // On repart du miroir courant sans sa cle `zones` ; s'il ne reste rien, on met null.
+      const rest = { ...(light.dmxMirror ?? {}) };
+      delete rest.zones;
+      const stillMirrors = rest.rChannel || rest.gChannel || rest.bChannel || rest.briChannel;
+      const updated = await ctx.store.updateSmartLight(id, {
+        dmxMirror: stillMirrors ? rest : null
+      });
+      await ctx.smartLights.register(updated);
+
+      const allFixtures = await ctx.store.listFixtures();
+      await ctx.homekit.syncFixtures(allFixtures);
+      ctx.meross.syncFixtures(allFixtures);
+      ctx.broadcast({ type: "smart_light_updated", data: updated });
+      reply.send(updated);
     } catch (err) {
       handleError(err, reply);
     }

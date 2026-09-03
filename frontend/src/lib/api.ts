@@ -219,7 +219,20 @@ export const api = {
       fetchJSON<SmartLight>(`/api/smart-lights/${id}/effect`, {
         method: "POST",
         body: JSON.stringify(effect)
-      })
+      }),
+    // Expose le bandeau comme un projecteur DMX : 3 canaux (R/G/B) par zone.
+    // Le corps est optionnel — sans adresse, le backend alloue le premier bloc libre.
+    createDmxFixture: (
+      id: string,
+      body?: { zoneCount?: number; startChannel?: number; universe?: number; name?: string; room?: string }
+    ) =>
+      fetchJSON<{ light: SmartLight; fixture: Fixture }>(`/api/smart-lights/${id}/dmx-fixture`, {
+        method: "POST",
+        body: JSON.stringify(body ?? {})
+      }),
+    // Supprime le projecteur genere et debranche le miroir DMX par zone.
+    deleteDmxFixture: (id: string) =>
+      fetchJSON<SmartLight>(`/api/smart-lights/${id}/dmx-fixture`, { method: "DELETE" })
   }
 };
 

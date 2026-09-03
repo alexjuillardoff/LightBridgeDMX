@@ -1115,6 +1115,12 @@ select {
   border-bottom: 1px solid var(--line-soft);
 }
 
+/* Selecteur "aller au projecteur" de la Fader View : plus large que les champs
+   numeriques voisins, car il affiche nom + plage de canaux. */
+.channel-jump {
+  min-width: 220px;
+}
+
 .channel-nav {
   display: flex;
   gap: 3px;

@@ -435,6 +435,7 @@ Pairing et pilotage des lampes WiFi (Nanoleaf aujourd'hui, Hue/Matter à venir).
   - **Effets** : designer d'effets (solid, gradient, chase, wave) avec sliders live
   - **Layout 3D** : éditeur React Three Fiber pour positionner les zones dans l'espace (preset U-shape, loop, etc.)
 - **Mirror DMX** : lier les canaux R/G/B/Dimmer d'un strip à 4 canaux DMX → pilote la lampe depuis une scène DMX
+- **Projecteur DMX par zone** : bouton *Exposer en DMX* (panneau avancé) → chaque zone du strip reçoit 3 canaux R/G/B, comme un vrai projecteur multi-cellules
 
 > Pour ajouter un nouveau backend (Hue, Matter…) plus tard : ajouter une entrée dans `frontend/src/components/smart-lights/backendRegistry.ts` + un nouveau type dans la discriminated union `SmartLight.config.type` côté `shared/`.
 
@@ -463,7 +464,8 @@ est la cible des encodeurs et de la ligne de commande, et elle est conservée qu
 La grille affiche les **512 canaux DMX** page par page, en faders verticaux :
 - Chaque fader contrôle un canal de 0 à 255 (glisser dessus, ou saisir la valeur sous le fader)
 - Les canaux appartenant à un projecteur sont **colorés** et annotés avec le nom du projecteur et du canal
-- Utilise **Page − / Page +** pour naviguer (32 canaux à la fois)
+- Utilise **Page − / Page +** pour naviguer (32 canaux à la fois), ou le sélecteur **Aller au projecteur** pour sauter directement sur la plage de canaux d'un projecteur (utile pour les gros patchs comme un strip Nanoleaf exposé par zone : 150 canaux d'un coup)
+- Tout projecteur patché y apparaît, **même s'il ne correspond pas à du DMX physique** — la vue lit l'univers, pas le matériel
 - Le layout s'adapte : 16 colonnes sur grand écran, 12 / 8 sur écran moyen, 4 sur mobile
 - Les modifications sont envoyées en temps réel au backend
 
@@ -621,6 +623,23 @@ Deux chemins de sortie disponibles via le toggle **Streaming UDP** sur la carte 
 | UDP extControl (streaming) | ~5–15 ms | DMX-mirror, Dance mode, effets continus, music sync |
 
 Le streaming UDP envoie ~30 frames/s via le port 60222 et entre/sort du mode `extControl` automatiquement.
+
+### Le strip comme projecteur DMX (une cellule R/G/B par zone)
+
+Le panneau avancé d'une lampe (bouton **Avancé** sur la carte) contient une section **Projecteur DMX par zone**. Un clic sur **Exposer en DMX** crée un projecteur classique dont chaque zone occupe **3 canaux consécutifs — rouge, vert, bleu** :
+
+```
+zone 1 → adresse+0 (R), +1 (G), +2 (B)
+zone 2 → adresse+3 (R), +4 (G), +5 (B)
+…                                          50 zones = 150 canaux
+```
+
+À partir de là le strip se pilote comme n'importe quel projecteur : sliders de la fixture sheet, scènes, presets, Art-Net entrant depuis QLC+.
+
+- Laisse le champ **Adresse** vide pour que le backend alloue automatiquement le premier bloc de canaux libre.
+- **Le streaming UDP doit être actif** : les frames par zone partent par ce chemin.
+- Le pilotage local (painter, effets, sliders couleur) et le DMX cohabitent en **LTP** : le dernier qui bouge gagne. Dès qu'un canal du bloc change, le DMX prend la main ; dès qu'on touche au painter ou à un effet, il la rend.
+- **Retirer** supprime le projecteur généré et débranche le mirror.
 
 ### Painter par zone
 

@@ -120,6 +120,25 @@ export const FixtureSchema = z.object({
 
 export type Fixture = z.infer<typeof FixtureSchema>;
 
+/**
+ * Construit la liste de canaux d'un projecteur "bandeau adressable" : 3 canaux
+ * (rouge, vert, bleu) par zone, dans l'ordre des zones. Les numeros de canaux sont
+ * relatifs a l'adresse de depart du projecteur (le canal 1 = l'adresse de depart),
+ * exactement comme pour un projecteur importe de la bibliotheque QXF.
+ *
+ * Partage backend/frontend pour que les deux cotes decrivent le meme mapping :
+ * la zone i occupe les canaux 3i+1 (R), 3i+2 (G), 3i+3 (B).
+ */
+export function buildZoneRgbChannels(zoneCount: number): FixtureChannel[] {
+  const channels: FixtureChannel[] = [];
+  for (let i = 0; i < zoneCount; i++) {
+    channels.push({ channel: i * 3 + 1, capability: "r", name: `Zone ${i + 1} Rouge` });
+    channels.push({ channel: i * 3 + 2, capability: "g", name: `Zone ${i + 1} Vert` });
+    channels.push({ channel: i * 3 + 3, capability: "b", name: `Zone ${i + 1} Bleu` });
+  }
+  return channels;
+}
+
 // ─── Mode Dance (chenillard) ─────────────────────────────────────────────────
 
 // Identifiants des motifs (patterns) de chenillard (chase).
@@ -386,15 +405,44 @@ export const SmartLightBackendConfigSchema = z.discriminatedUnion("type", [
 ]);
 export type SmartLightBackendConfig = z.infer<typeof SmartLightBackendConfigSchema>;
 
+/** Miroir DMX par zone : expose un bandeau adressable comme un vrai projecteur DMX
+ *  multi-cellules. Les zones occupent un bloc de canaux CONSECUTIFS a partir de
+ *  startChannel, a raison de 3 canaux par zone dans l'ordre rouge, vert, bleu :
+ *
+ *    zone 0 -> startChannel (R), +1 (G), +2 (B)
+ *    zone 1 -> startChannel+3 (R), +4 (G), +5 (B)   ... et ainsi de suite
+ *
+ *  Contrairement au miroir uniforme (rChannel/gChannel/...), ce mode passe par le
+ *  streaming UDP : il exige donc `streaming.enabled = true` sur la lampe.
+ *  `fixtureId` memorise le projecteur (fixture) genere pour ce bloc, afin de pouvoir
+ *  le mettre a jour ou le supprimer plus tard. */
+export const SmartLightDmxZoneMirrorSchema = z
+  .object({
+    universe: z.number().int().min(0).default(0).optional(),
+    startChannel: z.number().int().min(1).max(512),
+    zoneCount: z.number().int().min(1).max(170), // 170 x 3 = 510 canaux, plafond d'un univers
+    /** Id du projecteur DMX cree pour ce bloc (lien lampe <-> fixture). */
+    fixtureId: z.string().uuid().optional()
+  })
+  .refine((m) => m.startChannel + m.zoneCount * 3 - 1 <= 512, {
+    message: "Le bloc de zones depasse le canal 512"
+  });
+export type SmartLightDmxZoneMirror = z.infer<typeof SmartLightDmxZoneMirrorSchema>;
+
 // Miroir DMX (mirror) optionnel : lie la lampe connectee a des canaux DMX de
 // l'univers. Ainsi les scenes, le Mode Dance et les curseurs de canaux la
 // pilotent de maniere transparente, comme un projecteur classique.
+// Deux modes cohabitent : le miroir uniforme (une seule couleur pour tout le
+// bandeau, via rChannel/gChannel/bChannel/briChannel) et le miroir par zone
+// (`zones`), qui donne 3 canaux R/G/B a CHAQUE zone.
 export const SmartLightDmxMirrorSchema = z.object({
   universe: z.number().int().min(0).default(0).optional(),
   rChannel: z.number().int().min(1).max(512).optional(),
   gChannel: z.number().int().min(1).max(512).optional(),
   bChannel: z.number().int().min(1).max(512).optional(),
-  briChannel: z.number().int().min(1).max(512).optional() // override optionnel du dimmer maitre
+  briChannel: z.number().int().min(1).max(512).optional(), // override optionnel du dimmer maitre
+  /** Miroir par zone — prioritaire sur le miroir uniforme tant que le DMX bouge. */
+  zones: SmartLightDmxZoneMirrorSchema.optional()
 });
 export type SmartLightDmxMirror = z.infer<typeof SmartLightDmxMirrorSchema>;
 

@@ -17,6 +17,7 @@ import type { FastifyBaseLogger } from "fastify";
 import {
   SmartLight,
   SmartLightEffectConfig,
+  SmartLightDmxZoneMirror,
   SmartLightState,
   SmartLightStateInput,
   SmartLightZoneLayout,
@@ -55,6 +56,13 @@ type RuntimeEntry = {
   streamRetryAt: number;
   /** Echecs consecutifs de (re)activation du streaming — pilote le backoff. */
   streamFailures: number;
+  /** Derniere trame par zone lue depuis le miroir DMX par zone (null si pas de miroir zones,
+   *  ou tant qu'aucun tick DMX n'est passe). Sert aussi de reference pour detecter un changement. */
+  dmxZones: Array<{ index: number; r: number; g: number; b: number }> | null;
+  /** True quand le bloc DMX par zone a bouge en dernier — le DMX possede alors le bandeau
+   *  (priorite sur l'effet et sur desired.on). Une ecriture locale (painter, effet, couleur)
+   *  rend la main jusqu'au prochain mouvement du DMX. */
+  dmxZonesOwned: boolean;
   /** Si true, le Mode Dance possede cet appareil — streamAll() ignore currentEffect et
    *  desired.on pour que la dance puisse peindre les zones par-dessus l'etat ambiant configure.
    *  Defini via setDanceClaim() ; n'est PAS persiste en base. */
@@ -214,6 +222,7 @@ export class SmartLightService extends EventEmitter {
 
     entry.desired = next;
     entry.zonePalette = null; // une ecriture de couleur uniforme efface toute palette par zone
+    entry.dmxZonesOwned = false; // et rend la main au pilotage local jusqu'au prochain mouvement DMX
     return { ...entry.light, state: next };
   }
 
@@ -226,6 +235,7 @@ export class SmartLightService extends EventEmitter {
       throw new Error("Streaming not enabled on this smart light");
     }
     entry.zonePalette = palette;
+    entry.dmxZonesOwned = false; // peinture manuelle : le miroir DMX par zone reprend la main plus tard
     entry.streamer.sendZones(palette.zones);
     return { ...entry.light, state: entry.desired };
   }
@@ -248,6 +258,7 @@ export class SmartLightService extends EventEmitter {
       entry.light = off;
     }
     await entry.client.selectEffect(effectName);
+    entry.dmxZonesOwned = false;
     entry.desired = { ...entry.desired, colorMode: "effect", currentEffect: effectName };
     this.emit("light_updated", { ...entry.light, state: entry.desired });
     return { ...entry.light, state: entry.desired };
@@ -268,6 +279,7 @@ export class SmartLightService extends EventEmitter {
     entry.lastLocalWriteAt = Date.now();
     const updated = await this.store.updateSmartLight(id, { currentEffect: effect });
     entry.light = updated;
+    entry.dmxZonesOwned = false;
     this.emit("light_updated", { ...updated, state: entry.desired });
     return { ...updated, state: entry.desired };
   }
@@ -412,6 +424,14 @@ export class SmartLightService extends EventEmitter {
         existing?.desired ??
         { on: false, hue: 0, sat: 0, brightness: 0, reachable: true },
       zonePalette: existing?.zonePalette ?? null,
+      // On repart d'une trame DMX inconnue si le bloc de zones a change (adresse ou
+      // taille) : la nouvelle plage de canaux n'a rien a voir avec l'ancienne.
+      dmxZones: sameZoneMirror(existing?.light.dmxMirror?.zones, light.dmxMirror?.zones)
+        ? existing?.dmxZones ?? null
+        : null,
+      dmxZonesOwned: sameZoneMirror(existing?.light.dmxMirror?.zones, light.dmxMirror?.zones)
+        ? existing?.dmxZonesOwned ?? false
+        : false,
       lastPushAt: existing?.lastPushAt ?? 0,
       inflight: false,
       lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0,
@@ -561,11 +581,14 @@ export class SmartLightService extends EventEmitter {
   }
 
   /** Tick DMX -> met a jour l'etat voulu de toute lampe avec un miroir DMX (mirror).
-   *  C'est le sens DMX -> lampe : les canaux DMX configures pilotent la smart light. */
+   *  C'est le sens DMX -> lampe : les canaux DMX configures pilotent la smart light.
+   *  Deux miroirs peuvent coexister : le miroir par zone (bloc R/G/B par zone, chemin
+   *  streaming UDP) et le miroir uniforme historique (une couleur pour tout le bandeau). */
   private onDmxTick(state: UniverseState): void {
     for (const entry of this.runtime.values()) {
       const mirror = entry.light.dmxMirror;
       if (!mirror) continue;
+      if (mirror.zones) this.readZoneMirror(entry, mirror.zones, state);
       // Les adresses DMX sont en base 1 (canal 1 a 512) ; le tableau values est en
       // base 0, d'ou le -1. On renvoie undefined si le canal n'est pas configure.
       const read = (channel?: number) =>
@@ -601,6 +624,57 @@ export class SmartLightService extends EventEmitter {
       entry.desired = next;
       entry.zonePalette = null; // le miroir DMX est une ecriture de couleur uniforme
       entry.lastLocalWriteAt = Date.now();
+    }
+  }
+
+  /**
+   * Lit le bloc de canaux du miroir DMX par zone et en fait une trame de couleurs
+   * (une par zone). Chaque zone occupe 3 canaux consecutifs : rouge, vert, bleu.
+   *
+   * Politique de priorite (LTP, "latest takes precedence"), pour que configurer ce
+   * miroir ne rende pas le painter et les effets inutilisables :
+   *   - des que le bloc DMX BOUGE, le DMX prend la main (dmxZonesOwned = true) et
+   *     garde le bandeau tant qu'on ne fait pas d'ecriture locale ;
+   *   - une ecriture locale (couleur, painter, effet) rend la main jusqu'au prochain
+   *     mouvement du DMX.
+   * Au tout premier tick apres enregistrement, on ne prend la main que si au moins un
+   * canal est allume : sinon un bloc DMX a zero eteindrait un effet en cours au demarrage.
+   */
+  private readZoneMirror(
+    entry: RuntimeEntry,
+    cfg: SmartLightDmxZoneMirror,
+    state: UniverseState
+  ): void {
+    const zones: Array<{ index: number; r: number; g: number; b: number }> = [];
+    let anyLit = false;
+    for (let i = 0; i < cfg.zoneCount; i++) {
+      // Canal DMX absolu en base 1 -> index base 0 dans values, d'ou le -1.
+      const base = cfg.startChannel + i * 3 - 1;
+      const r = state.values[base] ?? 0;
+      const g = state.values[base + 1] ?? 0;
+      const b = state.values[base + 2] ?? 0;
+      if (r > 0 || g > 0 || b > 0) anyLit = true;
+      zones.push({ index: i, r, g, b });
+    }
+
+    const prev = entry.dmxZones;
+    const changed =
+      !prev ||
+      prev.length !== zones.length ||
+      zones.some((z, i) => z.r !== prev[i].r || z.g !== prev[i].g || z.b !== prev[i].b);
+    entry.dmxZones = zones;
+    if (!changed) return;
+
+    // Premier tick connu : on ne s'empare du bandeau que s'il y a quelque chose a montrer.
+    if (!prev && !anyLit) return;
+
+    entry.dmxZonesOwned = true;
+    entry.lastLocalWriteAt = Date.now();
+    // On reporte l'allumage dans l'etat expose a l'UI, mais on ne diffuse (broadcast)
+    // que sur bascule on/off : emettre a chaque tick DMX inonderait le WebSocket.
+    if (entry.desired.on !== anyLit) {
+      entry.desired = { ...entry.desired, on: anyLit };
+      this.emit("light_updated", { ...entry.light, state: entry.desired });
     }
   }
 
@@ -670,6 +744,13 @@ export class SmartLightService extends EventEmitter {
         }
         continue;
       }
+      // Miroir DMX par zone actif : le pupitre possede le bandeau. On passe donc
+      // AVANT la garde desired.on, pour qu'un noir envoye depuis le DMX (blackout)
+      // eteigne bien le bandeau au lieu de rendre la main a l'effet en cours.
+      if (entry.dmxZonesOwned && entry.dmxZones) {
+        s.sendZones(entry.dmxZones);
+        continue;
+      }
       // Lampe eteinte : on envoie quand meme du noir a chaque tick pour maintenir
       // le mode extControl actif (un flux qui s'arrete fait sortir l'appareil du mode).
       if (!entry.desired.on) {
@@ -692,6 +773,17 @@ export class SmartLightService extends EventEmitter {
       s.sendUniform(rgb);
     }
   }
+}
+
+/** Deux configs de miroir par zone visent-elles le meme bloc de canaux ?
+ *  Sert a decider, lors d'un re-enregistrement, si la derniere trame DMX lue reste
+ *  pertinente : deplacer l'adresse ou changer le nombre de zones l'invalide. */
+function sameZoneMirror(
+  a: SmartLightDmxZoneMirror | undefined,
+  b: SmartLightDmxZoneMirror | undefined
+): boolean {
+  if (!a || !b) return false;
+  return a.startChannel === b.startChannel && a.zoneCount === b.zoneCount;
 }
 
 /** Renvoie uniquement les champs qui ont change (avec une petite tolerance), ou

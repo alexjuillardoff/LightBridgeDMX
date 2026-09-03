@@ -419,9 +419,20 @@ const SmartLightCard = ({
               ))}
             </select>
           )}
+          <DmxFixtureEditor light={light} onUpdated={onUpdated} />
           <MirrorEditor
             mirror={light.dmxMirror ?? null}
-            onSave={(mirror) => updateLight.mutate({ dmxMirror: mirror })}
+            onSave={(mirror) =>
+              updateLight.mutate({
+                // On preserve le miroir par zone : il est gere par DmxFixtureEditor,
+                // pas par cet editeur de canaux uniformes.
+                dmxMirror: mirror
+                  ? { ...mirror, ...(light.dmxMirror?.zones ? { zones: light.dmxMirror.zones } : {}) }
+                  : light.dmxMirror?.zones
+                    ? { zones: light.dmxMirror.zones }
+                    : null
+              })
+            }
           />
         </div>
       ) : null}
@@ -448,6 +459,103 @@ const SliderRow = ({
     />
   </label>
 );
+
+/**
+ * Expose le bandeau comme un projecteur DMX multi-cellules : 3 canaux (rouge,
+ * vert, bleu) pour CHAQUE zone, dans un bloc de canaux consecutifs.
+ *
+ * Le backend cree le projecteur correspondant et branche le miroir DMX par zone ;
+ * a partir de la, la fixture sheet, les scenes et l'Art-Net entrant peignent le
+ * bandeau zone par zone. Le pilotage local (painter, effets) reprend la main des
+ * qu'on l'utilise, et le DMX la reprend au prochain mouvement de ses canaux.
+ */
+const DmxFixtureEditor = ({
+  light, onUpdated
+}: {
+  light: SmartLight;
+  onUpdated: (light: SmartLight) => void;
+}) => {
+  const queryClient = useQueryClient();
+  const zones = light.dmxMirror?.zones ?? null;
+  const streamingZones = light.streaming?.zoneCount ?? 50;
+  const [zoneCount, setZoneCount] = useState<string>(String(zones?.zoneCount ?? streamingZones));
+  const [start, setStart] = useState<string>(zones?.startChannel?.toString() ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  // Le projecteur genere vit dans le cache ["fixtures"] : on l'invalide pour que
+  // la fixture sheet et la vue Appareils voient tout de suite le changement.
+  const refreshFixtures = () => queryClient.invalidateQueries(["fixtures"]);
+
+  const expose = useMutation(
+    () => {
+      const n = parseInt(zoneCount, 10);
+      const st = parseInt(start, 10);
+      return api.smartLights.createDmxFixture(light.id, {
+        ...(Number.isFinite(n) && n >= 1 ? { zoneCount: n } : {}),
+        ...(Number.isFinite(st) && st >= 1 && st <= 512 ? { startChannel: st } : {})
+      });
+    },
+    {
+      onSuccess: (res) => {
+        setError(null);
+        setStart(String(res.fixture.address));
+        onUpdated(res.light);
+        void refreshFixtures();
+      },
+      onError: (err) => setError((err as Error).message)
+    }
+  );
+
+  const remove = useMutation(() => api.smartLights.deleteDmxFixture(light.id), {
+    onSuccess: (updated) => {
+      setError(null);
+      setStart("");
+      onUpdated(updated);
+      void refreshFixtures();
+    },
+    onError: (err) => setError((err as Error).message)
+  });
+
+  const busy = expose.isLoading || remove.isLoading;
+  const span = zones ? `${zones.startChannel}–${zones.startChannel + zones.zoneCount * 3 - 1}` : null;
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 13 }}>
+        Projecteur DMX par zone (3 canaux R/G/B par zone)
+      </p>
+      {zones ? (
+        <p style={{ margin: "0 0 6px 0", fontSize: 13 }}>
+          Exposé sur les canaux <strong>{span}</strong> · {zones.zoneCount} zones
+        </p>
+      ) : (
+        <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 13 }}>
+          Pas encore exposé. Laisse l'adresse vide pour allouer le premier bloc libre.
+        </p>
+      )}
+      {!light.streaming?.enabled ? (
+        <p style={{ margin: "0 0 6px 0", fontSize: 13, color: "var(--amber-text)" }}>
+          ⚠ Le streaming UDP doit être actif pour que le DMX pilote les zones.
+        </p>
+      ) : null}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <ChanInput label="Zones" value={zoneCount} onChange={setZoneCount} />
+        <ChanInput label="Adresse (vide = auto)" value={start} onChange={setStart} />
+      </div>
+      {error ? <p style={{ margin: "6px 0 0 0", fontSize: 13, color: "var(--danger, #ff6b6b)" }}>{error}</p> : null}
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <button type="button" style={buttonStylePrimary} disabled={busy} onClick={() => expose.mutate()}>
+          {zones ? "Mettre à jour" : "Exposer en DMX"}
+        </button>
+        {zones ? (
+          <button type="button" style={buttonStyleSecondary} disabled={busy} onClick={() => remove.mutate()}>
+            Retirer
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+};
 
 // Editeur du mirror DMX : lie les composantes R/G/B/Dimmer de la lampe a des
 // canaux DMX (1-512). Etablit la liaison bidirectionnelle entre la smart light
