@@ -3,7 +3,7 @@
 // Filtre purement cosmetique : les projecteurs listes ici restent en base, dans
 // les scenes et dans HomeKit, et le backend continue de les piloter. On les
 // retire seulement des listes affichees (fiche projecteurs, encodeurs, moniteur
-// d'univers, inventaire Appareils, panneau Dance...).
+// d'univers, inventaire Appareils...).
 //
 // Pour reafficher un projecteur, retire son id de cette liste.
 const HIDDEN_FIXTURE_IDS = new Set<string>([

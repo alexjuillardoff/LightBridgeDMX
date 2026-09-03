@@ -1,6 +1,6 @@
 // Point d'entree du backend Fastify.
 // Role : lire la configuration (variables d'environnement), construire et cabler tous les
-// services (store SQLite, DMX, pont HomeKit, lampes connectees, Dance), brancher les
+// services (store SQLite, DMX, pont HomeKit, lampes connectees), brancher les
 // diffusions WebSocket, persister periodiquement l'univers DMX, puis demarrer le serveur.
 // ATTENTION : le backend est verrouille sur le port 5000 (voir PORT) et quitte si le port
 // est deja pris, pour garantir une seule instance.
@@ -9,7 +9,6 @@ import path from "node:path";
 import Fastify from "fastify";
 import { registerRoutes } from "./routes";
 import { createErrorHandler } from "./routes/errors";
-import { DanceService } from "./services/dance";
 import { DmxService } from "./services/dmx";
 import { HomeKitBridge } from "./services/homekit";
 import { MerossPlugService } from "./services/meross-plug";
@@ -100,11 +99,7 @@ const meross = new MerossPlugService(app.log, dmx, store, {
   electricityPollMs: Number.isNaN(MEROSS_ELECTRICITY_POLL_MS) ? 15000 : MEROSS_ELECTRICITY_POLL_MS
 });
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });
-// SmartLightService est cree AVANT DanceService pour pouvoir lui etre injecte : Dance s'en
-// sert pour reserver/liberer (claim/release) les lampes connectees et lire leurs dispositions
-// (layouts) quand il construit les groupes du chenillard (chase).
 const smartLights = new SmartLightService(app.log, dmx, store);
-const dance = new DanceService(app.log, dmx, store, smartLights);
 // Le pont HomeKit expose aussi les lampes connectees, en un seul accessoire chacune.
 // Injection apres coup : le pont est construit avant le SmartLightService.
 homekit.attachSmartLights(smartLights);
@@ -112,7 +107,7 @@ const handleError = createErrorHandler(app.log);
 
 registerRoutes(
   app,
-  { store, dmx, homekit, dance, smartLights, meross, broadcast: websocket.broadcast },
+  { store, dmx, homekit, smartLights, meross, broadcast: websocket.broadcast },
   handleError
 );
 
@@ -159,11 +154,6 @@ dmx.on("tick", (state) => {
   scheduleUniverseSnapshot(state.values);
 });
 
-// Etat du Mode Dance (chenillard) : diffuse a l'UI a chaque changement.
-dance.on("state", (state) => {
-  websocket.broadcast({ type: "dance_state", data: state });
-});
-
 // Mise a jour d'une lampe connectee : diffuse a l'UI.
 smartLights.on("light_updated", (light) => {
   websocket.broadcast({ type: "smart_light_updated", data: light });
@@ -179,7 +169,6 @@ app.addHook("onClose", async () => {
   } catch (err) {
     app.log.warn({ err }, "Failed to persist final universe snapshot");
   }
-  await dance.stop();
   await smartLights.stop();
   await meross.stop();
   await dmx.stop();
@@ -189,7 +178,7 @@ app.addHook("onClose", async () => {
 
 // ----- Demarrage du serveur -----
 // Sequence d'initialisation : connecter le store, restaurer l'univers, demarrer DMX puis
-// HomeKit, les lampes connectees, Dance, et enfin ecouter les requetes HTTP/WebSocket.
+// HomeKit, les lampes connectees, et enfin ecouter les requetes HTTP/WebSocket.
 const start = async () => {
   try {
     await store.connect();
@@ -212,14 +201,10 @@ const start = async () => {
     // Pilotage de la prise Meross : surveille les changements DMX des projecteurs cibles.
     // MEROSS_SEED n'amorce la config que si la base est vide (1er lancement).
     await meross.start(fixtures, MEROSS_SEED);
-    // SmartLightService doit demarrer AVANT DanceService.init() : Dance lit les dispositions
-    // (layouts) via smartLights.listWithState() pour l'auto-amorcage (auto-seed) et la
-    // construction des groupes lateraux du chenillard.
     await smartLights.start();
     // Les accessoires de lampes ne peuvent etre crees qu'une fois le service demarre
     // (c'est lui qui porte l'etat) et le pont publie.
     homekit.syncSmartLights(smartLights.listWithState());
-    await dance.init();
     await app.listen({ port: PORT, host: "0.0.0.0" });
 
     // Le serveur HTTP doit ecouter avant d'y attacher le WebSocket.

@@ -8,7 +8,7 @@
 //   - streaming UDP extControl : flux continu basse latence (~5-15 ms)
 //
 // Il gere aussi le miroir DMX (mirror), le rafraichissement periodique depuis
-// l'appareil (pour suivre les apps externes), les effets et le Mode Dance.
+// l'appareil (pour suivre les apps externes) et les effets.
 // Il herite d'EventEmitter et emet "light_updated" a chaque changement d'etat ;
 // la couche WebSocket re-diffuse (broadcast) l'evenement aux clients.
 // =============================================================================
@@ -73,10 +73,6 @@ type RuntimeEntry = {
    *  (priorite sur l'effet et sur desired.on). Une ecriture locale (painter, effet, couleur)
    *  rend la main jusqu'au prochain mouvement du DMX. */
   dmxZonesOwned: boolean;
-  /** Si true, le Mode Dance possede cet appareil — streamAll() ignore currentEffect et
-   *  desired.on pour que la dance puisse peindre les zones par-dessus l'etat ambiant configure.
-   *  Defini via setDanceClaim() ; n'est PAS persiste en base. */
-  danceClaim: boolean;
 };
 
 // Valeurs en dur de cadence reseau. Choisies pour ne pas saturer l'appareil.
@@ -488,33 +484,8 @@ export class SmartLightService extends EventEmitter {
       // On repart d'un backoff neuf a chaque (re)enregistrement : un changement de
       // config est justement l'occasion de retenter tout de suite.
       streamRetryAt: 0,
-      streamFailures: 0,
-      danceClaim: existing?.danceClaim ?? false
+      streamFailures: 0
     });
-  }
-
-  /**
-   * Reserve (claim) une lampe pour le Mode Dance, ou la libere. Quand elle est reservee :
-   *   - streamAll() ignore `currentEffect` et `desired.on` pour cet appareil ;
-   *   - le prochain appel a applyZones() pilote le bandeau.
-   * A la liberation, l'effet et l'etat ambiant reprennent au prochain tick de streaming.
-   * L'etat persiste (effet, layout, drapeau streaming) n'est pas touche.
-   *
-   * Renvoie true si la reservation a ete appliquee. Renvoie false si la lampe n'est
-   * pas enregistree ou si le streaming n'est pas actif (Dance ne peut pas piloter un
-   * appareil en HTTP seul).
-   */
-  setDanceClaim(id: string, claimed: boolean): boolean {
-    const entry = this.runtime.get(id);
-    if (!entry) return false;
-    if (claimed && !entry.streamer?.isEnabled()) return false;
-    entry.danceClaim = claimed;
-    if (!claimed) {
-      // On efface la palette peinte par la dance pour que le prochain tick de
-      // streaming retombe sur currentEffect / la couleur ambiante.
-      entry.zonePalette = null;
-    }
-    return true;
   }
 
   /** Chien de garde (watchdog) du streaming UDP : passe en revue toutes les lampes
@@ -942,17 +913,6 @@ export class SmartLightService extends EventEmitter {
     for (const entry of this.runtime.values()) {
       const s = entry.streamer;
       if (!s?.isEnabled()) continue;
-      // Le Mode Dance possede l'appareil : on court-circuite la priorite de
-      // currentEffect et la garde desired.on. C'est la palette que DanceService
-      // vient de pousser (ou rien) qui gagne.
-      if (entry.danceClaim) {
-        if (entry.zonePalette) {
-          s.sendZones(entry.zonePalette.zones);
-        } else {
-          s.sendUniform({ r: 0, g: 0, b: 0 });
-        }
-        continue;
-      }
       // Miroir DMX par zone actif : le pupitre possede le bandeau. On passe donc
       // AVANT la garde desired.on, pour qu'un noir envoye depuis le DMX (blackout)
       // eteigne bien le bandeau au lieu de rendre la main a l'effet en cours.

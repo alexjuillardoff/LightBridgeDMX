@@ -9,7 +9,7 @@
 
 ## Flux runtime (prod/dev)
 1) Frontend appelle l'API REST (`/api/...`) et le WS (`/ws`) du backend.
-2) Backend manipule l'état en mémoire (registry SmartLightService + tableau 512 canaux DMX) et diffuse en temps réel via WS (`universe_tick`, `fixture_updated`, `dance_state`, `smart_light_updated`).
+2) Backend manipule l'état en mémoire (registry SmartLightService + tableau 512 canaux DMX) et diffuse en temps réel via WS (`universe_tick`, `fixture_updated`, `smart_light_updated`).
 3) Backend envoie le DMX en Art-Net (`DMX_OUTPUT=artnet`, `ARTNET_HOST=192.168.0.200`) → QLC+ → interface DMX.
 4) Backend pilote les Nanoleaf via HTTP (coalesce 70 ms) ou UDP streaming (30 Hz, latence <15 ms) selon le toggle par lampe.
 5) Si aucune interface DMX n'est disponible, le backend passe en simulation.
@@ -58,16 +58,15 @@ Le backend compile en **CommonJS** (`require`), le frontend en **ESM** (`import`
 ### Backend (`backend/`)
 - `package.json` : scripts (`dev` via ts-node-dev, `build` via tsc), dépendances Fastify, ws, dmx-ts, hap-nodejs, @prisma/client, bonjour-service.
 - `tsconfig.json` : compilation CJS vers `dist/`.
-- `prisma/schema.prisma` : modèles SQLite — `Fixture`, `Scene`, `Preset`, `DanceConfig`, `SmartLight`, `UniverseSnapshot` (dernier état DMX persisté, 512 bytes par universe).
+- `prisma/schema.prisma` : modèles SQLite — `Fixture`, `Scene`, `Preset`, `SmartLight`, `UniverseSnapshot` (dernier état DMX persisté, 512 bytes par universe).
 - `vitest.config.ts` : config tests (Vitest, projet `homekit-utils`).
-- `src/index.ts` : point d'entrée Fastify. Init des services (DMX, HomeKit, Dance, SmartLights), wire WS, broadcasts. Port 5000 verrouillé.
+- `src/index.ts` : point d'entrée Fastify. Init des services (DMX, HomeKit, SmartLights), wire WS, broadcasts. Port 5000 verrouillé.
 - `src/websocket.ts` : gestionnaire WS broadcast (pas Socket.io, package `ws` natif).
-- `src/state/store.ts` : couche Prisma — CRUD fixtures / scènes / presets / smart lights / dance config, sérialisation JSON pour champs complexes. `loadUniverseSnapshot()` / `saveUniverseSnapshot()` pour persister/restaurer les 512 canaux DMX en `Bytes`.
+- `src/state/store.ts` : couche Prisma — CRUD fixtures / scènes / presets / smart lights, sérialisation JSON pour champs complexes. `loadUniverseSnapshot()` / `saveUniverseSnapshot()` pour persister/restaurer les 512 canaux DMX en `Bytes`.
 - `src/routes/` : enregistrement modulaire des endpoints
-  - `fixtures.ts`, `scenes.ts`, `presets.ts`, `universe.ts`, `qxf.ts`, `homekit.ts`, `system.ts`, `dance.ts`
+  - `fixtures.ts`, `scenes.ts`, `presets.ts`, `universe.ts`, `qxf.ts`, `homekit.ts`, `system.ts`
   - `smart-lights.ts` : CRUD + `/pair` + `/state` + `/streaming` + `/zones` + `/layout` + `/effect` + `/effects` + `/discover` + `/probe`
 - `src/services/dmx.ts` : DmxService (Art-Net / Enttec / simulation), timer FPS configurable, événement `tick`. Méthode `restoreUniverse(values)` pour appliquer un snapshot persisté avant `start()`.
-- `src/services/dance.ts` : DanceService — orchestration de strobes coordonnés par pièce avec patterns spatiaux.
 - `src/services/homekit.ts` : pont HomeKit (hap-nodejs). Accessories `Lightbulb` RGB + lyres multi-services (`Lightbulb` dimmer/shutter + `WindowCovering` pan/tilt/color/gobo). Synchro bidirectionnelle via le tick DMX.
 - `src/services/homekit-utils.ts` : conversions HSB↔RGB, résolution canaux RGB et moving head.
 - `src/services/qxf.ts` + `qxf-library.ts` : parser XML QXF + bibliothèque QLC+ téléchargée de GitHub.
@@ -159,7 +158,7 @@ l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes
 - `src/lib/console/` :
   - `layout.ts` — modèle de disposition : grille 24 colonnes × rangées de 30 px, bornes, 4 Views d'origine (Programmer / Playback / DMX / Effets), libellés des fenêtres
   - `scenes.ts` — `captureScene()` (STORE) et `applySceneAtLevel()` (rappel à niveau). Un master **n'atténue que** `intensity/r/g/b/w/uv` : pan, tilt, gobo et roue de couleurs sont rejoués tels quels, sinon baisser un playback ferait dériver la lyre à mi-course.
-- `src/lib/api.ts` : client REST (fetch JSON) + `wsUrl()` + namespaces `fixtures` / `scenes` / `presets` / `universe` / `qxf` / `homekit` / `devices` / `meross` / `system` / `rooms` / `dance` / `smartLights`. `wsUrl()` suit **l'origine de la page** (`wss://` si la page est en HTTPS, `host` avec son port) et passe donc par le même proxy `/ws` que les appels `/api` — indispensable derrière un reverse proxy TLS, cf. [Exposition réseau](#exposition-réseau-reverse-proxy).
+- `src/lib/api.ts` : client REST (fetch JSON) + `wsUrl()` + namespaces `fixtures` / `scenes` / `presets` / `universe` / `qxf` / `homekit` / `devices` / `meross` / `system` / `rooms` / `smartLights`. `wsUrl()` suit **l'origine de la page** (`wss://` si la page est en HTTPS, `host` avec son port) et passe donc par le même proxy `/ws` que les appels `/api` — indispensable derrière un reverse proxy TLS, cf. [Exposition réseau](#exposition-réseau-reverse-proxy).
 - `src/lib/fixtureGuard.ts` : projecteurs **verrouillés** (chambre) — liste blanche par pièce / nom / id. Visibles mais non sélectionnables, exclus des scènes à l'enregistrement comme au rappel. À distinguer de `hiddenFixtures.ts`, filtre purement cosmétique.
 - `src/lib/commandLine.ts` : parser pur texte → `ParsedCommand`. Verbes `FIX`/`CH`/`AT`/`FULL`/`OUT`/`ALL`/`CLEAR`/`BLACKOUT`/`GOTO` + `STORE`/`GO`/`OFF`/`GROUP`/`PRESET`.
 - `src/lib/programmer.ts` : traduction attribut ↔ canaux DMX absolus (groupes d'encodeurs, lecture HTP, écriture sur la sélection).
@@ -169,7 +168,7 @@ l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes
 - `src/components/` :
   - `FixtureSheet.tsx` (cellules groupées par pièce, sélection, cadenas des verrouillés), `EncoderBar.tsx` (groupes d'attributs, molettes, valeurs rapides), `ChannelGrid.tsx` (fader view 32 canaux/page), `UniverseMonitor.tsx` (DMX sheet 512 canaux)
   - `ma/MaFader.tsx`, `ma/MaKnob.tsx` : fader et molette maison aux Pointer Events (pas d'`<input type="range">` : rendu identique partout)
-  - `FixtureForm.tsx`, `FixturesTable.tsx` (avec `data-label` pour stacked cards mobile), `QxfLibraryPanel.tsx`, `HomeKitCard.tsx`, `MerossCard.tsx`, `DancePanel.tsx`, `DeviceInventory.tsx`
+  - `FixtureForm.tsx`, `FixturesTable.tsx` (avec `data-label` pour stacked cards mobile), `QxfLibraryPanel.tsx`, `HomeKitCard.tsx`, `MerossCard.tsx`, `DeviceInventory.tsx`
   - `SmartLightsPanel.tsx` : accepte `backendFilter` + `hideSectionTitle` (PairCard + cartes par lampe + onglets Painter/Effets/Layout 3D)
   - `smart-lights/backendRegistry.ts` : registre des backends UI (Nanoleaf aujourd'hui, Hue/Matter futur — ajouter une entrée suffit)
   - `smart-lights/ZonePainter.tsx` : 50 swatches paintable click+drag, brush color + spare, presets, fill all
@@ -180,7 +179,7 @@ l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes
 ### Shared (`packages/shared/`)
 - `src/index.ts` : types et schémas Zod partagés. Sections :
   - DMX : `Capability`, `FixtureChannel`, `FixtureHomeKit*`, `Fixture`, `Scene`, `SceneStep`, `Preset`, `UniverseState`, `LogEvent`, `WsEvent`
-  - Dance : `DanceLyrePosition`, `DanceLyreMode`, `DanceConfig`, `DanceState`, `DancePatternId`
+  - Effets : `EffectForm`, `EffectTarget`, `EffectMatricks`, `EffectSpatial`, `EffectMa`, `SMART_LIGHT_EFFECT_PRESETS`
   - Smart Lights : `SmartLightBackendType`, `NanoleafHttpConfig`, `SmartLightDmxMirror`, `SmartLightStreaming`, `SmartLightStateInput`, `SmartLightZonePalette`, `NanoleafDiscovered`
   - 3D Layout : `Point3D`, `ZoneSegment`, `SmartLightZoneLayout` (avec `spareZones[]` et `sides[]`)
   - Effets : `RgbColor`, `EffectStatic/Solid/Gradient/Chase/Wave`, `SmartLightEffectConfig`
@@ -229,7 +228,6 @@ Conséquence côté frontend : `wsUrl()` doit suivre l'origine de la page. Une U
 │                                                                      │
 │  DmxService  →  Universe[512]  →  push @ N FPS  →  "tick" emit     │
 │  HomeKitBridge ↔ hap-nodejs ↔ Apple Home app (mirror via tick)      │
-│  DanceService → scheduler → grouped DMX writes                       │
 │  SmartLightService :                                                 │
 │    • DMX-tick listener (mirror R/G/B chans → desired)               │
 │    • flushAll  @ 30 ms → HTTP PUT /state (coalesce + rate-limit)    │

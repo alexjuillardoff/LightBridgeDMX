@@ -1,13 +1,11 @@
 // Store (couche de persistance) : seul point d'acces a la base SQLite via Prisma.
 // Centralise la lecture/ecriture des projecteurs (fixtures), scenes, presets,
-// config du Mode Dance, lampes connectees (smart lights) et snapshots d'univers DMX.
+// lampes connectees (smart lights) et snapshots d'univers DMX.
 // Toutes les methodes sont async. La base stocke certains champs complexes en JSON
 // (texte), donc on serialise a l'ecriture et on valide avec Zod a la lecture.
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import {
-  DanceConfig,
-  DanceConfigSchema,
   Fixture,
   FixtureSchema,
   MerossConfig,
@@ -102,46 +100,6 @@ function deserializeFixture(row: DbFixture): Fixture {
     ...(row.room ? { room: row.room } : {})
   });
 }
-
-// Config par defaut du Mode Dance, utilisee pour l'auto-amorcage (auto-seed)
-// au tout premier acces, quand aucune ligne n'existe encore en base.
-// intervalMinMs/intervalMaxMs : plage aleatoire (en ms) entre deux pas de chenillard.
-// excludePanTilt : par defaut on ne touche pas aux canaux pan/tilt des lyres dans la danse.
-// lyre.msPerPanUnit : duree de deplacement (40 ms par unite de pan) pour caler les mouvements.
-const DEFAULT_DANCE_CONFIG: Omit<DanceConfig, "updatedAt"> = {
-  enabled: false,
-  rooms: [],
-  intervalMinMs: 55,
-  intervalMaxMs: 140,
-  patterns: [
-    "chase",
-    "reverseChase",
-    "pingPong",
-    "waveLR",
-    "waveRL",
-    "alternate",
-    "pairs",
-    "randomSubset",
-    "allHit",
-    "strobeSync"
-  ],
-  excludePanTilt: true,
-  excludeCapabilities: [],
-  lyre: {
-    enabled: false,
-    shutterOpenValue: 255,
-    dimmerOnValue: 255,
-    followChase: false,
-    positions: [],
-    wallEdgeRight: { pan: 20, tilt: 9 },
-    speedValue: 0,
-    msPerPanUnit: 40
-  },
-  smartLights: {
-    enabled: false,
-    lightIds: []
-  }
-};
 
 // Classe principale : expose toutes les operations de lecture/ecriture.
 // Une seule instance est partagee dans le backend.
@@ -274,77 +232,6 @@ export class Store {
   // Suppression idempotente d'un preset (voir deleteFixture).
   async deletePreset(id: string): Promise<void> {
     await this.prisma.preset.delete({ where: { id } }).catch(() => {});
-  }
-
-  // ----- Config du Mode Dance (ligne unique "singleton") -----
-
-  // Lit la config de danse. Il n'y a qu'une seule ligne, identifiee par "singleton".
-  // Si elle n'existe pas encore, on l'auto-amorce (auto-seed) avec les valeurs par defaut.
-  async getDanceConfig(): Promise<DanceConfig> {
-    const row = await this.prisma.danceConfig.findUnique({ where: { id: "singleton" } });
-    if (!row) {
-      const seeded = await this.saveDanceConfig({
-        ...DEFAULT_DANCE_CONFIG,
-        updatedAt: new Date().toISOString()
-      });
-      return seeded;
-    }
-    // NB : la colonne `smartLights` peut etre absente sur les lignes enregistrees
-    // avant l'ajout de ce champ. Le @default de Prisma ne s'applique qu'aux nouvelles
-    // lignes ; sur SQLite, un ALTER TABLE laisse NULL pour les lignes existantes.
-    // On retombe donc sur la valeur par defaut si le champ est absent ou illisible.
-    let smartLights = DEFAULT_DANCE_CONFIG.smartLights;
-    const raw = (row as { smartLights?: string }).smartLights;
-    if (raw) {
-      try {
-        smartLights = JSON.parse(raw);
-      } catch {
-        // JSON invalide : on ignore et on garde la valeur par defaut.
-      }
-    }
-    return DanceConfigSchema.parse({
-      enabled: row.enabled,
-      rooms: JSON.parse(row.rooms),
-      intervalMinMs: row.intervalMinMs,
-      intervalMaxMs: row.intervalMaxMs,
-      patterns: JSON.parse(row.patterns),
-      excludePanTilt: row.excludePanTilt,
-      excludeCapabilities: JSON.parse(row.excludeCapabilities),
-      lyre: JSON.parse(row.lyre),
-      smartLights,
-      updatedAt: row.updatedAt
-    });
-  }
-
-  // Enregistre la config de danse (cree la ligne "singleton" ou la met a jour).
-  // On force updatedAt a maintenant et on serialise en JSON les champs structures.
-  async saveDanceConfig(config: DanceConfig): Promise<DanceConfig> {
-    const parsed = DanceConfigSchema.parse({
-      ...config,
-      updatedAt: new Date().toISOString()
-    });
-    // Garde-fou : la borne basse de l'intervalle aleatoire ne peut pas depasser la haute.
-    if (parsed.intervalMinMs > parsed.intervalMaxMs) {
-      throw new StoreError("intervalMinMs must be <= intervalMaxMs", 400);
-    }
-    const data = {
-      enabled: parsed.enabled,
-      rooms: JSON.stringify(parsed.rooms),
-      intervalMinMs: parsed.intervalMinMs,
-      intervalMaxMs: parsed.intervalMaxMs,
-      patterns: JSON.stringify(parsed.patterns),
-      excludePanTilt: parsed.excludePanTilt,
-      excludeCapabilities: JSON.stringify(parsed.excludeCapabilities),
-      lyre: JSON.stringify(parsed.lyre),
-      smartLights: JSON.stringify(parsed.smartLights),
-      updatedAt: parsed.updatedAt
-    };
-    await this.prisma.danceConfig.upsert({
-      where: { id: "singleton" },
-      create: { id: "singleton", ...data },
-      update: data
-    });
-    return parsed;
   }
 
   // ----- Config prise Meross (ligne unique "singleton") -----

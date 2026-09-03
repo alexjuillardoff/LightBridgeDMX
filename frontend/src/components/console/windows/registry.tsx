@@ -7,10 +7,10 @@
 import { ReactNode } from "react";
 import { WindowKind } from "../../../lib/console/layout";
 import { ChannelGrid } from "../../ChannelGrid";
-import { DancePanel } from "../../DancePanel";
 import { EncoderBar } from "../../EncoderBar";
 import { FixtureSheet } from "../../FixtureSheet";
 import { UniverseMonitor } from "../../UniverseMonitor";
+import { EffectsWindow } from "./EffectsWindow";
 import { ExecutorsWindow } from "./ExecutorsWindow";
 import { GroupsWindow } from "./GroupsWindow";
 import { LogWindow } from "./LogWindow";
@@ -36,8 +36,8 @@ export const renderWindowContent = (kind: WindowKind): ReactNode => {
       return <ChannelGrid />;
     case "dmx":
       return <UniverseMonitor />;
-    case "dance":
-      return <DancePanel />;
+    case "effects":
+      return <EffectsWindow />;
     case "log":
       return <LogWindow />;
     default:

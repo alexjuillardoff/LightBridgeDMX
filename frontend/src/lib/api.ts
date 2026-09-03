@@ -1,12 +1,10 @@
 // Client API du frontend : point d'entree unique pour parler au backend Fastify.
 // Regroupe tous les appels REST (projecteurs, scenes, univers DMX, QXF, HomeKit,
-// Mode Dance, lampes connectees) derriere l'objet `api`, plus le helper wsUrl()
+// lampes connectees) derriere l'objet `api`, plus le helper wsUrl()
 // qui calcule l'URL du WebSocket temps reel. Les types sont importes du package
 // partage @lightbridgedmx/shared pour rester coherents avec le backend.
 
 import {
-  DanceConfig,
-  DanceState,
   DeviceInventory,
   Fixture,
   MerossConfigInput,
@@ -221,14 +219,6 @@ export const api = {
   // Liste des pieces (rooms) connues, pour le rangement des projecteurs/lampes.
   rooms: {
     list: () => fetchJSON<string[]>("/api/rooms")
-  },
-  // Mode Dance (chenillard automatique) : etat, config, demarrage et arret.
-  dance: {
-    state: () => fetchJSON<DanceState>("/api/dance/state"),
-    updateConfig: (patch: Partial<DanceConfig>) =>
-      fetchJSON<DanceState>("/api/dance/config", { method: "PUT", body: JSON.stringify(patch) }),
-    start: () => fetchJSON<DanceState>("/api/dance/start", { method: "POST" }),
-    stop: () => fetchJSON<DanceState>("/api/dance/stop", { method: "POST" })
   },
   // Lampes connectees (smart lights, ex. Nanoleaf) : CRUD, etat bas-latence,
   // appairage/re-appairage, sonde de joignabilite, decouverte mDNS, effets,

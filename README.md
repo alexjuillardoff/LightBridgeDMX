@@ -412,7 +412,7 @@ executors *en même temps*, parce qu'on s'en sert ensemble.
   disposition d'origine de la view courante.
 - La barre du haut porte quatre **Views** rappelables par leur numéro :
   **1 Programmer** (sheet + encodeurs + les trois pools + playbacks), **2 Playback** (executors et faders
-  en grand), **3 DMX** (fader view + DMX sheet), **4 Effets** (Mode Dance).
+  en grand), **3 DMX** (fader view + DMX sheet), **4 Effets** (pool d'effets des bandeaux LED).
 - La disposition est mémorisée par navigateur : on la range une fois, on la retrouve.
 
 > Sous 1024 px de large, les fenêtres sont simplement **empilées** : on ne déplace pas des fenêtres au
@@ -492,10 +492,14 @@ La grille affiche les **512 canaux DMX** page par page, en faders verticaux :
 Les 512 canaux de l'univers en une grille compacte, en lecture seule : une case par canal, hauteur =
 niveau, liseré ambre sur les canaux patchés.
 
-##### Mode Dance
+##### Effets
 
-Strobe coordonné par pièce avec patterns spatiaux (12 patterns : chase, ping-pong, vagues, alternance,
-paires, random subset, full hit, strobe synchrone, bookend…). C'est la view **4 Effets**.
+Le pool d'effets des bandeaux LED, sur le modèle du moteur d'effets d'un grandMA2 : on choisit une
+**forme** (sinus, rampe, triangle, créneau, random), une **vitesse** en BPM, et une **phase** répartie
+sur les zones — c'est elle qui transforme la même oscillation en chenillard, en vague ou en strobe.
+Dix-huit effets prêts à jouer servent de points de départ, dont six **effets 3D** qui se distribuent
+sur la position réelle des zones dans la pièce plutôt que sur leur ordre de câblage. C'est la view
+**4 Effets**.
 
 ##### Projecteurs verrouillés
 
@@ -779,7 +783,7 @@ Deux chemins de sortie disponibles via le toggle **Streaming UDP** sur la carte 
 | Chemin | Latence perçue | Quand l'utiliser |
 |--------|----------------|------------------|
 | HTTP coalescé (par défaut) | ~80–150 ms | Sliders UI, ambiances statiques, scènes lentes |
-| UDP extControl (streaming) | ~5–15 ms | DMX-mirror, Dance mode, effets continus, music sync |
+| UDP extControl (streaming) | ~5–15 ms | DMX-mirror, effets continus, music sync |
 
 Le streaming UDP envoie ~30 frames/s via le port 60222 et entre/sort du mode `extControl` automatiquement.
 
@@ -867,7 +871,6 @@ R: canal 509   G: canal 510   B: canal 511   Dimmer: canal 512
 
 Ces canaux sont alors lus à chaque tick DMX. La conversion RGB → HSV est appliquée et poussée dans `desired`, qui est ensuite flush via HTTP coalescé (ou UDP si streaming actif). Conséquences :
 - Une scène DMX qui touche ces canaux pilote aussi le strip
-- Le Dance mode peut inclure les canaux mirror dans ses patterns
 - Les sliders du `ChannelGrid` agissent en direct sur le strip
 
 ### Effets builtin Nanoleaf
@@ -1135,12 +1138,6 @@ Un script externe, lui, peut viser le backend directement sur `ws://localhost:50
 {
   type: "log",
   data: { level: "info", message: "...", timestamp: "..." }
-}
-
-// État Dance mode (config + running + fixtures actives + pattern)
-{
-  type: "dance_state",
-  data: { config, running, activeFixtureIds, currentPattern, phasesSent }
 }
 
 // Mise à jour d'une smart light (après setState / refresh / streaming toggle / effet)

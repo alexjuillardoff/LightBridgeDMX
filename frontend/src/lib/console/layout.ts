@@ -26,7 +26,7 @@ export type WindowKind =
   | "presets"
   | "faders"
   | "dmx"
-  | "dance"
+  | "effects"
   | "log";
 
 // Une fenêtre posée sur le plan de travail.
@@ -119,7 +119,7 @@ export const DEFAULT_VIEWS: ConsoleView[] = [
   {
     id: "effets",
     name: "Effets",
-    windows: [win("dance", 0, 0, 15, 22), win("fixtures", 15, 0, 9, 11), win("executors", 15, 11, 9, 11)]
+    windows: [win("effects", 0, 0, 15, 22), win("fixtures", 15, 0, 9, 11), win("executors", 15, 11, 9, 11)]
   }
 ];
 
@@ -137,7 +137,7 @@ export const WINDOW_LABELS: Record<WindowKind, { title: string; hint: string }> 
   presets: { title: "Presets", hint: "Valeurs de canaux mémorisées" },
   faders: { title: "Fader View", hint: "Canaux DMX un par un" },
   dmx: { title: "DMX Sheet", hint: "Les 512 canaux en un coup d'œil" },
-  dance: { title: "Dance", hint: "Chenillard strobe par pièce" },
+  effects: { title: "Effets", hint: "Pool d'effets des bandeaux LED" },
   log: { title: "Command Feedback", hint: "Journal des événements" }
 };
 

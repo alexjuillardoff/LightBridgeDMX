@@ -48,7 +48,13 @@ export const Workspace = () => {
     // le rendu (`WINDOW_LABELS[kind]` indéfini) sans moyen de s'en sortir.
     return stored.map((view) => ({
       ...view,
-      windows: (view.windows ?? []).filter((w) => w?.kind in WINDOW_LABELS).map(clampWindow)
+      windows: (view.windows ?? [])
+        // La fenêtre « Dance » a été remplacée par la fenêtre Effets : on la
+        // convertit au lieu de la jeter, sinon la View « Effets » déjà
+        // enregistrée dans le navigateur se retrouverait vide.
+        .map((w) => ((w?.kind as string) === "dance" ? { ...w, kind: "effects" as WindowKind } : w))
+        .filter((w) => w?.kind in WINDOW_LABELS)
+        .map(clampWindow)
     }));
   });
   const [activeId, setActiveId] = useState<string>(() =>

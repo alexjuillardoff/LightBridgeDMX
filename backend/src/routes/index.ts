@@ -2,7 +2,6 @@
 // Regroupe tous les modules de routes (systeme, projecteurs, scenes, presets...)
 // et les branche en un seul appel depuis l'entree du serveur (index.ts).
 import type { FastifyInstance } from "fastify";
-import { registerDanceRoutes } from "./dance";
 import { registerDeviceRoutes } from "./devices";
 import { registerFixtureRoutes } from "./fixtures";
 import { registerMerossRoutes } from "./meross";
@@ -29,7 +28,6 @@ export const registerRoutes = (app: FastifyInstance, ctx: RouteContext, handleEr
   registerSceneRoutes(app, ctx, handleError);
   registerPresetRoutes(app, ctx, handleError);
   registerUniverseRoutes(app, ctx, handleError);
-  registerDanceRoutes(app, ctx, handleError);
   registerSmartLightRoutes(app, ctx, handleError);
   registerDeviceRoutes(app, ctx, handleError);
   registerThreadLightRoutes(app, ctx, handleError);

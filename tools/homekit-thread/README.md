@@ -198,7 +198,7 @@ UDP) et au DMX512.
 (`THREAD_PUSH_INTERVAL_MS`). Pour un rendu lisse, compter sur le **fondu interne de
 l'ampoule** plutôt que sur le débit.
 
-Le Mode Dance et le miroir DMX par zone ne conviennent pas à ces ampoules.
+Les effets par zone et le miroir DMX par zone ne conviennent pas à ces ampoules.
 
 ---
 

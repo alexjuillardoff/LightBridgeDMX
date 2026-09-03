@@ -1,6 +1,6 @@
 // Vue "Live" : l'écran principal du pupitre.
 //
-// Auparavant, cette vue empilait Encoders, Fixture Sheet, Fader View, Dance et
+// Auparavant, cette vue empilait Encoders, Fixture Sheet, Fader View et
 // Executors dans une seule colonne défilante, avec une barre d'ancres pour se
 // rattraper. Ce n'est pas ainsi qu'on se sert d'un pupitre : on ne fait pas
 // défiler une console, on regarde plusieurs fenêtres en même temps parce que la

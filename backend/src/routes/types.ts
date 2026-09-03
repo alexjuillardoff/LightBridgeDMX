@@ -1,14 +1,13 @@
 // Types partages par les routes (endpoints) REST Fastify.
 // Definit le "contexte" injecte dans chaque gestionnaire (handler) de route :
 // il regroupe tous les services dont une route peut avoir besoin (store,
-// DMX, pont HomeKit, mode Dance, lampes connectees) plus la fonction de
+// DMX, pont HomeKit, lampes connectees) plus la fonction de
 // diffusion (broadcast) WebSocket.
 
 import type { FastifyReply } from "fastify";
 import { WsEvent } from "@lightbridgedmx/shared";
 import { DmxService } from "../services/dmx";
 import { HomeKitBridge } from "../services/homekit";
-import { DanceService } from "../services/dance";
 import { MerossPlugService } from "../services/meross-plug";
 import { SmartLightService } from "../services/smart-lights";
 import { Store } from "../state/store";
@@ -22,7 +21,6 @@ export type RouteContext = {
   store: Store;
   dmx: DmxService;
   homekit: HomeKitBridge;
-  dance: DanceService;
   smartLights: SmartLightService;
   meross: MerossPlugService;
   broadcast: Broadcast;

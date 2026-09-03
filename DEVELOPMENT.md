@@ -47,7 +47,6 @@ LightBridgeDMX/
 │   │   │   └── store.ts               ← store SQLite/Prisma (fixtures, scenes, presets)
 │   │   ├── services/
 │   │   │   ├── dmx.ts                 ← service DMX (Art-Net, Enttec USB, simulation)
-│   │   │   ├── dance.ts               ← Dance mode (strobe coordonné par pièce, patterns spatiaux)
 │   │   │   ├── homekit.ts             ← pont HomeKit (hap-nodejs, Lightbulb + WindowCovering)
 │   │   │   ├── homekit-utils.ts       ← utilitaires (HSB↔RGB, résolution canaux RGB + moving head)
 │   │   │   ├── homekit-utils.spec.ts  ← tests Vitest
@@ -57,7 +56,7 @@ LightBridgeDMX/
 │   │   │       ├── index.ts           ← SmartLightService (registry, HTTP coalesce + UDP stream, refresh)
 │   │   │       ├── nanoleaf-client.ts ← client HTTP OpenAPI Nanoleaf (pair, setState, effects, CT)
 │   │   │       ├── nanoleaf-streamer.ts ← streamer UDP extControl v2 (port 60222, keepalive 4 Hz)
-│   │   │       ├── effect-engine.ts   ← evaluator pure pour 5 effets (static/solid/gradient/chase/wave)
+│   │   │       ├── effect-engine.ts   ← evaluator pure : 5 effets simples + moteur paramétrique "ma"
 │   │   │       └── discovery.ts       ← scan mDNS via bonjour-service (_nanoleafapi._tcp)
 │   │   └── routes/
 │   │       ├── index.ts               ← enregistrement des routes
@@ -71,7 +70,6 @@ LightBridgeDMX/
 │   │       ├── scenes.ts              ← CRUD /api/scenes + activate
 │   │       ├── presets.ts             ← CRUD /api/presets + apply
 │   │       ├── universe.ts            ← POST /api/universe/:channel, test fixture
-│   │       ├── dance.ts               ← /api/dance/state + config + start/stop
 │   │       └── smart-lights.ts        ← /api/smart-lights (CRUD, pair, state, streaming, effects, layout, discover)
 │   └── .homekit/                      ← stockage HAP (pairage, identifiants)
 ├── frontend/
@@ -125,7 +123,6 @@ LightBridgeDMX/
 │   │   │   ├── QxfLibraryPanel.tsx    ← navigateur bibliothèque QXF + import
 │   │   │   ├── HomeKitCard.tsx        ← statut HomeKit + QR code + PIN
 │   │   │   ├── MerossCard.tsx         ← config + métrologie de la prise Meross
-│   │   │   ├── DancePanel.tsx         ← config + contrôle du Dance mode
 │   │   │   ├── SmartLightsPanel.tsx   ← accepte `backendFilter` + `hideSectionTitle` (extensible)
 │   │   │   └── smart-lights/
 │   │   │       ├── backendRegistry.ts     ← registre extensible (Nanoleaf + futurs Hue/Matter)
@@ -195,8 +192,11 @@ Les volets de **Patch** sont adressables et gardés dans l'URL, donc un lien par
 
 > **Historique.** Il y avait auparavant six onglets. « Tableau de bord » ne faisait que répéter la barre
 > d'état (fps, canaux actifs, nombre de projecteurs) et renvoyait ailleurs par des liens ; « Appareils »
-> et « Lampes connectées » coupaient en deux un même geste (découvrir puis piloter) ; le Mode Dance
-> apparaissait à la fois sur le tableau de bord et dans Live. Puis la vue « Réseau » a fondu dans
+> et « Lampes connectées » coupaient en deux un même geste (découvrir puis piloter).
+> L'ancien Mode Dance, lui, apparaissait à la fois sur le tableau de bord et dans Live.
+> Il a depuis été retiré : c'était un chenillard codé en dur, remplacé par le pool d'effets
+> paramétriques de la fenêtre **Effets** (voir plus bas).
+ Puis la vue « Réseau » a fondu dans
 > « Patch » : découvrir une Nanoleaf, l'appairer et lui donner une adresse DMX est un seul geste, et
 > « de quoi est fait le plateau ? » une seule question — elle survit comme deux volets. Les anciens
 > hashs (`#dashboard`, `#projecteurs`, `#reseau`, `#lampes`, `#appareils`, `#reglages`) restent valides
@@ -223,7 +223,7 @@ executors se regardent en même temps. C'est donc un plan sur lequel on pose des
   pour ajouter une fenêtre : déclarer le type dans `layout.ts`, ajouter l'entrée ici.
 
 Types de fenêtres : `fixtures`, `encoders`, `executors`, `playbacks`, `groups`, `presets`, `faders`,
-`dmx`, `dance`, `log`.
+`dmx`, `effects`, `log`.
 
 La disposition est persistée dans `localStorage` (`lib/localStore.ts`) : elle décrit le **poste de
 travail**, pas le spectacle.
@@ -389,7 +389,6 @@ L'état est persisté dans **SQLite via Prisma**. Il est géré par `backend/src
 | `scenes` | UUID | Scènes (liste d'étapes fixture → valeurs) |
 | `presets` | UUID | Presets (mapping canal → valeur) |
 | `smart_lights` | UUID | Lampes WiFi (Nanoleaf etc.) — backend, config, mirror DMX, layout 3D, effet courant |
-| `dance_config` | singleton | Config du Dance mode (pièces, patterns, intervalles, lyre) |
 | `meross_config` | singleton | Config de la prise Meross (enabled, host, key, channel) — pilotage local LAN |
 | `universe_snapshots` | universe (int) | Dernier état persisté des 512 canaux DMX (Bytes), restauré au démarrage |
 
@@ -449,7 +448,6 @@ type WsEvent =
   | { type: "fixture_updated"; data: Fixture }
   | { type: "scene_activated"; data: { sceneId: string } }
   | { type: "log"; data: { level: "info"|"warn"|"error"; message: string; timestamp: string } }
-  | { type: "dance_state"; data: DanceState }
   | { type: "smart_light_updated"; data: SmartLight }
 
 // ─── Smart Lights ──────────────────────────────────────────────────
@@ -464,7 +462,7 @@ interface NanoleafHttpConfig {
   deviceName?: string;
 }
 
-// Mirror DMX : lier des canaux DMX à la lampe pour la piloter via scènes / Dance / sliders
+// Mirror DMX : lier des canaux DMX à la lampe pour la piloter via scènes / sliders
 interface SmartLightDmxMirror {
   universe?: number;
   rChannel?: number; gChannel?: number; bChannel?: number;
@@ -519,6 +517,20 @@ type SmartLightEffectConfig =
   | { kind: "gradient"; from: RgbColor; to: RgbColor; direction?: Point3D; scrollSpeed?: number; brightness?: 0–100 }
   | { kind: "chase"; color: RgbColor; bgColor?: RgbColor; speed: number; width: number; bounce?: boolean; brightness?: 0–100 }
   | { kind: "wave"; from: RgbColor; to: RgbColor; direction?: Point3D; wavelength: number; speed: number; brightness?: 0–100 }
+  // Moteur paramétrique façon grandMA2 : une forme d'onde + une phase répartie sur les zones.
+  | { kind: "ma";
+      form: "sin"|"cos"|"rampUp"|"rampDown"|"triangle"|"pwm"|"random";
+      target: "dimmer"|"color"|"hue";
+      speed: number;                        // BPM — 60 BPM = 1 cycle/s
+      direction?: "forward"|"backward";
+      low: 0–100; high: 0–100;              // valeurs basse et haute, comme sur le pupitre
+      phaseFrom: number; phaseTo: number;   // retard en degrés de la 1re et de la dernière zone
+      width: 1–100;                         // % du cycle en position haute (pwm / random)
+      attack?: 0–100; decay?: 0–100;        // adoucissement des fronts durs
+      matricks?: { blocks?: number; groups?: number; wings?: number };
+      spatial?: { mode: "axis"|"radial"; direction?: Point3D; origin?: Point3D };
+      color?, bgColor?, colorTo?: RgbColor; hueFrom?, hueTo?, saturation?: number;
+      seed?: number; brightness?: 0–100 }
 
 // Smart light complète
 interface SmartLight {
@@ -586,15 +598,6 @@ interface SmartLight {
 |---------|----------|-------|-------------|
 | `GET` | `/api/qxf/library` | — | Liste les fichiers QXF disponibles (télécharge si absent) |
 | `POST` | `/api/qxf/library/refresh` | — | Force le re-téléchargement depuis GitHub |
-
-### Dance mode
-
-| Méthode | Endpoint | Corps | Description |
-|---------|----------|-------|-------------|
-| `GET` | `/api/dance/state` | — | État courant (config, running, fixtures actives, pattern) |
-| `PUT` | `/api/dance/config` | `Partial<DanceConfig>` | Met à jour la config (pièces, intervalles, patterns) |
-| `POST` | `/api/dance/start` | — | Démarre la boucle Dance |
-| `POST` | `/api/dance/stop` | — | Arrête la boucle |
 
 ### Smart Lights (Nanoleaf et autres lampes WiFi)
 
@@ -672,9 +675,6 @@ Le frontend, lui, ne code jamais cette URL en dur : `wsUrl()` (`frontend/src/lib
 
 // Log
 { "type": "log", "data": { "level": "info", "message": "...", "timestamp": "..." } }
-
-// État Dance mode (config + running + fixtures actives + pattern courant)
-{ "type": "dance_state", "data": { ...DanceState } }
 
 // Mise à jour smart light (après setState / refresh / streaming toggle)
 { "type": "smart_light_updated", "data": { ...SmartLight } }
@@ -856,7 +856,7 @@ Pilote des lampes WiFi (Nanoleaf en V1, extensible) avec deux paths de sortie, m
 |---------|------|
 | `nanoleaf-client.ts` | Client HTTP OpenAPI Nanoleaf (`pair`, `getInfo`, `setState`, `setCt`, `listEffects`, `selectEffect`, `enableExtControl`). Erreurs typées via `NanoleafApiError`. |
 | `nanoleaf-streamer.ts` | Streamer UDP extControl v2 — socket `node:dgram`, frame format `[panelCount:u16BE]([panelId:u16BE][R][G][B][W][transitionMs/100:u16BE])×N`, keepalive 4 Hz. |
-| `effect-engine.ts` | Pure function `evaluateEffect(config, layout, time) → RgbFrame[]`. 5 effets : `static`, `solid`, `gradient`, `chase`, `wave`. Effets position-aware utilisent le milieu de chaque `ZoneSegment` projeté sur une direction 3D. |
+| `effect-engine.ts` | Pure function `evaluateEffect(config, layout, time) → RgbFrame[]`. 5 effets simples (`static`, `solid`, `gradient`, `chase`, `wave`) + l'effet paramétrique `ma` façon grandMA2. Les effets position-aware utilisent le milieu de chaque `ZoneSegment` projeté sur une direction 3D. |
 | `discovery.ts` | Scan mDNS via `bonjour-service` sur `_nanoleafapi._tcp`. Window configurable (~3 s par défaut). |
 | `index.ts` | `SmartLightService` — registry, tick loops, DMX mirror listener, refresh périodique, dispatch effet/streaming/HTTP. |
 
@@ -880,7 +880,7 @@ Pilote des lampes WiFi (Nanoleaf en V1, extensible) avec deux paths de sortie, m
 
 ### DMX Mirror
 
-Si `light.dmxMirror = { rChannel, gChannel, bChannel, briChannel }` est défini, le service écoute `dmx.on("tick")` et lit ces canaux dans l'univers à chaque tick. Conversion RGB → HSV → push dans `desired` (qui sera flush au prochain tick HTTP ou stream). Permet d'inclure une smart light dans les scènes, le Dance mode et les sliders du `ChannelGrid` de manière transparente.
+Si `light.dmxMirror = { rChannel, gChannel, bChannel, briChannel }` est défini, le service écoute `dmx.on("tick")` et lit ces canaux dans l'univers à chaque tick. Conversion RGB → HSV → push dans `desired` (qui sera flush au prochain tick HTTP ou stream). Permet d'inclure une smart light dans les scènes et les sliders du `ChannelGrid` de manière transparente.
 
 ### DMX Mirror par zone (strip = projecteur multi-cellules)
 
@@ -1217,6 +1217,38 @@ Le `SmartLightService` est conçu pour accueillir d'autres backends que Nanoleaf
 ### 8. EffectEngine : pure function, layout 3D requis pour position-aware
 L'`EffectEngine` est sans état — il prend `(effect, layout, timeSeconds)` et retourne `RgbColor[]`. Les effets `gradient` et `wave` projettent le **midpoint** de chaque `ZoneSegment` sur une direction 3D normalisée. Le `chase` utilise l'index linéaire de la zone (donc indépendant de la position physique). Le `static` ignore le layout (juste une palette).
 
+### 8bis. Effet `ma` : le moteur paramétrique façon grandMA2
+
+Les cinq effets d'origine sont chacun une animation figée. L'effet `ma` reprend le modèle d'un
+pupitre grandMA2, où un effet n'est pas une animation mais **une forme d'onde distribuée sur une
+sélection** :
+
+| Réglage | Rôle | Équivalent MA |
+|---------|------|---------------|
+| `form` | La forme d'onde évaluée par zone | Form (23 formes prédéfinies sur MA) |
+| `speed` | Vitesse en BPM (60 BPM = 1 cycle/s) | Speed / Rate |
+| `phaseFrom` → `phaseTo` | Retard, en degrés, réparti de la première à la dernière zone | Phase |
+| `low` / `high` | Bornes de la sortie | Low value / High value |
+| `width` | % du cycle en position haute | Width |
+| `attack` / `decay` | Adoucissement des fronts (pwm, random) | Attack / Decay |
+| `matricks` | `blocks` (zones solidaires), `groups` (répétitions), `wings` (pliage miroir) | MAtricks |
+| `target` | L'attribut piloté : intensité, fondu de couleurs, teinte | Attribut de l'effet |
+
+**C'est la phase, pas la forme, qui fait le motif.** Un créneau (`pwm`) de 12 % avec une phase
+répartie 0 → 360 est un chenillard ; le même créneau avec `phaseFrom = phaseTo` est un strobe. Cette
+économie de concepts est exactement celle du pupitre, et évite un effet codé en dur par motif.
+
+**Distribution spatiale (`spatial`).** Par défaut la phase se répartit sur le **rang** des zones —
+l'ordre de câblage du ruban. Avec `spatial`, elle se répartit sur leur **position réelle** dans la
+pièce, lue dans le layout 3D : projection sur un axe (`mode: "axis"`) ou distance à un point
+(`mode: "radial"`). Sur un bandeau en boucle fermée, c'est la différence entre « la 12ᵉ LED du
+ruban » et « la LED qui est à 1,80 m du sol » : une vague verticale allume alors ensemble les deux
+montées de coin et le plafond, quel que soit leur numéro de zone. Les zones `spare` sont exclues de
+la mesure de l'étendue (elles sont rangées loin dans le layout et écraseraient min/max).
+
+Le pool `SMART_LIGHT_EFFECT_PRESETS` (dans `shared/`) livre 18 points de départ nommés — 12 en
+distribution par rang, 6 en 3D. Il est partagé backend/frontend pour ne pas dupliquer la liste.
+
 ### 9. Lazy-loading du 3D editor
 Le `LayoutEditor3D` (React Three Fiber + drei + three) pèse ~600 KB minifié. Il est chargé en lazy via `React.lazy(() => import("./smart-lights/LayoutEditor3D"))` + `Suspense` — seul l'utilisateur qui clique sur "📐 Layout 3D" paie le coût de chargement.
 
@@ -1350,9 +1382,6 @@ pnpm -C backend test --coverage  # avec couverture
 │  ┌─ HomeKitBridge (hap-nodejs) ─────────────────────────────┐  │    │
 │  │  mirror RGB + moving heads from DMX tick ←──────────────┐│  │    │
 │  └──────────────────────────────────────────────────────────┼┼──┘   │
-│  ┌─ DanceService ──────────────────────────────────────────┐│  │   │
-│  │  scheduler → applyWrite() on grouped DMX channels       ││  │   │
-│  └──────────────────────────────────────────────────────────┘│  │   │
 │  ┌─ SmartLightService ──────────────────────────────────────┘  │   │
 │  │  DMX-mirror tick listener ← (writes desired from R/G/B chans)│   │
 │  │  flushAll() @ 33Hz → HTTP PUT /state (coalesce + rate-limit) │   │
