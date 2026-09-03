@@ -2,7 +2,7 @@
 // Donne une couleur stable a chaque projecteur (fixture), construit la liste des
 // canaux visibles d'une page de la grille (avec leur etiquette projecteur), et
 // compte les canaux actifs. Calcul pur, sans appel reseau.
-import { Fixture, UniverseState } from "@lightbridgedmx/shared";
+import { Capability, Fixture, UniverseState } from "@lightbridgedmx/shared";
 import { addAlpha } from "./math";
 
 // Couleur attribuee a un projecteur : "solid" pour le trait/point fort,
@@ -17,12 +17,15 @@ export type FixtureColor = {
 // son role : la Fader View affiche le nom une seule fois, en entete du bloc de
 // canaux du projecteur, et ne laisse dans la tranche que le role ("rouge",
 // "pan"...). "color" = couleur du projecteur pour le reperage visuel.
+// "capability" est le role brut du canal : c'est lui qui donne a la tranche sa
+// teinte de groupe d'attributs (le code couleur MA), independamment du nom.
 export type VisibleChannel = {
   channel: number;
   value: number;
   fixtureId?: string;
   fixtureName?: string;
   channelLabel?: string;
+  capability?: Capability;
   color?: FixtureColor;
 };
 
@@ -77,6 +80,7 @@ export const computeVisibleChannels = ({
           fixtureName: fixture.name,
           // On prefere le nom du canal s'il existe, sinon sa capability (r, g, pan...).
           channelLabel: ch.name ?? ch.capability,
+          capability: ch.capability,
           color: fixtureColors[fixture.id]
         };
       }

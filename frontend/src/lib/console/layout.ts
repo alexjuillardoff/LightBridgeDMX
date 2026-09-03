@@ -108,8 +108,9 @@ export const DEFAULT_VIEWS: ConsoleView[] = [
     id: "dmx",
     name: "DMX",
     windows: [
-      // La Fader View affiche 32 canaux sur deux rangées de tranches : moins de
-      // 17 rangées et la seconde est coupée.
+      // La Fader View aligne ses 32 canaux sur UNE rangée qui défile : sa
+      // hauteur ne sert qu'à la course des faders, et 17 rangées donnent des
+      // faders assez longs pour se poser au point près.
       win("faders", 0, 0, 24, 17),
       win("dmx", 0, 17, 14, 8),
       win("fixtures", 14, 17, 10, 8)

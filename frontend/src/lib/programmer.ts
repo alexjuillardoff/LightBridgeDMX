@@ -72,6 +72,37 @@ export const ATTR_COLORS: Record<AttrKey, string> = {
   beam: "var(--attr-beam)"
 };
 
+// Couleur de groupe d'attributs d'un canal, a partir de sa capability.
+// Sur un MA, on repere une tranche a sa teinte avant de lire son nom : dimmer
+// blanc, couleur magenta (rouge/vert/bleu gardent leur propre teinte), position
+// bleue, gobo vert, beam jaune. Les canaux de service (maintenance, other) et
+// les canaux libres restent gris : ils ne portent pas de lumiere.
+const CAPABILITY_COLORS: Record<Capability, string> = {
+  intensity: "var(--attr-dimmer)",
+  strobe: "var(--attr-dimmer)",
+  r: "#e05a5a",
+  g: "#5ac878",
+  b: "#5a95e0",
+  w: "var(--attr-dimmer)",
+  uv: "#8f6ae0",
+  colorTemp: "var(--attr-color)",
+  color: "var(--attr-color)",
+  pan: "var(--attr-position)",
+  tilt: "var(--attr-position)",
+  gobo: "var(--attr-gobo)",
+  prism: "var(--attr-gobo)",
+  beam: "var(--attr-beam)",
+  focus: "var(--attr-beam)",
+  effect: "var(--attr-beam)",
+  speed: "var(--attr-beam)",
+  maintenance: "var(--edge-grey)",
+  other: "var(--edge-grey)"
+};
+
+// Teinte d'un canal DMX ; gris neutre si le canal n'appartient a aucun projecteur.
+export const capabilityColor = (capability?: Capability): string =>
+  capability ? CAPABILITY_COLORS[capability] : "var(--edge-grey)";
+
 // Capability (role du canal cote schema partage) correspondant a chaque attribut.
 const ATTR_CAPABILITY: Record<AttrKey, Capability> = {
   dimmer: "intensity",

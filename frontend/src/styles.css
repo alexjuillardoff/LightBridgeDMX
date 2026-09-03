@@ -1084,77 +1084,159 @@ select {
 
 /* ─── 7. Faders, encodeurs, grille de canaux ────────────────────────────── */
 
+/* --- Fader View : les tranches de canaux DMX --- */
+
+/* La vue prend toute la hauteur de sa fenetre. Sur un pupitre un fader n'a pas
+   de taille fixe : agrandir la fenetre allonge la course, et c'est la course
+   qui fait la precision du geste. Le min-height couvre le cas mobile, ou la
+   fenetre est empilee et n'a pas de hauteur definie a offrir. */
 .channel-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  height: 100%;
+  min-height: 330px;
 }
 
+/* Barre d'outils : une ligne de pupitre (lecture a gauche, commandes a droite),
+   pas un formulaire empile. */
 .channel-toolbar {
   display: flex;
-  align-items: flex-end;
+  flex: none;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-  padding-bottom: 6px;
+  padding-bottom: 5px;
   border-bottom: 1px solid var(--line-soft);
 }
 
-/* Selecteur "aller au projecteur" de la Fader View : plus large que les champs
-   numeriques voisins, car il affiche nom + plage de canaux. */
+/* Boite de lecture de la plage affichee, dans le style des readouts de la
+   barre d'etat : mono ambre sur noir, cernee. */
+.channel-range {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 7px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--amber-text);
+  background: #000;
+  border: 1px solid var(--edge);
+}
+
+.channel-range-sep {
+  color: var(--faint);
+}
+
+.channel-range-total {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.channel-tools {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Selecteur "aller au projecteur" : plus large que ses voisins, il affiche
+   nom + plage de canaux. */
 .channel-jump {
-  min-width: 220px;
+  width: auto;
+  min-width: 210px;
+  padding: 3px 22px 3px 6px;
+  font-size: 11px;
+  background-position: calc(100% - 12px) 9px, calc(100% - 8px) 9px;
+}
+
+.channel-goto {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.channel-goto input {
+  width: 56px;
+  padding: 3px 4px;
+  font-size: 12px;
+  text-align: center;
 }
 
 .channel-nav {
   display: flex;
-  gap: 3px;
+  gap: 2px;
 }
 
-/* La page de canaux est une suite de blocs : un bloc = les canaux consecutifs
-   d'un meme projecteur, coiffes de son nom. Ecrit une seule fois au-dessus de
-   ses tranches, le nom reste lisible la ou il ne tenait pas dans une tranche
-   de 54 px. */
+.channel-nav button {
+  min-width: 30px;
+  padding: 3px 7px;
+  font-size: 11px;
+  color: var(--amber-text);
+  border-color: var(--edge);
+}
+
+/* La page de canaux est UNE rangee de tranches qui defile horizontalement : un
+   MA ne replie pas ses faders sur deux lignes, il les fait defiler. Les blocs
+   s'etirent sur toute la hauteur disponible. */
 .channels {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+  gap: 5px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  overflow-y: hidden;
+  padding-bottom: 3px;
 }
 
+/* Un bloc = les canaux consecutifs d'un meme projecteur, coiffes de son nom.
+   Ecrit une seule fois au-dessus de ses tranches, le nom reste lisible la ou il
+   ne tenait pas dans une tranche de 54 px. */
 .channel-group {
   display: flex;
+  flex: none;
   flex-direction: column;
   gap: 3px;
-  max-width: 100%;
   padding: 3px;
   background: var(--panel);
   border: 1px solid var(--line-soft);
-  border-top: 2px solid var(--edge-grey);
 }
 
+/* Bandeau du bloc : c'est le seul endroit ou la couleur du projecteur sert
+   encore, les faders etant teintes par groupe d'attributs. */
 .channel-group-head {
   display: flex;
+  flex: none;
   align-items: baseline;
   justify-content: space-between;
   gap: 6px;
-  padding: 0 2px 2px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 1px 3px 2px;
+  background: var(--panel-2);
+  border-bottom: 2px solid var(--fixture, var(--edge-grey));
 }
 
 /* Le nom du projecteur est ce qu'on cherche en premier dans cette vue : il
-   passe donc avant le reste en taille et en graisse, et prend la couleur du
-   projecteur. Ellipse + title si le bloc est trop etroit (projecteur a 1 canal). */
+   passe avant le reste en graisse et prend sa couleur. Ellipse + title si le
+   bloc est trop etroit (projecteur a 1 canal). */
 .channel-group-name {
   overflow: hidden;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--faint);
+  color: var(--fixture, var(--faint));
 }
 
 .channel-group-range {
@@ -1166,14 +1248,20 @@ select {
 
 .channel-group-strips {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1;
+  min-height: 0;
   gap: 2px;
 }
 
+/* Une tranche, de haut en bas : numero + niveau en %, le fader, la boite de
+   valeur 0-255, le role du canal. C'est l'ordre d'un pupitre, ou le nom se lit
+   SOUS le fader. `--attr` porte la teinte du groupe d'attributs du canal et
+   irrigue le reste de la tranche. */
 .channel-column {
+  --attr: var(--edge-grey);
   display: flex;
+  flex: none;
   flex-direction: column;
-  align-items: stretch;
   gap: 3px;
   width: 54px;
   padding: 3px;
@@ -1181,56 +1269,100 @@ select {
   border: 1px solid var(--line-soft);
 }
 
+/* Un canal en l'air ressort, un canal a zero s'efface : c'est la lecture
+   d'ensemble d'un pupitre, on voit ce qui est allume sans lire les chiffres. */
+.channel-column-live {
+  border-color: var(--edge-grey);
+}
+
 .channel-head {
   display: flex;
-  align-items: center;
+  flex: none;
+  align-items: baseline;
   justify-content: space-between;
   gap: 3px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--faint);
+  font-size: 10px;
 }
 
 .channel-index {
-  color: var(--dim);
+  color: var(--faint);
 }
 
 .channel-pct {
-  color: var(--yellow);
+  font-size: 13px;
   font-weight: 700;
+  color: var(--faint);
 }
 
-/* Etiquette de la tranche : seulement le role du canal ("rouge", "pan"...),
-   le nom du projecteur etant porte par le bandeau du bloc. */
+.channel-column-live .channel-pct {
+  color: var(--yellow);
+}
+
+/* Le fader mange toute la place restante de la tranche. */
+.channel-column .ma-fader {
+  flex: 1;
+  height: auto;
+  min-height: 70px;
+}
+
+/* Barre teintee par groupe d'attributs. Le degrade est pose PAR-DESSUS la
+   couleur plutot que calcule a partir d'elle : `--attr` peut valoir une
+   var() de theme, qu'on ne saurait pas assombrir en CSS pur. */
+.channel-column .ma-fader-fill {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.3) 0%, rgba(0, 0, 0, 0.55) 100%), var(--attr);
+}
+
+/* Boite de valeur : la saisie directe en 0-255. Sans les fleches du champ
+   nombre — un pupitre n'en a pas, on tape la valeur. */
+.channel-number {
+  flex: none;
+  padding: 2px;
+  font-size: 12px;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.channel-number::-webkit-outer-spin-button,
+.channel-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Bandeau bas : seulement le role du canal ("rouge", "pan"...), le nom du
+   projecteur etant porte par le bandeau du bloc. Il porte la teinte du groupe
+   d'attributs : on repere un pan au milieu de seize canaux sans rien lire. */
 .channel-note {
-  height: 25px;
+  flex: none;
+  height: 24px;
   padding: 1px 3px;
   overflow: hidden;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  line-height: 1.15;
+  line-height: 1.2;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
   overflow-wrap: anywhere;
-  color: var(--dim);
-  background: #000;
-  border: 1px solid var(--line-soft);
+  color: var(--attr);
+  background: #0d0d0d;
+  border-top: 2px solid var(--attr);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
-.channel-number {
-  text-align: center;
-  padding: 2px;
-  font-size: 12px;
-}
+/* --- Le fader lui-meme --- */
 
-/* Fader vertical maison (rendu identique sur tous les navigateurs). */
+/* Fader vertical maison (rendu identique sur tous les navigateurs) : cuve noire
+   encastree, graduations aux dixiemes sur les deux bords, barre qui monte
+   depuis le bas et poignee grise a gorge centrale. */
 .ma-fader {
   position: relative;
   height: 140px;
   background: #000;
   border: 1px solid var(--edge-grey);
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.9), inset -1px -1px 0 rgba(255, 255, 255, 0.05);
   overflow: hidden;
   cursor: ns-resize;
   touch-action: none;
@@ -1242,43 +1374,64 @@ select {
   outline-offset: 1px;
 }
 
-/* Graduations tous les 25 %. */
+/* Graduations : encoches tous les 10 % sur les deux bords (6 px de long), plus
+   un trait plein a mi-course. Comme la serigraphie d'une joue de fader. */
 .ma-fader::before {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: repeating-linear-gradient(
-    to top,
-    transparent 0,
-    transparent calc(25% - 1px),
-    rgba(255, 255, 255, 0.08) calc(25% - 1px),
-    rgba(255, 255, 255, 0.08) 25%
-  );
+  background-image: linear-gradient(
+      to top,
+      transparent calc(50% - 1px),
+      rgba(255, 255, 255, 0.1) calc(50% - 1px) 50%,
+      transparent 50%
+    ),
+    repeating-linear-gradient(to top, rgba(255, 255, 255, 0.2) 0 1px, transparent 1px 10%),
+    repeating-linear-gradient(to top, rgba(255, 255, 255, 0.2) 0 1px, transparent 1px 10%);
+  background-size: 100% 100%, 6px 100%, 6px 100%;
+  background-position: left bottom, left bottom, right bottom;
+  background-repeat: no-repeat;
   pointer-events: none;
 }
 
+/* L'arete haute de la barre est la ligne qu'on lit du coin de l'oeil : elle est
+   soulignee de clair pour trancher sur le noir de la cuve. */
 .ma-fader-fill {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   background: linear-gradient(180deg, #ffd970 0%, #b8860b 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
   pointer-events: none;
 }
 
-/* Poignée claire, comme la prise d'un fader motorisé. */
+/* Poignee : la prise d'un fader motorise, gorge sombre au milieu. Elle deborde
+   d'un pixel de chaque cote (la cuve est en overflow: hidden) pour venir
+   mordre les joues, comme une vraie prise. */
 .ma-fader-knob {
   position: absolute;
-  left: 0;
-  right: 0;
-  height: 8px;
-  margin-bottom: -4px;
-  background: linear-gradient(180deg, #f0f0f0 0%, #909090 45%, #5a5a5a 55%, #d0d0d0 100%);
-  border: 1px solid #000;
+  left: -1px;
+  right: -1px;
+  height: 12px;
+  margin-bottom: -6px;
+  background: linear-gradient(
+    180deg,
+    #5e5e5e 0%,
+    #f4f4f4 20%,
+    #cccccc 46%,
+    #141414 50%,
+    #cccccc 54%,
+    #949494 80%,
+    #3c3c3c 100%
+  );
+  border-top: 1px solid #000;
+  border-bottom: 1px solid #000;
   pointer-events: none;
 }
 
-/* Variante horizontale (barre d'encodeurs). */
+/* Variante horizontale (barre d'encodeurs) : pas de graduations ni de poignee,
+   le bord de la barre suffit a lire la valeur. */
 .ma-fader-h {
   position: relative;
   height: 18px;
@@ -1293,6 +1446,7 @@ select {
 .ma-fader-h .ma-fader-fill {
   top: 0;
   right: auto;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.6);
 }
 
 /* --- Bandeau d'encodeurs --- */
@@ -2061,12 +2215,6 @@ select {
 
 /* --- Divers contenus de fenêtre --- */
 
-.channel-range {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--amber-text);
-}
-
 .monitor-wrap {
   display: flex;
   flex-direction: column;
@@ -2463,17 +2611,18 @@ select {
     flex-direction: column;
   }
 
-  /* Exception : la barre d'outils de la Fader View. Empilee en colonne, ses
-     trois champs occupaient la moitie de l'ecran avant le premier fader. */
-  .channel-toolbar .input-inline {
-    display: grid;
-    flex-direction: unset;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px;
+  /* Barre d'outils de la Fader View : sur un telephone, la ligne unique ne
+     tient pas. On la replie en deux rangees plutot qu'en colonne, sinon les
+     champs mangent la moitie de l'ecran avant le premier fader. */
+  .channel-tools {
+    flex: 1;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
-  .channel-toolbar .input-inline > label:first-child {
-    grid-column: 1 / -1;
+  .channel-jump {
+    flex: 1;
+    min-width: 150px;
   }
 
   .kv > div {
