@@ -49,6 +49,12 @@ type RuntimeEntry = {
   /** Horodatage de la derniere ecriture locale — le refresh depuis l'appareil
    *  ne se declenche que si l'on est reste calme (quiescent) depuis ce moment. */
   lastLocalWriteAt: number;
+  /** Chien de garde (watchdog) du streaming : un seul controle en vol a la fois. */
+  streamCheckInflight: boolean;
+  /** Horodatage avant lequel le watchdog ne retente pas (backoff exponentiel). */
+  streamRetryAt: number;
+  /** Echecs consecutifs de (re)activation du streaming — pilote le backoff. */
+  streamFailures: number;
   /** Si true, le Mode Dance possede cet appareil — streamAll() ignore currentEffect et
    *  desired.on pour que la dance puisse peindre les zones par-dessus l'etat ambiant configure.
    *  Defini via setDanceClaim() ; n'est PAS persiste en base. */
@@ -61,6 +67,13 @@ const FLUSH_INTERVAL_MS = 30;        // tick de regroupement (coalesce) ~33 Hz (
 const STREAM_INTERVAL_MS = 33;       // cadence des trames de streaming ~30 Hz (chemin UDP)
 const REFRESH_INTERVAL_MS = 5000;    // refresh periodique depuis l'appareil
 const REFRESH_QUIESCENT_MS = 2000;   // ne pas refresh si l'utilisateur a ecrit dans cette fenetre
+const STREAM_WATCHDOG_INTERVAL_MS = 10000; // tick du chien de garde (watchdog) du streaming UDP
+const STREAM_RETRY_BASE_MS = 2000;   // premier delai de backoff apres un echec de (re)activation
+const STREAM_RETRY_MAX_MS = 60000;   // plafond du backoff — un appareil hors ligne n'est pas martele
+
+/** Nom que Nanoleaf renvoie dans effects/select quand l'appareil est en mode extControl.
+ *  C'est le seul temoin fiable, cote appareil, que le flux UDP est reellement pris en compte. */
+const EXT_CONTROL_EFFECT = "*ExtControl*";
 
 /**
  * Gere un registre de "smart lights" (Nanoleaf aujourd'hui, d'autres backends
@@ -82,6 +95,7 @@ export class SmartLightService extends EventEmitter {
   private flushTimer: NodeJS.Timeout | null = null;
   private streamTimer: NodeJS.Timeout | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
+  private streamWatchdogTimer: NodeJS.Timeout | null = null;
   private readonly store: Store;
   private readonly dmx: DmxService;
   private readonly tickHandler: (state: UniverseState) => void;
@@ -104,7 +118,12 @@ export class SmartLightService extends EventEmitter {
     this.flushTimer = setInterval(() => this.flushAll(), FLUSH_INTERVAL_MS);
     this.streamTimer = setInterval(() => this.streamAll(), STREAM_INTERVAL_MS);
     this.refreshTimer = setInterval(() => this.refreshAllIfQuiescent(), REFRESH_INTERVAL_MS);
+    this.streamWatchdogTimer = setInterval(() => this.watchStreamingAll(), STREAM_WATCHDOG_INTERVAL_MS);
     this.logger.info({ count: lights.length }, "SmartLightService started");
+
+    // Premiere passe du watchdog : rattrape les lampes dont enable() a echoue
+    // pendant registerInternal (appareil encore en train de booter, par exemple).
+    this.watchStreamingAll();
 
     // Synchro initiale "au mieux" depuis chaque appareil pour que l'UI affiche un etat reel.
     for (const entry of this.runtime.values()) {
@@ -118,7 +137,8 @@ export class SmartLightService extends EventEmitter {
     if (this.flushTimer) clearInterval(this.flushTimer);
     if (this.streamTimer) clearInterval(this.streamTimer);
     if (this.refreshTimer) clearInterval(this.refreshTimer);
-    this.flushTimer = this.streamTimer = this.refreshTimer = null;
+    if (this.streamWatchdogTimer) clearInterval(this.streamWatchdogTimer);
+    this.flushTimer = this.streamTimer = this.refreshTimer = this.streamWatchdogTimer = null;
     this.dmx.off("tick", this.tickHandler);
     for (const entry of this.runtime.values()) {
       if (entry.streamer) await entry.streamer.disable().catch(() => {});
@@ -218,6 +238,15 @@ export class SmartLightService extends EventEmitter {
     if (!entry?.client) return undefined;
     entry.lastLocalWriteAt = Date.now();
     if (entry.streamer?.isEnabled()) await entry.streamer.disable();
+    // Choisir un effet natif est une sortie EXPLICITE du streaming : on persiste le
+    // drapeau a false. Sans ca, le chien de garde (watchdog) rallumerait l'extControl
+    // dans les 10 s et ecraserait l'effet qu'on vient tout juste de selectionner.
+    if (entry.light.streaming?.enabled) {
+      const off = await this.store.updateSmartLight(id, {
+        streaming: { enabled: false, zoneCount: entry.light.streaming?.zoneCount }
+      });
+      entry.light = off;
+    }
     await entry.client.selectEffect(effectName);
     entry.desired = { ...entry.desired, colorMode: "effect", currentEffect: effectName };
     this.emit("light_updated", { ...entry.light, state: entry.desired });
@@ -386,6 +415,11 @@ export class SmartLightService extends EventEmitter {
       lastPushAt: existing?.lastPushAt ?? 0,
       inflight: false,
       lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0,
+      streamCheckInflight: false,
+      // On repart d'un backoff neuf a chaque (re)enregistrement : un changement de
+      // config est justement l'occasion de retenter tout de suite.
+      streamRetryAt: 0,
+      streamFailures: 0,
       danceClaim: existing?.danceClaim ?? false
     });
   }
@@ -412,6 +446,81 @@ export class SmartLightService extends EventEmitter {
       entry.zonePalette = null;
     }
     return true;
+  }
+
+  /** Chien de garde (watchdog) du streaming UDP : passe en revue toutes les lampes
+   *  dont l'utilisateur a demande le streaming et remet celles qui ont decroche. */
+  private watchStreamingAll(): void {
+    for (const entry of this.runtime.values()) void this.ensureStreaming(entry);
+  }
+
+  /**
+   * Garantit qu'une lampe marquee `streaming.enabled = true` est REELLEMENT en
+   * extControl sur l'appareil.
+   *
+   * Le drapeau persiste exprime une intention durable ("cette lampe doit rester en
+   * UDP"), mais trois evenements la font sortir du mode sans que le service le voie :
+   *   1. enable() a echoue au demarrage (appareil en train de booter, ou hors ligne) ;
+   *   2. l'appareil a redemarre (coupure secteur) et a perdu son etat extControl ;
+   *   3. une ecriture HTTP externe (app Nanoleaf, Maison/HomeKit, scene) l'a coupe —
+   *      cote Nanoleaf, tout PUT /state ou PUT /effects termine l'extControl.
+   *
+   * Dans les cas 2 et 3, `streamer.isEnabled()` renvoie toujours true : ce drapeau est
+   * purement local, et on continuerait a arroser l'appareil en UDP dans le vide. On
+   * interroge donc l'etat REEL via getInfo() — hors extControl, effects/select ne
+   * renvoie plus "*ExtControl*" — et on relance le mode le cas echeant.
+   */
+  private async ensureStreaming(entry: RuntimeEntry): Promise<void> {
+    const light = entry.light;
+    if (light.streaming?.enabled !== true) return;
+    if (light.config.type !== "nanoleaf-http" || !light.config.token || !entry.client) return;
+    // Un seul controle a la fois, et on respecte le backoff en cours.
+    if (entry.streamCheckInflight || Date.now() < entry.streamRetryAt) return;
+
+    entry.streamCheckInflight = true;
+    try {
+      const zc = light.streaming?.zoneCount ?? 50;
+      if (!entry.streamer) {
+        entry.streamer = new NanoleafStreamer({
+          host: light.config.host,
+          port: 60222,
+          zoneCount: zc,
+          client: entry.client,
+          logger: this.logger
+        });
+      }
+      if (!entry.streamer.isEnabled()) {
+        // Cas 1 : le streamer n'a jamais demarre (echec au register, ou appareil absent).
+        await entry.streamer.enable();
+        this.logger.info({ id: light.id }, "Streaming UDP active par le watchdog");
+      } else {
+        // Cas 2 et 3 : le streamer se croit actif — on verifie aupres de l'appareil.
+        const info = await entry.client.getInfo();
+        if (info.state.currentEffect !== EXT_CONTROL_EFFECT) {
+          this.logger.warn(
+            { id: light.id, effect: info.state.currentEffect },
+            "Appareil sorti de l'extControl — reactivation du streaming UDP"
+          );
+          // disable() remet le drapeau local a false pour que enable() reouvre bien
+          // le socket et relance le keepalive (enable() sort tot s'il se croit deja actif).
+          await entry.streamer.disable().catch(() => {});
+          await entry.streamer.enable();
+        }
+      }
+      entry.streamFailures = 0;
+      entry.streamRetryAt = 0;
+    } catch (err) {
+      // Backoff exponentiel borne : inutile de marteler un appareil injoignable.
+      entry.streamFailures += 1;
+      const delay = Math.min(STREAM_RETRY_MAX_MS, STREAM_RETRY_BASE_MS * 2 ** (entry.streamFailures - 1));
+      entry.streamRetryAt = Date.now() + delay;
+      this.logger.warn(
+        { err, id: light.id, failures: entry.streamFailures, retryInMs: delay },
+        "Echec de (re)activation du streaming UDP"
+      );
+    } finally {
+      entry.streamCheckInflight = false;
+    }
   }
 
   // Lit l'etat reel de l'appareil et le recopie dans desired/lastPushed. En cas
