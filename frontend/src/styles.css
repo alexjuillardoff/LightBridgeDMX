@@ -2463,6 +2463,19 @@ select {
     flex-direction: column;
   }
 
+  /* Exception : la barre d'outils de la Fader View. Empilee en colonne, ses
+     trois champs occupaient la moitie de l'ecran avant le premier fader. */
+  .channel-toolbar .input-inline {
+    display: grid;
+    flex-direction: unset;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .channel-toolbar .input-inline > label:first-child {
+    grid-column: 1 / -1;
+  }
+
   .kv > div {
     grid-template-columns: 1fr;
     gap: 2px;
@@ -2737,5 +2750,66 @@ input[type="range"]:focus-visible {
 @media (max-width: 640px) {
   .dev-row {
     flex-wrap: wrap;
+  }
+}
+
+/* ─── 11. Ergonomie tactile ─────────────────────────────────────────────── */
+
+/* La densité d'un pupitre est faite pour une souris : des touches de 22 px se
+   visent au pixel près, et c'est ce qu'on veut sur un écran de console. Au doigt,
+   la même densité devient inutilisable — et surtout dangereuse là où le bouton
+   déclenche quelque chose (le Go d'un playback faisait 20 x 25 px).
+   
+   On cible `pointer: coarse` plutôt qu'une largeur : c'est le pointeur qui
+   décide, pas la taille de l'écran. Une tablette large reste tactile, une
+   fenêtre de navigateur étroite sur un ordinateur garde la densité fine. */
+@media (pointer: coarse) {
+  /* Hauteur minimale commune à tout ce qui se touche. 36 px est le compromis
+     retenu : en dessous on rate la cible, au-dessus le pupitre perd trop de
+     lignes à l'écran. */
+  button,
+  select,
+  /* `:not(...)` plutôt que `[type="text"]` : un <input> sans attribut `type`
+     est un champ texte, mais le sélecteur par attribut ne l'attrape pas. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+  .pill,
+  .workspace-view,
+  .ma-viewbtn,
+  .ma-grouptab,
+  .button-small,
+  .btn-primary,
+  .btn-danger,
+  .ma-cmd-input {
+    min-height: 36px;
+  }
+
+  /* Boutons carrés (icône seule) : il leur faut aussi de la largeur. */
+  .pool-actions button,
+  .playback-keys button,
+  .ma-cmd-go,
+  .ma-win-close {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* Cases à cocher : 13 px de côté par défaut, impossible à viser. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    /* `flex: none` est indispensable : dans un label en flex, la case se fait
+       comprimer sous sa largeur déclarée et retombe à 13 px. */
+    flex: none;
+    width: 24px;
+    height: 24px;
+  }
+
+  /* Saisie directe d'une valeur DMX sous chaque fader. */
+  .channel-number {
+    min-height: 34px;
+  }
+
+  /* Les tuiles des pools deviennent la cible principale : on les agrandit un
+     peu pour que le bandeau Go reste confortable sous le pouce. */
+  .pool-tile {
+    min-height: 96px;
   }
 }

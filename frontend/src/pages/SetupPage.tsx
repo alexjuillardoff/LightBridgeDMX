@@ -28,7 +28,7 @@ export const SetupPage = () => {
   return (
     <>
       <div className="section-title">
-        <h2>Réglages</h2>
+        <h2>Setup</h2>
         <span className="muted">HomeKit, prise Meross, système et maintenance</span>
       </div>
       <div className="grid">

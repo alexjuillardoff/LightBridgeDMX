@@ -260,9 +260,11 @@ export const MerossCard = () => {
           />
         </label>
         <label style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          {/* Pas de largeur en style inline : la feuille gère déjà les cases à
+              cocher (et les agrandit sur écran tactile). Un style inline gagne
+              sur toute règle CSS et bloquait cet agrandissement. */}
           <input
             type="checkbox"
-            style={{ width: "auto" }}
             checked={enabled}
             onChange={(e) => {
               touch();
