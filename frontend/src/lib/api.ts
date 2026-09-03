@@ -10,6 +10,7 @@ import {
   Fixture,
   MerossConfigInput,
   MerossStatus,
+  MerossConsumption,
   NanoleafDiscovered,
   QxfLibraryFixture,
   Scene,
@@ -128,7 +129,10 @@ export const api = {
     test: () =>
       fetchJSON<{ reachable: boolean; on: boolean | null; error: string | null }>("/api/meross/test", {
         method: "POST"
-      })
+      }),
+    // Historique de consommation journaliere (Wh/jour) lu dans la prise.
+    // null si la prise est inactive ou depourvue de metrologie.
+    consumption: () => fetchJSON<MerossConsumption | null>("/api/meross/consumption")
   },
   // Operations systeme : redemarrage complet de LightBridgeDMX (backend + frontend + QLC+).
   system: {

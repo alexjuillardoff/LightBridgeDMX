@@ -52,6 +52,11 @@ const MEROSS_TRIGGER_FIXTURES = (process.env.MEROSS_TRIGGER_FIXTURES ?? "Stairvi
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+// Periode de lecture de la mesure electrique instantanee (prises avec metrologie).
+const MEROSS_ELECTRICITY_POLL_MS = process.env.MEROSS_ELECTRICITY_POLL_MS
+  ? parseInt(process.env.MEROSS_ELECTRICITY_POLL_MS, 10)
+  : 15000;
+
 // Amorce de config (utilisee seulement si la base ne contient pas encore de ligne).
 const MEROSS_SEED = {
   enabled: Boolean(MEROSS_PLUG_HOST && MEROSS_PLUG_KEY),
@@ -91,7 +96,8 @@ const meross = new MerossPlugService(app.log, dmx, store, {
   triggerFixtureNames: MEROSS_TRIGGER_FIXTURES,
   reassertMs: Number.isNaN(MEROSS_PLUG_REASSERT_MS) ? 30000 : MEROSS_PLUG_REASSERT_MS,
   offTimeoutMs: Number.isNaN(MEROSS_OFF_TIMEOUT_MS) ? 5 * 60 * 1000 : MEROSS_OFF_TIMEOUT_MS,
-  requestTimeoutMs: 4000
+  requestTimeoutMs: 4000,
+  electricityPollMs: Number.isNaN(MEROSS_ELECTRICITY_POLL_MS) ? 15000 : MEROSS_ELECTRICITY_POLL_MS
 });
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });
 // SmartLightService est cree AVANT DanceService pour pouvoir lui etre injecte : Dance s'en

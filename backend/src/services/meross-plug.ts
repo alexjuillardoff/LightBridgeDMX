@@ -20,7 +20,15 @@
 import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
-import { Fixture, MerossConfig, MerossStatus, UniverseState } from "@lightbridgedmx/shared";
+import {
+  Fixture,
+  MerossConfig,
+  MerossConsumption,
+  MerossConsumptionDay,
+  MerossElectricity,
+  MerossStatus,
+  UniverseState
+} from "@lightbridgedmx/shared";
 import { DmxService } from "./dmx";
 import { Store } from "../state/store";
 
@@ -36,6 +44,8 @@ export type MerossServiceOptions = {
   offTimeoutMs: number;
   // Timeout d'une requete HTTP vers la prise (millisecondes).
   requestTimeoutMs: number;
+  // Periode d'interrogation de la mesure electrique instantanee (millisecondes).
+  electricityPollMs: number;
 };
 
 // Un canal DMX surveille : son univers et son index 0-based dans le tableau de 512.
@@ -53,6 +63,15 @@ const DEFAULT_OFF_CONDITIONS: Array<{ fixture: string; channels: string[] }> = [
 
 // Apres un echec reseau, on attend ce delai avant de retenter (anti-martelage).
 const RETRY_BACKOFF_MS = 2000;
+
+// L'historique journalier ne bouge qu'a l'echelle de la journee : on ne redemande
+// pas le releve a la prise plus souvent que ca (l'UI peut poller librement).
+const CONSUMPTION_CACHE_MS = 60_000;
+
+// Date locale au format "YYYY-MM-DD", pour reperer la ligne du jour en cours dans
+// l'historique renvoye par la prise (qui utilise sa propre horloge locale).
+const localDate = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 // Client bas niveau du protocole local Meross. Signe et envoie les messages
 // JSON vers http://<host>/config. Voir la doc communautaire du protocole local
@@ -116,6 +135,36 @@ class MerossLocalClient {
     });
   }
 
+  // Lit la mesure electrique instantanee (Appliance.Control.Electricity).
+  // Unites brutes de la prise : puissance en mW, tension en 0.1 V, courant en mA.
+  // Renvoie undefined si le modele ne fait pas de metrologie (pas de payload).
+  async getElectricity(): Promise<MerossElectricity | undefined> {
+    const res = await this.request("Appliance.Control.Electricity", "GET", {
+      electricity: { channel: this.channel }
+    });
+    const e = res?.payload?.electricity;
+    if (!e || typeof e.power !== "number") return undefined;
+    return {
+      power: e.power / 1000,
+      voltage: typeof e.voltage === "number" ? e.voltage / 10 : 0,
+      current: typeof e.current === "number" ? e.current / 1000 : 0,
+      sampledAt: new Date().toISOString()
+    };
+  }
+
+  // Lit l'historique de consommation journaliere (Appliance.Control.ConsumptionX),
+  // en Wh par jour sur ~30 jours glissants. La prise renvoie les jours dans un
+  // ordre arbitraire : on trie par date croissante.
+  async getConsumption(): Promise<MerossConsumptionDay[] | undefined> {
+    const res = await this.request("Appliance.Control.ConsumptionX", "GET", {});
+    const rows = res?.payload?.consumptionx;
+    if (!Array.isArray(rows)) return undefined;
+    return rows
+      .filter((r: { date?: unknown; value?: unknown }) => typeof r?.date === "string" && typeof r?.value === "number")
+      .map((r: { date: string; value: number }) => ({ date: r.date, wh: r.value }))
+      .sort((a: MerossConsumptionDay, b: MerossConsumptionDay) => a.date.localeCompare(b.date));
+  }
+
   // Lit l'etat courant : renvoie true/false, ou undefined si on n'a pas su
   // interpreter la reponse (modeles/firmwares variables -> on reste tolerant).
   async getOn(): Promise<boolean | undefined> {
@@ -162,6 +211,14 @@ export class MerossPlugService extends EventEmitter {
   private nextAttemptAt = 0;
   private inflight = false;
 
+  // Metrologie : derniere mesure instantanee connue + boucle d'interrogation, et
+  // historique journalier mis en cache (voir CONSUMPTION_CACHE_MS).
+  private electricity: MerossElectricity | null = null;
+  private electricityTimer: NodeJS.Timeout | null = null;
+  private consumption: MerossConsumption | null = null;
+  private consumptionFetchedAt = 0;
+  private started = false;
+
   private tickHandler?: (state: UniverseState) => void;
 
   constructor(logger: FastifyBaseLogger, dmx: DmxService, store: Store, options: MerossServiceOptions) {
@@ -194,6 +251,10 @@ export class MerossPlugService extends EventEmitter {
     this.lastAssertAt = 0;
     this.nextAttemptAt = 0;
     this.zeroSince = null;
+    // La metrologie decrit la prise precedente : on repart de zero.
+    this.electricity = null;
+    this.consumption = null;
+    this.consumptionFetchedAt = 0;
   }
 
   // Demarre le service : charge la config (seed depuis l'env au 1er lancement),
@@ -209,18 +270,22 @@ export class MerossPlugService extends EventEmitter {
 
     this.tickHandler = (state) => this.onTick(state);
     this.dmx.on("tick", this.tickHandler);
+    this.started = true;
+    this.restartElectricityPolling();
     this.logger.info(
       { active: this.isActive(), host: this.config.host, watchedChannels: this.watched.length },
       this.isActive() ? "Meross plug control started" : "Meross plug control idle (not configured/disabled)"
     );
   }
 
-  // Arrete le service : se desabonne du tick DMX.
+  // Arrete le service : se desabonne du tick DMX et coupe la boucle de mesure.
   async stop(): Promise<void> {
     if (this.tickHandler) {
       this.dmx.off("tick", this.tickHandler);
       this.tickHandler = undefined;
     }
+    this.started = false;
+    this.restartElectricityPolling();
   }
 
   // Applique une nouvelle config a chaud (deja persistee par l'appelant) : reconstruit
@@ -229,6 +294,7 @@ export class MerossPlugService extends EventEmitter {
     this.config = config;
     this.applyConfig();
     if (this.client) await this.queryState();
+    this.restartElectricityPolling();
     this.logger.info({ active: this.isActive(), host: this.config.host }, "Meross plug reconfigured");
     return this.getStatus();
   }
@@ -266,8 +332,60 @@ export class MerossPlugService extends EventEmitter {
       offWatchedChannelCount: this.offWatched.length,
       offTimeoutMs: this.options.offTimeoutMs,
       offCountdownMs: this.computeOffCountdownMs(),
+      electricity: this.electricity,
       lastError: this.lastError
     };
+  }
+
+  // (Re)demarre la boucle d'interrogation de la mesure instantanee. Ne tourne que
+  // si le service est demarre ET la prise pilotable ; sinon elle est simplement
+  // coupee (appelee aussi depuis stop() et reconfigure()).
+  private restartElectricityPolling(): void {
+    if (this.electricityTimer) {
+      clearInterval(this.electricityTimer);
+      this.electricityTimer = null;
+    }
+    if (!this.started || !this.client) return;
+    this.electricityTimer = setInterval(() => void this.pollElectricity(), this.options.electricityPollMs);
+    // Ne doit pas maintenir le process en vie a lui tout seul.
+    this.electricityTimer.unref?.();
+    void this.pollElectricity();
+  }
+
+  // Releve la mesure instantanee. Purement additif : un echec efface la mesure
+  // (l'UI n'affiche pas une valeur perimee) mais ne touche ni a reachable ni a
+  // lastError, qui restent le reflet des commandes on/off.
+  private async pollElectricity(): Promise<void> {
+    if (!this.client || this.inflight) return;
+    try {
+      this.electricity = (await this.client.getElectricity()) ?? null;
+    } catch {
+      this.electricity = null;
+    }
+  }
+
+  // Historique de consommation journaliere, mis en cache cote service. En cas
+  // d'echec on renvoie le dernier releve connu (ou null si on n'en a jamais eu).
+  async getConsumption(): Promise<MerossConsumption | null> {
+    if (!this.client) return null;
+    const now = Date.now();
+    if (this.consumption && now - this.consumptionFetchedAt < CONSUMPTION_CACHE_MS) return this.consumption;
+    try {
+      const days = await this.client.getConsumption();
+      if (!days) return this.consumption;
+      const today = localDate(new Date());
+      this.consumption = {
+        days,
+        todayWh: days.find((d) => d.date === today)?.wh ?? null,
+        totalWh: days.reduce((sum, d) => sum + d.wh, 0),
+        sampledAt: new Date().toISOString()
+      };
+      this.consumptionFetchedAt = now;
+      return this.consumption;
+    } catch (err) {
+      this.logger.warn({ err }, "Failed to read Meross consumption history");
+      return this.consumption;
+    }
   }
 
   // ms restantes avant l'extinction auto, ou null si la condition n'est pas remplie

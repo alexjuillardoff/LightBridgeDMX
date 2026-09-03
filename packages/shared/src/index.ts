@@ -239,6 +239,38 @@ export const MerossConfigInputSchema = MerossConfigSchema.omit({ updatedAt: true
 
 export type MerossConfigInput = z.infer<typeof MerossConfigInputSchema>;
 
+// Mesure electrique instantanee remontee par la prise. Seuls les modeles avec
+// metrologie la fournissent (MSS310 / MSS315...) ; sur un Plug Mini elle est absente.
+// Le backend convertit les unites brutes Meross (mW, 0.1 V, mA) en unites SI.
+export const MerossElectricitySchema = z.object({
+  power: z.number(),    // puissance instantanee, en watts
+  voltage: z.number(),  // tension du secteur, en volts
+  current: z.number(),  // intensite, en amperes
+  sampledAt: z.string() // horodatage ISO de la mesure
+});
+
+export type MerossElectricity = z.infer<typeof MerossElectricitySchema>;
+
+// Consommation d'une journee (energie cumulee sur ce jour), telle que comptabilisee
+// par la prise elle-meme. Le compteur du jour en cours est partiel.
+export const MerossConsumptionDaySchema = z.object({
+  date: z.string(), // "YYYY-MM-DD" (fuseau de la prise)
+  wh: z.number()    // energie consommee ce jour-la, en Wh
+});
+
+export type MerossConsumptionDay = z.infer<typeof MerossConsumptionDaySchema>;
+
+// Historique de consommation journaliere (~30 jours glissants), trie du plus
+// ancien au plus recent.
+export const MerossConsumptionSchema = z.object({
+  days: z.array(MerossConsumptionDaySchema),
+  todayWh: z.number().nullable(),   // energie du jour en cours (null si absente du releve)
+  totalWh: z.number(),              // somme de l'historique renvoye
+  sampledAt: z.string()             // horodatage ISO du releve
+});
+
+export type MerossConsumption = z.infer<typeof MerossConsumptionSchema>;
+
 // Etat de la prise renvoye par l'API (lecture seule, pour l'UI Reglages).
 export const MerossStatusSchema = z.object({
   enabled: z.boolean(),                 // drapeau de config (interrupteur logiciel)
@@ -254,6 +286,9 @@ export const MerossStatusSchema = z.object({
   offWatchedChannelCount: z.number().int(),
   offTimeoutMs: z.number().int(),
   offCountdownMs: z.number().nullable(), // ms restantes avant extinction auto (null = condition non remplie / prise deja eteinte)
+  // Derniere mesure electrique connue (null si le modele n'a pas de metrologie,
+  // si la prise est injoignable ou si aucun releve n'a encore abouti).
+  electricity: MerossElectricitySchema.nullable(),
   lastError: z.string().nullable()      // dernier message d'erreur reseau, le cas echeant
 });
 
