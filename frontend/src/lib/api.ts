@@ -7,10 +7,11 @@
 import {
   DanceConfig,
   DanceState,
+  DeviceInventory,
   Fixture,
   MerossConfigInput,
-  MerossStatus,
   MerossConsumption,
+  MerossStatus,
   NanoleafDiscovered,
   QxfLibraryFixture,
   Scene,
@@ -120,6 +121,17 @@ export const api = {
   // Etat du pont HomeKit (lecture seule).
   homekit: {
     status: () => fetchJSON<HomeKitStatus>("/api/homekit")
+  },
+  // Inventaire unifie des appareils (DMX, lampes, prises, ponts, Matter).
+  devices: {
+    // Reponse immediate : sert le dernier scan mDNS en cache cote backend.
+    list: () => fetchJSON<DeviceInventory>("/api/devices"),
+    // Relance un scan reseau (quelques secondes) puis renvoie l'inventaire a jour.
+    scan: (body?: { timeoutMs?: number }) =>
+      fetchJSON<DeviceInventory>("/api/devices/scan", {
+        method: "POST",
+        body: JSON.stringify(body ?? {})
+      })
   },
   // Prise connectee Meross (pilotage local LAN) : statut, mise a jour de config, test.
   meross: {

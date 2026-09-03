@@ -836,6 +836,51 @@ export const NanoleafDiscoveredSchema = z.object({
 });
 export type NanoleafDiscovered = z.infer<typeof NanoleafDiscoveredSchema>;
 
+// ─── Inventaire unifie des appareils ────────────────────────────────────────
+// Vue transverse a tous les backends (DMX, Nanoleaf, Meross, HomeKit, Matter) :
+// un meme type d'entree decrit aussi bien un projecteur DMX pilote qu'une
+// ampoule Thread qu'on ne sait PAS piloter. C'est volontaire : l'ecran
+// "Appareils" doit expliquer les absences autant qu'il liste les presences.
+
+/** Famille d'appareil, utilisee pour regrouper les entrees a l'affichage. */
+export const DeviceCategorySchema = z.enum(["dmx", "smart-light", "plug", "bridge", "unknown"]);
+export type DeviceCategory = z.infer<typeof DeviceCategorySchema>;
+
+/** Une ligne de l'inventaire. Volontairement plate et deja formatee pour l'UI :
+ *  l'agregation vit cote backend, le frontend ne fait qu'afficher. */
+export const DeviceInventoryEntrySchema = z.object({
+  /** Cle stable : id de l'entite quand elle existe, sinon "<source>:<hote|nom>". */
+  id: z.string(),
+  name: z.string(),
+  category: DeviceCategorySchema,
+  /** Chemin de controle en clair : "Art-Net -> QLC+ -> DMX512", "Nanoleaf HTTP + UDP"... */
+  transport: z.string(),
+  /** true = LightBridge sait piloter cet appareil aujourd'hui. */
+  controllable: z.boolean(),
+  /** Pourquoi il ne l'est pas. Toujours renseigne quand controllable = false. */
+  reason: z.string().optional(),
+  /** Adresse lisible : IP, ou plage de canaux DMX. */
+  address: z.string().optional(),
+  /** Detail court : mode de sortie, nombre de zones, etat de la prise... */
+  detail: z.string().optional(),
+  /** null = joignabilite inconnue (jamais testee, ou protocole sans retour). */
+  reachable: z.boolean().nullable(),
+  room: z.string().optional(),
+  /** Action proposee par l'UI sur cette ligne. */
+  action: z.enum(["pair"]).optional(),
+  /** Hote a passer a l'action (appairage Nanoleaf). */
+  actionHost: z.string().optional()
+});
+export type DeviceInventoryEntry = z.infer<typeof DeviceInventoryEntrySchema>;
+
+/** Reponse de GET /api/devices : l'inventaire + la fraicheur du scan reseau. */
+export const DeviceInventorySchema = z.object({
+  devices: z.array(DeviceInventoryEntrySchema),
+  /** Date ISO du dernier scan mDNS, ou null si aucun n'a encore tourne. */
+  scannedAt: z.string().nullable()
+});
+export type DeviceInventory = z.infer<typeof DeviceInventorySchema>;
+
 // Entree pour lancer l'appairage (pairing) d'une lampe : hote + port a contacter.
 export const SmartLightPairInputSchema = z.object({
   host: z.string().min(1),

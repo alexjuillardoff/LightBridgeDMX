@@ -2,10 +2,10 @@
 // Source unique de verite pour la barre du haut et la navigation mobile :
 // liste des onglets, libelles, icones et ancres de hash URL (#dashboard, ...).
 // Sert aussi a valider l'onglet courant lu depuis le hash de l'URL.
-import { LayoutDashboard, Lightbulb, Settings, Sliders, Sparkles, LucideIcon } from "lucide-react";
+import { Boxes, LayoutDashboard, Lightbulb, Settings, Sliders, Sparkles, LucideIcon } from "lucide-react";
 
-// Identifiants stables des 5 onglets. Servent de cle interne (pas de libelle affiche).
-export type TabId = "dashboard" | "projecteurs" | "lampes" | "live" | "reglages";
+// Identifiants stables des 6 onglets. Servent de cle interne (pas de libelle affiche).
+export type TabId = "dashboard" | "projecteurs" | "lampes" | "appareils" | "live" | "reglages";
 
 // Forme d'un onglet : son id, son libelle long et court (mobile), son ancre de hash et son icone.
 export type TabDef = {
@@ -21,6 +21,7 @@ export const TABS: TabDef[] = [
   { id: "dashboard", label: "Tableau de bord", shortLabel: "Vue", hash: "#dashboard", icon: LayoutDashboard },
   { id: "projecteurs", label: "Projecteurs", shortLabel: "Fixtures", hash: "#projecteurs", icon: Sliders },
   { id: "lampes", label: "Lampes connectées", shortLabel: "Lampes", hash: "#lampes", icon: Lightbulb },
+  { id: "appareils", label: "Appareils", shortLabel: "Appareils", hash: "#appareils", icon: Boxes },
   { id: "live", label: "Live", shortLabel: "Live", hash: "#live", icon: Sparkles },
   { id: "reglages", label: "Réglages", shortLabel: "Réglages", hash: "#reglages", icon: Settings }
 ];
