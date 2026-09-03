@@ -1252,6 +1252,32 @@ Le strip refuse `POST /api/v1/new` (HTTP 403) tant qu'il n'est pas en mode pairi
 
 Pour absorber le timing serré, le UI peut polling l'endpoint `/api/smart-lights/pair` toutes les 500 ms pendant 30 s. La route convertit le 403 Nanoleaf en HTTP 409 avec message clair.
 
+### Nanoleaf extControl — l'alimentation n'est PAS dans la trame
+
+Une trame extControl ne transporte **que des couleurs** : aucune notion d'allumé/éteint.
+Et comme `flushAll()` saute les lampes en streaming, le `on` n'atteint l'appareil **ni en
+UDP ni en HTTP**. Un strip dont l'interrupteur maître est resté à `false` reçoit donc nos
+trames sans rien afficher — on peint sur un panneau hors tension.
+
+Le piège est qu'il n'y a **aucun symptôme logiciel** : extControl est actif, les trames
+partent, `desired.on` peut afficher `true`, et l'API `/api/smart-lights` ne montre rien
+d'anormal. Seul un `GET /api/v1/<token>/` sur l'appareil révèle `state.on.value = false`.
+
+**Règle : en streaming, l'appareil reste sous tension en permanence**, et l'extinction
+s'exprime par des trames noires — la logique d'un pupitre, où un projecteur reste alimenté
+et l'intensité 0 veut dire noir. Implémenté à deux endroits :
+
+- `setStreaming(enabled: true)` → `PUT /state {on:true}` **avant** `enableExtControl()` ;
+  une fois en extControl, plus aucune trame ne peut rallumer l'appareil.
+- `ensureStreaming()` (watchdog, 10 s) → si `info.state.on === false`, remise sous tension
+  puis réactivation de l'extControl (le `PUT` y met fin, la réactivation fait partie de la
+  même opération).
+
+> Ne **pas** conditionner cette mise sous tension à `desired.on`. Sur un strip piloté par
+> miroir de zones, le DMX possède le bandeau et passe avant la garde `desired.on` : ce
+> drapeau ne reflète alors pas ce qu'on envoie réellement, et le watchdog laisse le panneau
+> éteint alors qu'on lui pousse des zones. C'est l'erreur commise au premier essai.
+
 ### Nanoleaf extControl — frames continues obligatoires
 Une fois `extControlVersion=v2` activé, le device sort de extControl après ~250 ms sans frame UDP. Le `NanoleafStreamer` retransmet la dernière frame toutes les 250 ms via un keepalive — sinon le strip retourne à l'effet builtin précédent.
 

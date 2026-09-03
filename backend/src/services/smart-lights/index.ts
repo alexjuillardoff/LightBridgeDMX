@@ -338,6 +338,9 @@ export class SmartLightService extends EventEmitter {
       } else {
         entry.streamer.setZoneCount(zc);
       }
+      // Sous tension AVANT d'entrer en extControl : une fois dedans, plus aucune
+      // trame ne peut rallumer l'appareil, et il resterait noir sans qu'on le voie.
+      await entry.client.setState({ on: true }).catch(() => {});
       await entry.streamer.enable();
     } else {
       if (entry.streamer) await entry.streamer.disable();
@@ -563,11 +566,41 @@ export class SmartLightService extends EventEmitter {
       } else {
         // Cas 2 et 3 : le streamer se croit actif — on verifie aupres de l'appareil.
         const info = await entry.client.getInfo();
-        if (info.state.currentEffect !== EXT_CONTROL_EFFECT) {
+
+        // Une trame extControl ne transporte QUE des couleurs : elle n'a aucune
+        // notion d'allume/eteint. Et comme flushAll() saute les lampes en
+        // streaming, le `on` n'est jamais pousse en HTTP. Un appareil dont
+        // l'interrupteur maitre est reste a false recoit donc nos trames sans
+        // rien afficher — on peint sur un panneau hors tension, et rien dans
+        // l'etat local ne le laisse deviner.
+        //
+        // En streaming, l'appareil reste sous tension EN PERMANENCE, et
+        // l'extinction s'exprime par des trames noires. C'est la logique d'un
+        // pupitre : un projecteur reste alimente, intensite 0 veut dire noir.
+        //
+        // Conditionner la mise sous tension a `desired.on` etait faux : sur un
+        // strip pilote par miroir de zones, ce drapeau ne reflete pas ce qu'on
+        // envoie reellement (le DMX possede le bandeau et passe AVANT la garde
+        // desired.on). On se retrouvait a peindre des zones sur un panneau hors
+        // tension, sans rien pour le signaler.
+        const needsPower = info.state.on === false;
+        if (needsPower) {
           this.logger.warn(
-            { id: light.id, effect: info.state.currentEffect },
-            "Appareil sorti de l'extControl — reactivation du streaming UDP"
+            { id: light.id },
+            "Appareil en extControl mais hors tension — remise sous tension"
           );
+          // Ce PUT met fin a l'extControl : la reactivation juste apres n'est pas
+          // optionnelle, elle fait partie de la meme operation.
+          await entry.client.setState({ on: true });
+        }
+
+        if (needsPower || info.state.currentEffect !== EXT_CONTROL_EFFECT) {
+          if (!needsPower) {
+            this.logger.warn(
+              { id: light.id, effect: info.state.currentEffect },
+              "Appareil sorti de l'extControl — reactivation du streaming UDP"
+            );
+          }
           // disable() remet le drapeau local a false pour que enable() reouvre bien
           // le socket et relance le keepalive (enable() sort tot s'il se croit deja actif).
           await entry.streamer.disable().catch(() => {});
