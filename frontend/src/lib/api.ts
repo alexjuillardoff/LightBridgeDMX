@@ -52,6 +52,9 @@ export type HomeKitStatus = {
   setupUri: string | null;
   storagePath: string;
   fixtures: HomeKitFixtureStatus[];
+  /** Lampes connectees exposees : un seul accessoire chacune, avec teinte et
+   *  saturation natives — a la difference des projecteurs, exposes canal par canal. */
+  smartLights?: { id: string; name: string; backend: string }[];
   message?: string;
 };
 

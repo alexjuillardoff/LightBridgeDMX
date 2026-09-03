@@ -2,11 +2,15 @@
 // Deux familles d'appareils sont gerees :
 //  - les projecteurs "a canaux" (intensite + RGBW) -> 1 accessoire HomeKit par canal, chacun en Service.Lightbulb ;
 //  - les lyres (moving heads) -> 1 accessoire par canal (dimmer, shutter, pan, tilt, roue de couleurs, gobo).
+//  - les lampes connectees (smart lights) -> 1 SEUL accessoire par lampe, en Service.Lightbulb
+//    complet (allumage, intensite, teinte, saturation). Contrairement aux projecteurs DMX,
+//    ces lampes raisonnent nativement en TSL : les exposer canal par canal imposerait un
+//    aller-retour TSL -> RGB -> TSL, lossy et absurde pour un appareil qui est deja une ampoule.
 // Le pont est bidirectionnel : une commande HomeKit ecrit dans le DMX, et chaque tick DMX
 // est reflete (mirror) vers HomeKit pour garder l'app Maison synchronisee.
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { Fixture, UniverseState } from "@lightbridgedmx/shared";
+import { Fixture, SmartLight, SmartLightStateInput, UniverseState } from "@lightbridgedmx/shared";
 import { FastifyBaseLogger } from "fastify";
 import {
   Accessory,
@@ -90,11 +94,35 @@ export type HomeKitStatus = {
   setupUri: string | null;
   storagePath: string;
   fixtures: HomeKitFixtureStatus[];
+  /** Lampes connectees exposees, en un accessoire chacune (pas un par canal). */
+  smartLights: HomeKitSmartLightStatus[];
   message?: string;
+};
+
+/** Une lampe connectee telle qu'exposee dans l'app Maison. */
+export type HomeKitSmartLightStatus = {
+  id: string;
+  name: string;
+  backend: string;
 };
 
 // Pont HomeKit : cree et publie un Bridge hap-nodejs, lui attache un accessoire
 // par canal de chaque projecteur, et maintient la synchro DMX <-> HomeKit.
+/** Accessoire HomeKit d'une lampe connectee. */
+type ManagedSmartLight = {
+  accessory: Accessory;
+  service: Service;
+  id: string;
+};
+
+/** Ce que le pont attend du SmartLightService. Type structurel plutot qu'import de
+ *  la classe : le pont n'a besoin que de lire l'etat, d'ecrire, et d'etre notifie. */
+type SmartLightHost = {
+  listWithState(): SmartLight[];
+  applyState(id: string, patch: SmartLightStateInput): SmartLight | undefined;
+  on(event: "light_updated", listener: (light: SmartLight) => void): unknown;
+};
+
 export class HomeKitBridge {
   private readonly logger: FastifyBaseLogger;
   private readonly dmx: DmxService;
@@ -104,6 +132,10 @@ export class HomeKitBridge {
   // Projecteurs et lyres actuellement exposes, indexes par id de projecteur (fixture).
   private channelFixtures = new Map<string, ManagedChannelFixture>();
   private movingHeads = new Map<string, ManagedMovingHead>();
+  // Lampes connectees exposees, indexees par id de lampe.
+  private smartLights = new Map<string, ManagedSmartLight>();
+  // Service des lampes connectees, injecte apres construction (voir attachSmartLights).
+  private smartHost: SmartLightHost | null = null;
   // Derniere liste de projecteurs recue, conservee pour re-synchroniser sans la redemander.
   private cachedFixtures: Fixture[] = [];
   // Reference de l'ecouteur "tick" DMX, gardee pour pouvoir le retirer a l'arret.
@@ -237,7 +269,11 @@ export class HomeKitBridge {
       setupId: this.options.setupId,
       setupUri,
       storagePath: this.options.storagePath,
-      fixtures
+      fixtures,
+      smartLights: [...this.smartLights.values()].map((m) => {
+        const light = this.smartHost?.listWithState().find((l) => l.id === m.id);
+        return { id: m.id, name: light?.name ?? m.id, backend: light?.backend ?? "?" };
+      })
     };
 
     // Pont desactive : on renvoie un statut neutre avec un message explicatif pour l'UI.
@@ -247,6 +283,7 @@ export class HomeKitBridge {
         started: false,
         setupUri: null,
         fixtures: [],
+        smartLights: [],
         message: "HomeKit disabled (set HOMEKIT_ENABLED=true)"
       };
     }
@@ -266,6 +303,99 @@ export class HomeKitBridge {
     if (!this.options.enabled) return;
     this.mirrorChannelFixtures(universeState);
     this.mirrorMovingHeads(universeState);
+  }
+
+  // ─── Lampes connectees (un seul accessoire par lampe) ─────────────────────
+
+  /** Branche le service des lampes connectees. Injecte apres construction pour ne
+   *  pas coupler les deux services dans leurs constructeurs : le pont est cree avant
+   *  le SmartLightService dans l'amorcage du serveur. */
+  attachSmartLights(host: SmartLightHost): void {
+    this.smartHost = host;
+    // Une lampe peut changer d'etat sans passer par HomeKit (miroir DMX, onglet
+    // Lampes, application tierce). On repercute alors la valeur vers l'app Maison,
+    // sinon elle afficherait un etat perime jusqu'au prochain appel manuel.
+    host.on("light_updated", (light: SmartLight) => this.pushSmartLightState(light));
+  }
+
+  /** Reconcilie les accessoires de lampes connectees avec la liste fournie. */
+  syncSmartLights(lights: SmartLight[]): void {
+    if (!this.options.enabled || !this.bridge) return;
+
+    const seen = new Set<string>();
+    for (const light of lights) {
+      seen.add(light.id);
+      const existing = this.smartLights.get(light.id);
+      if (existing) {
+        this.pushSmartLightState(light);
+        continue;
+      }
+      const managed = this.buildSmartLightAccessory(light);
+      this.smartLights.set(light.id, managed);
+      this.bridge.addBridgedAccessory(managed.accessory);
+      this.logger.info({ id: light.id, name: light.name }, "Lampe connectee exposee dans HomeKit");
+    }
+
+    // Lampe supprimee cote LightBridge : on retire l'accessoire correspondant.
+    for (const [id, managed] of [...this.smartLights.entries()]) {
+      if (seen.has(id)) continue;
+      this.bridge.removeBridgedAccessory(managed.accessory);
+      this.smartLights.delete(id);
+    }
+  }
+
+  /** Cree l'accessoire d'une lampe : un unique Service.Lightbulb portant les quatre
+   *  caracteristiques natives. Les valeurs transitent en TSL de bout en bout. */
+  private buildSmartLightAccessory(light: SmartLight): ManagedSmartLight {
+    const acc = new Accessory(light.name, uuid.generate(`lightbridgedmx:smartlight:${light.id}`));
+    acc
+      .getService(Service.AccessoryInformation)
+      ?.setCharacteristic(Characteristic.Manufacturer, "LightBridgeDMX")
+      .setCharacteristic(Characteristic.Model, light.config.type)
+      .setCharacteristic(Characteristic.SerialNumber, light.id);
+
+    const svc = acc.addService(Service.Lightbulb);
+    const managed: ManagedSmartLight = { accessory: acc, service: svc, id: light.id };
+
+    // Etat courant lu a la demande : la source de verite reste le SmartLightService,
+    // on ne duplique pas l'etat ici.
+    const current = () => this.smartHost?.listWithState().find((l) => l.id === light.id)?.state;
+    const write = (patch: SmartLightStateInput) => {
+      this.smartHost?.applyState(light.id, patch);
+    };
+
+    svc
+      .getCharacteristic(Characteristic.On)
+      .onGet(() => current()?.on ?? false)
+      .onSet((v: CharacteristicValue) => write({ on: Boolean(v) }));
+
+    svc
+      .addCharacteristic(Characteristic.Brightness)
+      .onGet(() => Math.round(current()?.brightness ?? 0))
+      .onSet((v: CharacteristicValue) => write({ brightness: Number(v) }));
+
+    svc
+      .addCharacteristic(Characteristic.Hue)
+      .onGet(() => Math.round(current()?.hue ?? 0))
+      .onSet((v: CharacteristicValue) => write({ hue: Number(v) }));
+
+    svc
+      .addCharacteristic(Characteristic.Saturation)
+      .onGet(() => Math.round(current()?.sat ?? 0))
+      .onSet((v: CharacteristicValue) => write({ sat: Number(v) }));
+
+    return managed;
+  }
+
+  /** Repercute l'etat d'une lampe vers HomeKit (sens LightBridge -> app Maison). */
+  private pushSmartLightState(light: SmartLight): void {
+    const managed = this.smartLights.get(light.id);
+    const state = light.state;
+    if (!managed || !state) return;
+    managed.service.updateCharacteristic(Characteristic.On, state.on);
+    managed.service.updateCharacteristic(Characteristic.Brightness, Math.round(state.brightness));
+    managed.service.updateCharacteristic(Characteristic.Hue, Math.round(state.hue));
+    managed.service.updateCharacteristic(Characteristic.Saturation, Math.round(state.sat));
   }
 
   // ─── Projecteurs a canaux (un accessoire HomeKit par canal) ───────────────

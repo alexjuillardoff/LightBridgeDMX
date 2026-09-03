@@ -105,6 +105,9 @@ const websocket = createWebsocketManager({ logger: app.log, store, dmx });
 // (layouts) quand il construit les groupes du chenillard (chase).
 const smartLights = new SmartLightService(app.log, dmx, store);
 const dance = new DanceService(app.log, dmx, store, smartLights);
+// Le pont HomeKit expose aussi les lampes connectees, en un seul accessoire chacune.
+// Injection apres coup : le pont est construit avant le SmartLightService.
+homekit.attachSmartLights(smartLights);
 const handleError = createErrorHandler(app.log);
 
 registerRoutes(
@@ -213,6 +216,9 @@ const start = async () => {
     // (layouts) via smartLights.listWithState() pour l'auto-amorcage (auto-seed) et la
     // construction des groupes lateraux du chenillard.
     await smartLights.start();
+    // Les accessoires de lampes ne peuvent etre crees qu'une fois le service demarre
+    // (c'est lui qui porte l'etat) et le pont publie.
+    homekit.syncSmartLights(smartLights.listWithState());
     await dance.init();
     await app.listen({ port: PORT, host: "0.0.0.0" });
 
