@@ -50,7 +50,7 @@ Tu as des projecteurs DMX (PAR LED, lyres, dimmers…) que tu veux contrôler de
 - Importer des définitions de projecteurs depuis la bibliothèque QLC+ (plus de 3000 modèles)
 - **Piloter une Nanoleaf Lightstrip Essentials (NL72K3) en temps réel** : sliders couleur, painter par zone, effets dynamiques (chase / wave / gradient), édition 3D de la disposition physique
 - **Mixer mondes DMX et WiFi dans une même scène** : un projecteur Stairville DMX et un strip Nanoleaf prennent la même couleur grâce au mirror DMX bidirectionnel
-- **Allumer/éteindre une prise Meross automatiquement** : la prise se met sous tension dès qu'un projecteur surveillé change en DMX, et se coupe après un blackout complet prolongé (5 min) — configurable dans l'onglet Réglages
+- **Allumer/éteindre une prise Meross automatiquement** : la prise se met sous tension dès qu'un projecteur surveillé change en DMX, et se coupe après un blackout complet prolongé (5 min) — configurable dans la vue Setup
 
 ---
 
@@ -132,32 +132,42 @@ LightBridgeDMX/
 ### Frontend (`frontend/`)
 
 Le tableau de bord React reprend l'apparence d'un **pupitre grandMA2** (fond noir, liserés ambre, barres
-de titre bleues, ligne de commande turquoise) et s'organise en **5 vues responsive** avec routing par hash URL :
+de titre bleues, ligne de commande turquoise) et s'organise en **4 vues responsive** avec routing par hash URL :
 
 | Onglet | Hash | Contenu |
 |--------|------|---------|
-| Tableau de bord | `#dashboard` | Statut universe, fixtures, scènes, HomeKit, Dance, quick actions, log |
-| Projecteurs | `#projecteurs` | Ajout / import QXF / liste des fixtures DMX |
-| Lampes connectées | `#lampes` | Nanoleaf et futurs backends (Hue, Matter…) avec filtre par marque |
-| Live | `#live` | Encodeurs, Fixture Sheet, fader view 512 canaux, Mode Dance, Executors |
-| Réglages | `#reglages` | QR code HomeKit, prise Meross (config + état), infos système, redémarrage |
+| Live | `#live` | Le pupitre : plan de travail de fenêtres déplaçables (sheet, encodeurs, pools, playbacks) |
+| Patch | `#patch` | Liste des projecteurs patchés, ajout manuel, import QXF |
+| Réseau | `#reseau` | Inventaire du LAN + pilotage des lampes connectées (Nanoleaf, futurs Hue/Matter) |
+| Setup | `#setup` | QR code HomeKit, prise Meross (config + état), infos système, redémarrage |
+
+Les anciens liens (`#dashboard`, `#projecteurs`, `#lampes`, `#appareils`, `#reglages`) restent valides et
+redirigent vers la vue correspondante — un signet ou un raccourci d'écran d'accueil continue de marcher.
 
 Sur desktop/tablet : barre de vues numérotées en haut. Sur mobile (<640px) : navigation basse.
 En permanence : la **barre d'état** en haut (sortie DMX, canaux actifs, sélection, horloge, Blackout) et la
 **ligne de commande** en bas ; au-delà de 1280 px de large s'ajoute le **rail de touches** à droite
-(Fixture, Thru, At, pavé numérique, Please, B.O.).
+(Fixture, Group, Thru, At, pavé numérique, Store/Go/Off, Please, B.O.).
 
 | Fichier | Rôle |
 |---------|------|
-| `src/App.tsx` | Wrap `AppDataProvider` + `AppShell` |
+| `src/App.tsx` | Empile les providers : AppData → Selection → Console → Command → AppShell |
 | `src/shell/AppShell.tsx` | Châssis : StatusBar + TabBar + vue active + KeypadRail + CommandLine + BottomNav |
 | `src/shell/TabBar.tsx` / `BottomNav.tsx` | Navigation desktop / mobile |
-| `src/shell/useHashTab.ts` | Routing par hash URL (sans react-router) |
+| `src/shell/KeypadRail.tsx` | Rail de touches (≥1280px) : désignation, syntaxe, pavé, Store/Go/Off, Please |
+| `src/shell/useHashTab.ts` | Routing par hash URL (sans react-router), traduit les anciens hashs |
 | `src/contexts/AppDataContext.tsx` | État partagé : queries, mutations, WS handlers |
-| `src/contexts/UniverseStateContext.tsx` | Universe DMX isolé pour absorber les ticks 30 Hz |
-| `src/pages/*.tsx` | 5 pages (DashboardPage, FixturesPage, SmartLightsPage, LivePage, SettingsPage) |
+| `src/contexts/SelectionContext.tsx` | Le *programmer* — sélection, refus des projecteurs verrouillés |
+| `src/contexts/ConsoleContext.tsx` | Pools : groupes, executors, playbacks, presets (STORE / GO / OFF) |
+| `src/contexts/UniverseStateContext.tsx` | Universe DMX isolé pour absorber les ticks 30 Hz (+ ref stable sans abonnement) |
+| `src/pages/*.tsx` | 4 pages (LivePage, PatchPage, NetworkPage, SetupPage) |
+| `src/components/console/Workspace.tsx` | Gestionnaire de fenêtres de la vue Live + Views rappelables |
+| `src/components/console/ConsoleWindow.tsx` | Cadre de fenêtre déplaçable / redimensionnable |
+| `src/lib/console/layout.ts` | Modèle de disposition (grille 24 colonnes) + Views d'origine |
+| `src/lib/console/scenes.ts` | Capture (STORE) et rappel à niveau (master d'intensité) |
+| `src/lib/fixtureGuard.ts` | Projecteurs verrouillés (chambre) — garde-fou structurel |
 | `src/hooks/useDmxWebsocket.ts` | WebSocket + log history rolling 10 |
-| `src/components/ChannelGrid.tsx` | Grille des 512 canaux (8 → 6 → 4 colonnes selon viewport) |
+| `src/components/ChannelGrid.tsx` | Grille des 512 canaux (16 → 12 → 8 → 4 colonnes selon viewport) |
 | `src/components/QxfLibraryPanel.tsx` | Navigateur de la bibliothèque de projecteurs |
 | `src/components/HomeKitCard.tsx` | Statut HomeKit avec QR code de couplage |
 | `src/components/MerossCard.tsx` | Config (IP, device key, canal) + état de la prise Meross |
@@ -342,17 +352,18 @@ L'accès est **restreint au réseau local** : le proxy ne répond qu'aux apparei
 ### Vue d'ensemble de l'interface
 
 L'interface imite un pupitre lumière **grandMA2** : fond noir, fenêtres cernées d'ambre avec barre de titre
-bleue, valeurs en jaune, ligne de commande turquoise en bas d'écran. Elle est organisée en **5 vues**
+bleue, valeurs en jaune, ligne de commande turquoise en bas d'écran. Elle est organisée en **4 vues**
 accessibles via la barre de navigation (barre de vues sur desktop/tablet, navigation basse sur mobile
 <640px). Chaque vue a une URL dédiée pour le bookmarking et le partage de lien :
 
 | Onglet | URL | Contenu |
 |--------|-----|---------|
-| **Tableau de bord** | `/#dashboard` | Statut univers, fixtures, scènes, HomeKit, Dance + actions rapides + log |
-| **Projecteurs** | `/#projecteurs` | Création manuelle, import QXF, liste des projecteurs DMX |
-| **Lampes connectées** | `/#lampes` | Pairing et contrôle des Nanoleaf (et futurs Hue/Matter) |
-| **Live** | `/#live` | Encodeurs, Fixture Sheet, fader view 512 canaux, Mode Dance, Executors |
-| **Réglages** | `/#reglages` | QR code HomeKit, PIN, infos système |
+| **Live** | `/#live` | Le pupitre : fenêtres déplaçables — Fixture Sheet, encodeurs, groupes, presets, executors, playbacks |
+| **Patch** | `/#patch` | Liste des projecteurs patchés, création manuelle, import QXF |
+| **Réseau** | `/#reseau` | Inventaire du LAN + pairing et contrôle des Nanoleaf (et futurs Hue/Matter) |
+| **Setup** | `/#setup` | QR code HomeKit, PIN, prise Meross, infos système, redémarrage |
+
+L'application s'ouvre sur **Live**.
 
 #### La ligne de commande
 
@@ -367,29 +378,144 @@ puis **Entrée** (ou la touche **Please** du rail de droite). Les valeurs sont e
 | `at 50` · `full` · `out` | règle le dimmer de la sélection courante |
 | `red 100` · `pan 51d` | règle un attribut de la sélection |
 | `ch 12 thru 20 at 75` | écrit directement des canaux de l'univers |
-| `all` · `clear` | sélectionne tout / vide la sélection |
+| `all` · `clear` | sélectionne tout (hors verrouillés) / vide la sélection |
+| `store 1 Ambiance` | mémorise l'état courant dans l'executor 1 |
+| `go 1` · `off 1` | rejoue / éteint l'executor 1 |
+| `store group 2 Salon` · `group 2` | mémorise / rappelle un groupe de sélection |
+| `store preset 3 Bleu` · `preset 3` | mémorise / applique un preset |
 | `blackout` | remet les 512 canaux à zéro |
-| `goto live` | change de vue |
+| `goto patch` | change de vue (`live`, `patch`, `reseau`, `setup`) |
 | `help` | rappelle la liste des commandes |
 
 Les mots-clés fonctionnent aussi en français (`projecteur`, `canal`, `rouge`, `couleur`…), les flèches
 haut/bas rappellent les commandes précédentes, et la ligne au-dessus de la saisie affiche le résultat de
 la dernière commande (ou le dernier message du backend).
 
-#### Onglet Tableau de bord
+#### Vue Live — le pupitre
 
-Vue synthétique du système avec :
-- **Tuiles statut** : Univers DMX (FPS, canaux actifs), Projecteurs (compteur), Scènes (compteur), HomeKit (état + nombre exporté), Mode Dance (état + pattern courant)
-- **Actions rapides** :
-  - **Blackout** : remet les 512 canaux DMX à 0
-  - **Stop Dance** : arrête le Mode Dance en cours
-  - **Refresh QXF** : recharge la bibliothèque de projecteurs depuis GitHub
-- **Activité récente** : 10 derniers événements (logs temps réel via WebSocket)
-- **DMX Sheet** : les 512 canaux de l'univers en une grille (une case par canal, hauteur = niveau, liseré ambre sur les canaux patchés)
+C'est la vue par défaut, et ce n'est **pas une page qui défile** : c'est un plan de travail sur lequel on
+pose des fenêtres, comme sur l'écran Live d'un grandMA. On regarde la sélection, les encodeurs et les
+executors *en même temps*, parce qu'on s'en sert ensemble.
 
-#### Onglet Projecteurs
+##### Fenêtres et Views
 
-Tout ce qui concerne les fixtures DMX.
+- **Glisser la barre de titre** déplace une fenêtre ; **glisser le coin bas-droit** la redimensionne.
+  Tout s'accroche à une grille, donc rien ne se pose de travers et deux fenêtres voisines s'alignent
+  toutes seules.
+- La croix ferme une fenêtre, **+ Fenêtre** en rouvre une (dix types disponibles), **Reset** rétablit la
+  disposition d'origine de la view courante.
+- La barre du haut porte quatre **Views** rappelables par leur numéro :
+  **1 Programmer** (sheet + encodeurs + les trois pools + playbacks), **2 Playback** (executors et faders
+  en grand), **3 DMX** (fader view + DMX sheet), **4 Effets** (Mode Dance).
+- La disposition est mémorisée par navigateur : on la range une fois, on la retrouve.
+
+> Sous 1024 px de large, les fenêtres sont simplement **empilées** : on ne déplace pas des fenêtres au
+> pouce sur un téléphone, mais tout reste accessible.
+
+##### Fixture Sheet
+
+Une cellule par projecteur, **regroupée par pièce** (Salon, Bureau, Non assigné) : son numéro, son nom,
+son niveau de dimmer en %, une barre de niveau, sa couleur RGB courante et son adresse.
+**Cliquer une cellule la sélectionne** (cadre jaune) ; la sélection est la cible des encodeurs, de la
+ligne de commande et de Store, et elle est conservée quand on change de vue.
+
+> Le numéro affiché (001, 002…) est celui qu'on tape dans la ligne de commande : `fix 2 at 50`. Il reste
+> le même quel que soit le regroupement.
+
+Un projecteur **verrouillé** (voir plus bas) apparaît hachuré, avec un cadenas rouge : il reste lisible,
+mais on ne peut pas le sélectionner ni l'allumer.
+
+##### Encodeurs
+
+Des molettes agissant sur la **sélection courante**, regroupées par famille d'attributs
+(1 Dimmer, 2 Color, 3 Position, 4 Beam). On tourne une molette en glissant dessus (haut/droite = plus),
+au clavier avec les flèches (Maj = pas de 10, Début/Fin = 0 / 100 %). Sous chaque molette, une rangée de
+valeurs rapides (**0 / 25 / 50 / 75 / FL**) évite de viser au pixel près. Seuls les attributs réellement
+présents sur les projecteurs sélectionnés sont affichés.
+
+##### Executors — mémoriser et rejouer une ambiance
+
+C'est le cœur du pupitre. Chaque emplacement numéroté peut contenir une **scène** :
+
+1. Sélectionne les projecteurs à mémoriser (ou personne : c'est alors tout le plateau).
+2. Règle-les comme tu veux.
+3. Clique un emplacement **libre** (ou tape `store 3`) et donne un nom — « Apéro », « Ciné », « Soirée ».
+4. Plus tard, un **clic sur la tuile** (ou `go 3`) rejoue l'ambiance.
+
+Les trois petites touches sous chaque tuile : **■** éteint uniquement ce que cette scène pilote,
+**💾** ré-enregistre l'état courant par-dessus, **🗑** libère l'emplacement (la scène reste enregistrée).
+
+Les scènes sont stockées côté backend : elles survivent au redémarrage et sont les mêmes depuis le
+téléphone et depuis l'ordinateur. Rejouer une scène passe aussi par le backend, donc **tous les écrans
+ouverts se mettent à jour**.
+
+##### Playbacks — les faders master
+
+Un fader par executor. Le monter rejoue la scène à un niveau intermédiaire : c'est un **master
+d'intensité**, il n'atténue que la lumière (intensité, rouge, vert, bleu, blanc). La position d'une lyre,
+sa roue de gobos et sa roue de couleurs restent là où la scène les a mises — baisser un playback baisse
+la lumière, ça ne fait pas dériver le projecteur à mi-course.
+
+##### Groups — mémoriser une sélection
+
+« Les trois PAR du salon » ne se re-sélectionnent pas vingt fois par soirée. Sélectionne-les, clique un
+emplacement libre du pool **Groups** (ou tape `store group 2 Salon`), et un clic sur la tuile — ou
+`group 2` — restitue la sélection.
+
+> Les groupes et la disposition des fenêtres sont propres au **navigateur** (ils décrivent une habitude
+> de travail) ; les scènes et les presets vivent côté serveur.
+
+##### Presets — mémoriser des valeurs
+
+Différence avec un executor, à ne pas confondre : un **executor** mémorise un état de projecteurs et se
+rejoue avec un master ; un **preset** mémorise une carte canal → valeur brute, réappliquée telle quelle.
+Le preset sert aux valeurs de référence qu'on repose souvent : une teinte, une position de lyre, une
+ouverture de faisceau.
+
+##### Fader view (canaux DMX)
+
+La grille affiche les **512 canaux DMX** page par page, en faders verticaux :
+- Chaque fader contrôle un canal de 0 à 255 (glisser dessus, ou saisir la valeur sous le fader)
+- Les canaux appartenant à un projecteur sont **colorés** et annotés avec le nom du projecteur et du canal
+- **Page − / Page +** pour naviguer (32 canaux à la fois), ou le sélecteur **Aller au projecteur** pour sauter directement sur la plage de canaux d'un projecteur (utile pour les gros patchs comme un strip Nanoleaf exposé par zone : 150 canaux d'un coup)
+- Tout projecteur patché y apparaît, **même s'il ne correspond pas à du DMX physique** — la vue lit l'univers, pas le matériel
+- Le layout s'adapte : 16 colonnes sur grand écran, 12 / 8 sur écran moyen, 4 sur mobile
+
+##### DMX Sheet
+
+Les 512 canaux de l'univers en une grille compacte, en lecture seule : une case par canal, hauteur =
+niveau, liseré ambre sur les canaux patchés.
+
+##### Mode Dance
+
+Strobe coordonné par pièce avec patterns spatiaux (12 patterns : chase, ping-pong, vagues, alternance,
+paires, random subset, full hit, strobe synchrone, bookend…). C'est la view **4 Effets**.
+
+##### Projecteurs verrouillés
+
+Certains projecteurs ne doivent **jamais** être allumés depuis le pupitre — typiquement celui d'une
+chambre où quelqu'un dort. Plutôt que de les masquer (un projecteur invisible finit par être rallumé par
+accident), ils restent **visibles mais verrouillés** : cadenas rouge, cellule hachurée, clic sans effet.
+
+Le verrou tient à tous les niveaux : ils sont refusés par `all`, ignorés par les encodeurs et les
+groupes, et exclus des scènes aussi bien à l'enregistrement qu'au rappel. La règle est une **liste
+blanche** — verrouillage par pièce (`chambre`), par nom, ou par identifiant, dans
+`frontend/src/lib/fixtureGuard.ts`.
+
+#### Vue Patch
+
+Tout ce qui définit le plateau avant de jouer. La **liste des projecteurs patchés** vient en premier :
+neuf fois sur dix, on ouvre cette vue pour vérifier une adresse, pas pour ajouter un projecteur.
+
+##### Liste des projecteurs
+
+Affiche tous les projecteurs configurés avec :
+- Nom, adresse DMX, univers
+- Badge **"HomeKit"** si le projecteur est exposé dans l'app Maison
+- Profil QXF (fabricant, modèle, mode) si importé depuis la bibliothèque
+- Bouton **Supprimer** (remet automatiquement les canaux DMX à 0)
+
+Sur mobile, la liste se transforme automatiquement en cartes empilées avec labels.
 
 ##### Ajouter un projecteur manuellement
 
@@ -414,21 +540,21 @@ Pour importer un projecteur avec son profil officiel :
 
 > La première fois, la bibliothèque est téléchargée automatiquement depuis GitHub (~50 Mo, quelques secondes d'attente).
 
-##### Liste des projecteurs
+#### Vue Réseau
 
-Affiche tous les projecteurs configurés avec :
-- Nom, adresse DMX, univers
-- Badge **"HomeKit"** si le projecteur est exposé dans l'app Maison
-- Profil QXF (fabricant, modèle, mode) si importé depuis la bibliothèque
-- Bouton **Supprimer** (remet automatiquement les canaux DMX à 0)
+Deux volets, parce que c'est un seul geste : on découvre un appareil, puis on le pilote.
 
-Sur mobile, la liste se transforme automatiquement en cartes empilées avec labels.
+##### Volet Inventaire
 
-#### Onglet Lampes connectées
+Tout ce que LightBridge voit sur le réseau, regroupé par famille (projecteurs DMX, lampes connectées,
+prises, ponts et passerelles, détectés non identifiables). Il affiche **aussi ce qui n'est pas
+pilotable, avec la raison** : c'est le point de départ quand on se demande « pourquoi ma lampe
+n'apparaît nulle part ? ». Le bouton **Rescanner** relance une écoute mDNS (~6 s), et un Nanoleaf en mode
+appairage se rattache directement depuis sa ligne.
 
-Pairing et pilotage des lampes WiFi (Nanoleaf aujourd'hui, Hue/Matter à venir).
+##### Volet Lampes connectées
 
-- **Pills de filtre** en haut pour afficher uniquement un backend (Nanoleaf, etc.)
+- **Pastilles de filtre** en haut pour afficher uniquement une marque (Nanoleaf, etc.)
 - **Carte de pairing** pour ajouter un Nanoleaf : scan mDNS automatique ou IP manuelle
 - **Carte par lampe** avec sliders couleur (HSL + température), toggle streaming UDP, et **3 onglets internes** :
   - **Painter** : palette de zones cliquables (drag pour peindre, zones spare en noir)
@@ -439,46 +565,7 @@ Pairing et pilotage des lampes WiFi (Nanoleaf aujourd'hui, Hue/Matter à venir).
 
 > Pour ajouter un nouveau backend (Hue, Matter…) plus tard : ajouter une entrée dans `frontend/src/components/smart-lights/backendRegistry.ts` + un nouveau type dans la discriminated union `SmartLight.config.type` côté `shared/`.
 
-#### Onglet Live
-
-Les surfaces de pilotage temps réel, dans l'ordre d'un écran de pupitre, avec une sous-nav d'ancres
-(Fixtures / Faders / Dance / Executors) :
-
-##### Encodeurs
-
-Quatre molettes agissant sur la **sélection courante**, regroupées par famille d'attributs
-(1 Dimmer, 2 Color, 3 Position, 4 Beam). On tourne une molette en glissant dessus (haut/droite = plus),
-au clavier avec les flèches (Maj = pas de 10, Début/Fin = 0 / 100 %). Seuls les attributs réellement
-présents sur les projecteurs sélectionnés sont affichés.
-
-##### Fixture Sheet
-
-Une cellule par projecteur : son numéro, son nom, son niveau de dimmer en %, une barre de niveau, sa
-couleur RGB courante et son adresse. **Cliquer une cellule la sélectionne** (cadre jaune) ; la sélection
-est la cible des encodeurs et de la ligne de commande, et elle est conservée quand on change de vue.
-
-> Le numéro affiché (001, 002…) est celui qu'on tape dans la ligne de commande : `fix 2 at 50`.
-
-##### Fader view (canaux DMX)
-
-La grille affiche les **512 canaux DMX** page par page, en faders verticaux :
-- Chaque fader contrôle un canal de 0 à 255 (glisser dessus, ou saisir la valeur sous le fader)
-- Les canaux appartenant à un projecteur sont **colorés** et annotés avec le nom du projecteur et du canal
-- Utilise **Page − / Page +** pour naviguer (32 canaux à la fois), ou le sélecteur **Aller au projecteur** pour sauter directement sur la plage de canaux d'un projecteur (utile pour les gros patchs comme un strip Nanoleaf exposé par zone : 150 canaux d'un coup)
-- Tout projecteur patché y apparaît, **même s'il ne correspond pas à du DMX physique** — la vue lit l'univers, pas le matériel
-- Le layout s'adapte : 16 colonnes sur grand écran, 12 / 8 sur écran moyen, 4 sur mobile
-- Les modifications sont envoyées en temps réel au backend
-
-##### Mode Dance
-
-Strobe coordonné par pièce avec patterns spatiaux (12 patterns disponibles : chase, ping-pong, vagues, alternance, paires, random subset, full hit, strobe synchrone, bookend…). Voir les commandes dans le code de `DancePanel.tsx`.
-
-##### Executors
-
-Les scènes enregistrées, présentées comme les executors d'un pupitre (tuile numérotée, nom, nombre de
-projecteurs). Les emplacements libres restent visibles en creux. Le rappel de cue arrive plus tard.
-
-#### Onglet Réglages
+#### Vue Setup
 
 ##### Carte HomeKit
 
