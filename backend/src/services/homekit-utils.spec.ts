@@ -3,8 +3,17 @@
 // des canaux RGB d'un projecteur (par capability ou via la config explicite),
 // ainsi que le tri des projecteurs exposables en ampoules HomeKit.
 import { describe, expect, it } from "vitest";
-import { Fixture } from "@lightbridgedmx/shared";
-import { collectHomeKitLights, hapName, hsbToRgb, resolveRgbChannels, rgbToHsb } from "./homekit-utils";
+import { Fixture, SmartLight } from "@lightbridgedmx/shared";
+import {
+  collectHomeKitChannelFixtures,
+  collectHomeKitLights,
+  collectHomeKitSmartLights,
+  findFacadeFixture,
+  hapName,
+  hsbToRgb,
+  resolveRgbChannels,
+  rgbToHsb
+} from "./homekit-utils";
 
 // Projecteur de reference reutilise dans plusieurs tests : un RGB simple a
 // l'adresse 1, avec ses trois canaux r/g/b sur les slots 1, 2 et 3.
@@ -109,5 +118,67 @@ describe("hapName", () => {
 
   it("ne renvoie jamais un nom vide", () => {
     expect(hapName("###")).toBe("Projecteur");
+  });
+});
+
+// Une lampe connectee pilotee en DMX a deux faces : la lampe, et un projecteur
+// bidon qui lui sert de prise en main depuis le pupitre. L'app Maison ne doit
+// en voir qu'une — une ampoule normale, sous le nom du projecteur.
+describe("facade DMX d'une lampe connectee", () => {
+  const facade: Fixture = {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "Lampe Salon",
+    address: 40,
+    universe: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    channels: [
+      { channel: 1, capability: "intensity" },
+      { channel: 2, capability: "r" },
+      { channel: 3, capability: "g" },
+      { channel: 4, capability: "b" }
+    ]
+  };
+  const light = {
+    id: "22222222-2222-4222-8222-222222222222",
+    name: "Nanoleaf A19 26N3",
+    backend: "homekit-thread",
+    config: { type: "homekit-thread", alias: "a19", deviceName: "Nanoleaf A19 26N3" },
+    dmxMirror: { universe: 0, briChannel: 40, rChannel: 41, gChannel: 42, bChannel: 43 },
+    createdAt: "2026-01-01T00:00:00.000Z"
+  } as unknown as SmartLight;
+
+  it("retrouve la facade depuis les canaux absolus du miroir", () => {
+    expect(findFacadeFixture(light, [facade])?.id).toBe(facade.id);
+  });
+
+  it("ne confond pas deux univers", () => {
+    const ailleurs = { ...facade, universe: 1 };
+    expect(findFacadeFixture(light, [ailleurs])).toBeUndefined();
+  });
+
+  it("expose la lampe sous le nom du projecteur, pas celui de l'appareil", () => {
+    const { exposed } = collectHomeKitSmartLights([light], [facade]);
+    expect(exposed).toHaveLength(1);
+    expect(exposed[0].name).toBe("Lampe Salon");
+  });
+
+  it("n'expose rien quand la case HomeKit du projecteur est decochee", () => {
+    const off = { ...facade, homekit: { enabled: false } };
+    const { exposed, skipped } = collectHomeKitSmartLights([light], [off]);
+    expect(exposed).toHaveLength(0);
+    expect(skipped[0].id).toBe(light.id);
+  });
+
+  it("sort la facade du flux canal-par-canal : jamais quatre ampoules DMX", () => {
+    const { channelFixtures } = collectHomeKitChannelFixtures([facade], [light]);
+    expect(channelFixtures).toHaveLength(0);
+    // Sans la lampe, ce meme projecteur redevient un projecteur ordinaire.
+    expect(collectHomeKitChannelFixtures([facade], []).channelFixtures).toHaveLength(1);
+  });
+
+  it("une lampe sans facade se represente elle-meme", () => {
+    const orpheline = { ...light, dmxMirror: null } as unknown as SmartLight;
+    const { exposed } = collectHomeKitSmartLights([orpheline], [facade]);
+    expect(exposed[0].name).toBe("Nanoleaf A19 26N3");
   });
 });

@@ -749,6 +749,26 @@ et il en manquait deux :
 > **Limite Apple.** Si l'utilisateur a renommé l'accessoire *dans* l'app Maison, ce nom-là gagne :
 > aucun changement côté pont ne l'écrase. Il faut alors renommer dans Maison.
 
+### Façade DMX d'une lampe connectée
+
+Une Nanoleaf pilotée en DMX a **deux faces** : la lampe (`SmartLight`) et un projecteur bidon dont les
+canaux servent de prise en main depuis le pupitre. L'app Maison ne doit en voir **qu'une**.
+
+- `findFacadeFixture(light, fixtures)` retrouve le projecteur façade : via `dmxMirror.zones.fixtureId`
+  s'il existe, sinon en cherchant le projecteur dont l'empreinte couvre **tous** les canaux du miroir
+  uniforme.
+- Une lampe **avec** façade suit la façade : exposée seulement si `fixture.homekit.enabled !== false`,
+  sous le nom du projecteur (`Lampe Salon`, pas `Nanoleaf A19 26N3`). Une lampe **sans** façade se
+  représente elle-même.
+- La façade est **retirée du flux canal-par-canal** (`collectHomeKitChannelFixtures` la saute) : cocher
+  la case ne donne jamais quatre ampoules Dimmer/R/V/B, mais **une ampoule normale** (teinte,
+  saturation, luminosité).
+- Le statut expose `smartLights[].fixtureId` : c'est lui qui fait porter le badge « HomeKit » au bon
+  projecteur dans le patch, la façade n'apparaissant pas dans `fixtures[]`.
+- `HomeKitBridge.reconcile()` est le **point d'entrée unique** : projecteurs et lampes se conditionnent
+  mutuellement, les synchroniser séparément laissait des trous selon l'ordre des appels (au démarrage,
+  les projecteurs sont connus avant les lampes).
+
 ---
 
 ## Service Smart Lights (`backend/src/services/smart-lights/`)

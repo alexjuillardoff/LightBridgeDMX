@@ -243,10 +243,17 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
   // Couleurs d'affichage de chaque projecteur, derivees de ses capabilities r/g/b.
   const fixtureColors = useMemo(() => buildFixtureColors(fixtures), [fixtures]);
   // Ensemble des IDs de projecteurs exposes comme accessoires HomeKit (pour pastiller l'UI).
-  const homekitFixtureIds = useMemo(
-    () => new Set(homekitStatusQuery.data?.fixtures.map((f) => f.fixtureId) ?? []),
-    [homekitStatusQuery.data]
-  );
+  // Projecteurs badges « HomeKit » : ceux exposes canal par canal ou en lyre,
+  // PLUS les facades DMX de lampes connectees — exposees en une ampoule normale
+  // par un autre chemin, elles n'apparaissent pas dans la liste des projecteurs.
+  const homekitFixtureIds = useMemo(() => {
+    const status = homekitStatusQuery.data;
+    const ids = new Set(status?.fixtures.map((f) => f.fixtureId) ?? []);
+    status?.smartLights?.forEach((light) => {
+      if (light.fixtureId) ids.add(light.fixtureId);
+    });
+    return ids;
+  }, [homekitStatusQuery.data]);
   // Libelle court de l'etat WebSocket affiche dans la barre du haut.
   const wsBadge =
     wsStatus === "open" ? "Connected" : wsStatus === "connecting" ? "Connecting" : "Disconnected";

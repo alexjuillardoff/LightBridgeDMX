@@ -12,6 +12,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { Capability, CapabilitySchema, Fixture, FixtureChannel } from "@lightbridgedmx/shared";
+import { useAppData } from "../../contexts/AppDataContext";
 import { channelSpan, footprint, formatPatch, nextFreeAddress, occupiedChannels } from "../../lib/patch";
 
 // Toutes les capabilities reconnues, dans l'ordre du schema partage.
@@ -49,8 +50,15 @@ const toState = (fixture: Fixture): EditorState => ({
 });
 
 export const FixtureEditor = ({ fixture, fixtures, onClose, onSave, saving }: FixtureEditorProps) => {
+  const { homekitStatus } = useAppData();
   const [form, setForm] = useState<EditorState>(() => toState(fixture));
   const [error, setError] = useState<string | null>(null);
+
+  // Ce projecteur est-il la facade DMX d'une lampe connectee ? Si oui, cocher
+  // « Exposer dans HomeKit » n'ajoute pas quatre ampoules Dimmer/R/V/B mais UNE
+  // ampoule normale, la lampe elle-meme, sous le nom saisi ici. La case veut
+  // donc dire autre chose que sur un projecteur ordinaire : on le dit.
+  const facadeFor = homekitStatus?.smartLights?.find((light) => light.fixtureId === fixture.id);
 
   // Changer de projecteur sans fermer la fiche (fleches de la table) doit
   // recharger les champs, sinon on editerait l'ancien avec les nouveaux libelles.
@@ -346,6 +354,12 @@ export const FixtureEditor = ({ fixture, fixtures, onClose, onSave, saving }: Fi
 
           {/* Exposition HomeKit : le nom vu dans l'app Maison peut differer du
               nom du pupitre ("Salon" a la maison, "PAR 1" au patch). */}
+          {facadeFor ? (
+            <p className="patch-note">
+              Façade DMX d'une lampe connectée : exposée dans HomeKit comme une ampoule normale
+              (teinte, saturation, luminosité), sous le nom de ce projecteur — pas canal par canal.
+            </p>
+          ) : null}
           <div className="patch-homekit">
             <label className="patch-check">
               <input

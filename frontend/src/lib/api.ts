@@ -55,8 +55,10 @@ export type HomeKitStatus = {
   storagePath: string;
   fixtures: HomeKitFixtureStatus[];
   /** Lampes connectees exposees : un seul accessoire chacune, avec teinte et
-   *  saturation natives — a la difference des projecteurs, exposes canal par canal. */
-  smartLights?: { id: string; name: string; backend: string }[];
+   *  saturation natives — a la difference des projecteurs, exposes canal par canal.
+   *  `fixtureId` est present quand la lampe est exposee via sa facade DMX : c'est
+   *  ce projecteur-la qui porte le badge « HomeKit » dans le patch. */
+  smartLights?: { id: string; name: string; backend: string; fixtureId?: string }[];
   message?: string;
 };
 

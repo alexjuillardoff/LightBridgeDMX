@@ -80,6 +80,8 @@ export const registerSmartLightRoutes = (
       const parsed = SmartLightInputSchema.parse(request.body);
       const light = await ctx.store.createSmartLight(parsed);
       await ctx.smartLights.register(light);
+      // Le pont relit les lampes : nom et exposition viennent de la facade DMX.
+      ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
       ctx.broadcast({ type: "smart_light_updated", data: light });
       reply.code(201).send(light);
     } catch (err) {
@@ -96,6 +98,8 @@ export const registerSmartLightRoutes = (
       const id = (request.params as { id: string }).id;
       const light = await ctx.store.updateSmartLight(id, parsed);
       await ctx.smartLights.register(light);
+      // Le pont relit les lampes : nom et exposition viennent de la facade DMX.
+      ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
       ctx.broadcast({ type: "smart_light_updated", data: light });
       reply.send(light);
     } catch (err) {
@@ -177,6 +181,8 @@ export const registerSmartLightRoutes = (
         }
       });
       ctx.smartLights.register(light);
+      // Le pont relit les lampes : nom et exposition viennent de la facade DMX.
+      ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
       ctx.broadcast({ type: "smart_light_updated", data: light });
       reply.code(201).send(light);
     } catch (err) {
@@ -204,6 +210,8 @@ export const registerSmartLightRoutes = (
         config: { ...existing.config, token } as SmartLight["config"]
       });
       await ctx.smartLights.register(updated);
+      // Le pont relit les lampes : nom et exposition viennent de la facade DMX.
+      ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
       ctx.broadcast({ type: "smart_light_updated", data: updated });
       reply.send(updated);
     } catch (err) {
@@ -358,6 +366,8 @@ export const registerSmartLightRoutes = (
         }
       });
       await ctx.smartLights.register(updated);
+      // Le pont relit les lampes : nom et exposition viennent de la facade DMX.
+      ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
 
       const allFixtures = await ctx.store.listFixtures();
       await ctx.homekit.syncFixtures(allFixtures);
@@ -389,6 +399,8 @@ export const registerSmartLightRoutes = (
         dmxMirror: stillMirrors ? rest : null
       });
       await ctx.smartLights.register(updated);
+      // Le pont relit les lampes : nom et exposition viennent de la facade DMX.
+      ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
 
       const allFixtures = await ctx.store.listFixtures();
       await ctx.homekit.syncFixtures(allFixtures);

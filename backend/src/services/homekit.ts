@@ -32,6 +32,8 @@ import {
   clamp,
   collectHomeKitChannelFixtures,
   collectHomeKitMovingHeads,
+  collectHomeKitSmartLights,
+  findFacadeFixture,
   hapName
 } from "./homekit-utils";
 
@@ -105,11 +107,14 @@ export type HomeKitStatus = {
   message?: string;
 };
 
-/** Une lampe connectee telle qu'exposee dans l'app Maison. */
+/** Une lampe connectee telle qu'exposee dans l'app Maison.
+ *  `fixtureId` est renseigne quand la lampe est exposee via sa facade DMX :
+ *  c'est ce lien qui permet au patch de badger le bon projecteur. */
 export type HomeKitSmartLightStatus = {
   id: string;
   name: string;
   backend: string;
+  fixtureId?: string;
 };
 
 // Pont HomeKit : cree et publie un Bridge hap-nodejs, lui attache un accessoire
@@ -144,6 +149,10 @@ export class HomeKitBridge {
   private smartHost: SmartLightHost | null = null;
   // Derniere liste de projecteurs recue, conservee pour re-synchroniser sans la redemander.
   private cachedFixtures: Fixture[] = [];
+  // Idem pour les lampes connectees : l'exposition d'une lampe depend de SA
+  // facade DMX (nom, case « Exposer dans HomeKit »), donc un changement de
+  // projecteur doit pouvoir recalculer les lampes, et reciproquement.
+  private cachedSmartLights: SmartLight[] = [];
   // Reference de l'ecouteur "tick" DMX, gardee pour pouvoir le retirer a l'arret.
   private dmxListener?: (state: UniverseState) => void;
 
@@ -242,8 +251,20 @@ export class HomeKitBridge {
   async syncFixtures(fixtures: Fixture[]) {
     this.cachedFixtures = fixtures;
     if (!this.options.enabled || !this.bridge) return;
-    this.syncChannelFixtures(fixtures);
-    this.syncMovingHeads(fixtures);
+    this.reconcile();
+  }
+
+  /** Recalcule TOUT le contenu du pont a partir des deux caches.
+   *
+   *  Projecteurs et lampes ne sont pas independants : une lampe suit sa facade
+   *  DMX, et une facade est retiree du flux canal-par-canal. Les synchroniser
+   *  separement laissait des trous selon l'ordre des appels — au demarrage, les
+   *  projecteurs sont connus avant les lampes, donc la facade etait exposee en
+   *  canaux avant qu'on sache qu'elle en etait une. Un seul point d'entree. */
+  private reconcile(): void {
+    this.syncChannelFixtures(this.cachedFixtures);
+    this.syncMovingHeads(this.cachedFixtures);
+    this.reconcileSmartLights();
   }
 
   // Met a jour un seul projecteur dans le cache, puis resynchronise tout le pont.
@@ -288,7 +309,15 @@ export class HomeKitBridge {
       fixtures,
       smartLights: [...this.smartLights.values()].map((m) => {
         const light = this.smartHost?.listWithState().find((l) => l.id === m.id);
-        return { id: m.id, name: light?.name ?? m.id, backend: light?.backend ?? "?" };
+        const facade = light ? findFacadeFixture(light, this.cachedFixtures) : undefined;
+        // Le nom affiche est celui de l'accessoire (donc de la facade quand il y
+        // en a une), pas le nom brut de la lampe : c'est ce que l'UI doit montrer.
+        return {
+          id: m.id,
+          name: m.accessory.displayName,
+          backend: light?.backend ?? "?",
+          ...(facade ? { fixtureId: facade.id } : {})
+        };
       })
     };
 
@@ -334,12 +363,29 @@ export class HomeKitBridge {
     host.on("light_updated", (light: SmartLight) => this.pushSmartLightState(light));
   }
 
-  /** Reconcilie les accessoires de lampes connectees avec la liste fournie. */
+  /** Reconcilie les accessoires de lampes connectees avec la liste fournie.
+   *
+   *  Une lampe ayant une facade DMX n'est exposee que si la facade l'est, et
+   *  porte le nom de la facade : dans le patch c'est « Lampe Salon » qu'on voit
+   *  et qu'on renomme, pas « Nanoleaf A19 26N3 ». La forme reste celle d'une
+   *  ampoule normale — la facade, elle, est retiree du flux canal-par-canal. */
   syncSmartLights(lights: SmartLight[]): void {
+    this.cachedSmartLights = lights;
     if (!this.options.enabled || !this.bridge) return;
+    this.reconcile();
+  }
+
+  /** Corps de la reconciliation des lampes. Suppose les deux caches a jour. */
+  private reconcileSmartLights(): void {
+    if (!this.bridge) return;
+    const lights = this.cachedSmartLights;
+    const { exposed, skipped } = collectHomeKitSmartLights(lights, this.cachedFixtures);
+    for (const entry of skipped) {
+      this.logger.debug({ id: entry.id, reason: entry.reason }, "Lampe connectee non exposee dans HomeKit");
+    }
 
     const seen = new Set<string>();
-    for (const light of lights) {
+    for (const { light, name } of exposed) {
       seen.add(light.id);
       const existing = this.smartLights.get(light.id);
       if (existing) {
@@ -348,23 +394,24 @@ export class HomeKitBridge {
         // change la version de config du pont, et sans ce changement iOS ne
         // relit pas les noms. L'UUID etant derive de l'id de la lampe, l'app
         // Maison retrouve le meme accessoire (piece et automatisations gardees).
-        if (existing.accessory.displayName !== hapName(light.name)) {
+        if (existing.accessory.displayName !== name) {
           this.bridge.removeBridgedAccessory(existing.accessory);
-          const renamed = this.buildSmartLightAccessory(light);
+          const renamed = this.buildSmartLightAccessory(light, name);
           this.smartLights.set(light.id, renamed);
           this.bridge.addBridgedAccessory(renamed.accessory);
-          this.logger.info({ id: light.id, name: light.name }, "Lampe connectee renommee dans HomeKit");
+          this.logger.info({ id: light.id, name }, "Lampe connectee renommee dans HomeKit");
         }
         this.pushSmartLightState(light);
         continue;
       }
-      const managed = this.buildSmartLightAccessory(light);
+      const managed = this.buildSmartLightAccessory(light, name);
       this.smartLights.set(light.id, managed);
       this.bridge.addBridgedAccessory(managed.accessory);
-      this.logger.info({ id: light.id, name: light.name }, "Lampe connectee exposee dans HomeKit");
+      this.logger.info({ id: light.id, name }, "Lampe connectee exposee dans HomeKit");
     }
 
-    // Lampe supprimee cote LightBridge : on retire l'accessoire correspondant.
+    // Lampe supprimee, ou dont la facade vient d'etre decochee : on retire
+    // l'accessoire pour qu'il disparaisse vraiment de l'app Maison.
     for (const [id, managed] of [...this.smartLights.entries()]) {
       if (seen.has(id)) continue;
       this.bridge.removeBridgedAccessory(managed.accessory);
@@ -399,8 +446,8 @@ export class HomeKitBridge {
 
   /** Cree l'accessoire d'une lampe : un unique Service.Lightbulb portant les quatre
    *  caracteristiques natives. Les valeurs transitent en TSL de bout en bout. */
-  private buildSmartLightAccessory(light: SmartLight): ManagedSmartLight {
-    const label = hapName(light.name);
+  private buildSmartLightAccessory(light: SmartLight, name?: string): ManagedSmartLight {
+    const label = name ?? hapName(light.name);
     const acc = new Accessory(label, uuid.generate(`lightbridgedmx:smartlight:${light.id}`));
     acc
       .getService(Service.AccessoryInformation)
@@ -461,7 +508,7 @@ export class HomeKitBridge {
 
     // collectHomeKitChannelFixtures filtre les projecteurs eligibles ; `skipped`
     // liste ceux ecartes (et pourquoi), juste tracee en debug.
-    const { channelFixtures, skipped } = collectHomeKitChannelFixtures(fixtures);
+    const { channelFixtures, skipped } = collectHomeKitChannelFixtures(fixtures, this.cachedSmartLights);
     skipped.forEach((item) => {
       this.logger.debug({ fixtureId: item.fixtureId, reason: item.reason }, "Skipping fixture for HomeKit");
     });

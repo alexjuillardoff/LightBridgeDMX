@@ -8,7 +8,7 @@
 //   - lyre (moving head) : pan/tilt + dimmer/shutter/color/gobo.
 // Le service homekit.ts appelle ces fonctions pour construire les accessoires.
 
-import { Fixture, FixtureHomeKitMovingHeadChannels } from "@lightbridgedmx/shared";
+import { Fixture, FixtureHomeKitMovingHeadChannels, SmartLight } from "@lightbridgedmx/shared";
 
 /** Nettoie un nom pour HomeKit.
  *
@@ -329,12 +329,93 @@ const resolveChannelFixture = (fixture: Fixture): HomeKitChannelFixtureResolutio
 
 // Collecte les projecteurs pilotables canal par canal et liste les ignores.
 // Les lyres sont ecartees d'emblee (elles ont leur propre service).
-export const collectHomeKitChannelFixtures = (fixtures: Fixture[]) => {
+/** Canaux DMX absolus occupes par un projecteur. */
+const absoluteChannels = (fixture: Fixture): number[] =>
+  fixture.channels.map((ch) => fixture.address + ch.channel - 1);
+
+/** Le projecteur qui sert de FACADE DMX a une lampe connectee, s'il existe.
+ *
+ *  Une Nanoleaf pilotee en DMX a deux representations : la lampe elle-meme, et
+ *  un projecteur bidon dont les canaux servent de prise en main depuis le
+ *  pupitre. Ce sont deux faces du meme objet — l'exposer deux fois dans l'app
+ *  Maison (une ampoule « Nanoleaf A19 26N3 » plus quatre ampoules Dimmer/R/V/B)
+ *  n'a aucun sens pour qui ouvre l'app.
+ *
+ *  Le miroir par zone porte deja `fixtureId`. Le miroir uniforme, lui, ne
+ *  memorise que des canaux absolus : on retrouve la facade en cherchant le
+ *  projecteur dont l'empreinte couvre TOUS les canaux du miroir. */
+export const findFacadeFixture = (light: SmartLight, fixtures: Fixture[]): Fixture | undefined => {
+  const mirror = light.dmxMirror;
+  if (!mirror) return undefined;
+
+  if (mirror.zones?.fixtureId) {
+    const byId = fixtures.find((f) => f.id === mirror.zones?.fixtureId);
+    if (byId) return byId;
+  }
+
+  const universe = mirror.universe ?? 0;
+  const wanted = [mirror.rChannel, mirror.gChannel, mirror.bChannel, mirror.briChannel].filter(
+    (ch): ch is number => ch !== undefined
+  );
+  if (!wanted.length) return undefined;
+
+  return fixtures.find((fixture) => {
+    if (fixture.universe !== universe) return false;
+    const owned = new Set(absoluteChannels(fixture));
+    return wanted.every((ch) => owned.has(ch));
+  });
+};
+
+/** Ce qu'on expose dans HomeKit pour une lampe connectee, et sous quel nom. */
+export type HomeKitSmartLightExposure = { light: SmartLight; name: string };
+
+/** Trie les lampes connectees exposables, et decide de leur nom.
+ *
+ *  Une lampe qui a une facade DMX suit la facade : c'est elle que l'utilisateur
+ *  voit dans le patch, c'est donc son nom et sa case « Exposer dans HomeKit » qui
+ *  comptent. Une lampe sans facade se represente elle-meme.
+ *
+ *  Dans les deux cas la forme est la meme : UNE ampoule normale (teinte,
+ *  saturation, luminosite), jamais une ampoule par canal DMX. */
+export const collectHomeKitSmartLights = (lights: SmartLight[], fixtures: Fixture[]) => {
+  const exposed: HomeKitSmartLightExposure[] = [];
+  const skipped: Array<{ id: string; reason: string }> = [];
+
+  lights.forEach((light) => {
+    const facade = findFacadeFixture(light, fixtures);
+    if (!facade) {
+      exposed.push({ light, name: hapName(light.name) });
+      return;
+    }
+    if (facade.homekit?.enabled === false) {
+      skipped.push({ id: light.id, reason: `Exposition HomeKit desactivee sur « ${facade.name} »` });
+      return;
+    }
+    exposed.push({ light, name: hapName(facade.homekit?.name?.trim() || facade.name) });
+  });
+
+  return { exposed, skipped };
+};
+
+export const collectHomeKitChannelFixtures = (fixtures: Fixture[], smartLights: SmartLight[] = []) => {
   const channelFixtures: HomeKitChannelFixture[] = [];
   const skipped: Array<{ fixtureId: string; reason: string }> = [];
 
+  // Les facades de lampes connectees sortent du flux canal-par-canal : elles sont
+  // exposees en une seule ampoule par collectHomeKitSmartLights. Sans ce filtre,
+  // cocher « Exposer dans HomeKit » sur la facade donnerait les DEUX formes.
+  const facadeIds = new Set(
+    smartLights
+      .map((light) => findFacadeFixture(light, fixtures)?.id)
+      .filter((id): id is string => id !== undefined)
+  );
+
   fixtures.forEach((fixture) => {
     if (isMovingHead(fixture)) return;
+    if (facadeIds.has(fixture.id)) {
+      skipped.push({ fixtureId: fixture.id, reason: "Facade DMX d'une lampe connectee (exposee en ampoule)" });
+      return;
+    }
     const resolution = resolveChannelFixture(fixture);
     if (resolution.cf) {
       channelFixtures.push(resolution.cf);
