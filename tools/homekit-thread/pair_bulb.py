@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import pathlib
 import sys
@@ -42,9 +43,16 @@ import sys
 # transport BLE (aiohomekit/const.py le lit a l'import).
 os.environ.setdefault("AIOHOMEKIT_TRANSPORT_BLE", "1")
 
+# aiocoap n'active `udp6` que sur Linux et retombe ailleurs sur `simplesocketserver`,
+# qui REFUSE de se lier a l'adresse "any" (::) — or c'est exactement ce que fait
+# aiohomekit pour ouvrir son contexte CoAP. Sans ce forcage, tout dialogue Thread
+# echoue sur "The transport can not be bound to any-address". udp6 fonctionne
+# parfaitement sur macOS ; il perd seulement la remontee des erreurs ICMP.
+os.environ.setdefault("AIOCOAP_SERVER_TRANSPORT", "udp6")
+
 import bleak  # noqa: F401  (l'import suffit a activer le transport BLE)
 from aiohomekit.controller import Controller
-from aiohomekit.controller.abstract import AbstractPairing
+from aiohomekit.controller.abstract import AbstractPairing, TransportType
 from aiohomekit.characteristic_cache import CharacteristicCacheFile
 from aiohomekit.exceptions import HomeKitException
 from aiohomekit.meshcop import Meshcop
@@ -118,6 +126,97 @@ def build_dataset(args: argparse.Namespace) -> str:
     return dataset.encode().hex()
 
 
+async def wait_for_discovery(backend, device_id: str | None, name: str | None, timeout: float):
+    """Attend qu'un accessoire apparaisse, en scrutant le cache du transport.
+
+    Contourne un bug d'aiohomekit 4.0.1 : `BleController.async_find()` cree une
+    future d'attente mais ne l'enregistre JAMAIS dans `self._ble_futures`, si bien
+    que `_device_detected()` ne la resout jamais. L'appel expire donc
+    systematiquement, sauf si l'appareil se trouvait deja dans le cache au moment
+    de l'appel. Le bloc `finally` de la fonction retire pourtant cette future de
+    `_ble_futures` — la preuve que l'enregistrement a ete perdu en cours de route.
+
+    On scrute donc `backend.discoveries` nous-memes, puis on delegue a
+    `async_find()` une fois l'appareil present : il repond alors immediatement
+    depuis le cache, chemin qui fonctionne.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    waited = 0.0
+    while asyncio.get_running_loop().time() < deadline:
+        found = dict(getattr(backend, "discoveries", {}))
+        # Recherche par nom : plus sure que par identifiant, car une remise a zero
+        # d'usine REGENERE l'identifiant HAP de l'ampoule. Celui qu'on lit sur son
+        # annonce Thread avant reset ne vaut plus rien apres.
+        if name:
+            for hkid, disco in found.items():
+                if (disco.description.name or "").strip().lower() == name.strip().lower():
+                    print(f"  '{name}' vu apres {waited:.0f}s — id={hkid}")
+                    return await backend.async_find(hkid, timeout=10)
+        elif device_id and device_id in found:
+            print(f"  vu apres {waited:.0f}s")
+            return await backend.async_find(device_id, timeout=10)
+
+        await asyncio.sleep(1.0)
+        waited += 1.0
+        if waited % 15 == 0:
+            noms = [f"{d.description.name!r}({k})" for k, d in found.items()]
+            print(f"  {waited:.0f}s — appairables : {', '.join(noms) or 'aucun'}")
+
+    found = dict(getattr(backend, "discoveries", {}))
+    noms = [f"{d.description.name!r}({k})" for k, d in found.items()]
+    sys.exit(f"Introuvable apres {timeout:.0f}s (cible: {name or device_id}).\n"
+             f"Accessoires appairables vus : {', '.join(noms) or 'aucun'}\n"
+             "L'ampoule est-elle bien reinitialisee (3 clignotements rouges) ?")
+
+
+async def migrate_to_coap(controller, alias: str, store: pathlib.Path, timeout: float = 180.0):
+    """Bascule l'appairage du transport BLE vers CoAP une fois l'ampoule sur Thread.
+
+    L'appairage se fait forcement en Bluetooth (l'ampoule fraichement reinitialisee
+    n'est joignable que par la), donc `pairing_data["Connection"]` vaut "BLE" et
+    pointe une adresse CoreBluetooth. Tel quel, tout usage ulterieur repasserait par
+    le Bluetooth — c'est-a-dire par une autorisation macOS que le service n'a pas, et
+    par le bug `async_find()`. On reecrit donc l'entree en CoAP des que l'ampoule
+    reapparait sur le maillage, avec son adresse IPv6 Thread.
+
+    C'est cette bascule qui rend le pilotage possible depuis un service sans Bluetooth.
+    """
+    coap = controller.transports.get(TransportType.COAP)
+    if coap is None:
+        print("  !! transport CoAP indisponible — appairage laisse en BLE")
+        return False
+
+    data = json.loads(store.read_text())
+    entry = data.get(alias)
+    if entry is None:
+        return False
+    hkid = str(entry.get("AccessoryPairingID", "")).lower()
+
+    print(f"  attente de {hkid} sur le maillage Thread…")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    waited = 0.0
+    while loop.time() < deadline:
+        disco = getattr(coap, "discoveries", {}).get(hkid)
+        if disco is not None:
+            desc = disco.description
+            entry["Connection"] = "CoAP"
+            entry["AccessoryIP"] = desc.address
+            entry["AccessoryPort"] = desc.port
+            entry.pop("AccessoryAddress", None)   # adresse BLE, sans objet ici
+            store.write_text(json.dumps(data, indent=2))
+            print(f"  bascule en CoAP — {desc.address}:{desc.port} (apres {waited:.0f}s)")
+            return True
+        await asyncio.sleep(2.0)
+        waited += 2.0
+        if waited % 30 == 0:
+            print(f"  {waited:.0f}s — pas encore sur Thread")
+
+    print(f"  !! toujours absente de Thread apres {timeout:.0f}s ; appairage laisse en BLE.")
+    print("     Relancer plus tard : la bascule peut se refaire a la main.")
+    return False
+
+
 async def verify(pairing: AbstractPairing) -> None:
     """Relit l'ampoule apres coup pour prouver que le pilotage fonctionne vraiment.
 
@@ -125,6 +224,9 @@ async def verify(pairing: AbstractPairing) -> None:
     caracteristique, rien ne dit que le basculement vers Thread a abouti.
     """
     accessories = await pairing.list_accessories_and_characteristics()
+    if not accessories:
+        print("  aucune caracteristique renvoyee — l'ampoule bascule encore vers Thread")
+        return
     print(f"  {len(accessories)} accessoire(s) expose(s)")
     for accessory in accessories:
         for service in accessory.get("services", []):
@@ -158,18 +260,42 @@ async def run(args: argparse.Namespace) -> int:
             if args.alias in controller.aliases:
                 sys.exit(f'L\'alias "{args.alias}" existe deja dans {store}')
 
-            print(f"Recherche de {args.device_id} (BLE + IP + Thread)…")
-            try:
-                discovery = await controller.async_find(args.device_id, timeout=args.timeout)
-            except HomeKitException as err:
-                sys.exit(f"Appareil introuvable : {err}\n"
-                         "L'ampoule est-elle bien reinitialisee (3 clignotements rouges) "
-                         "et a portee Bluetooth de ce Mac ?")
+            # `controller.async_find()` interroge TOUS les transports en parallele et
+            # retient le premier qui repond. C'est un piege ici : l'annonce mDNS Thread
+            # de l'ampoule survit plusieurs minutes en cache apres un reset, donc le
+            # transport CoAP "gagne" la course et on tente l'appairage sur une adresse
+            # morte (echec: TimeoutError dans do_pair_setup). Une ampoule fraichement
+            # reinitialisee n'est joignable QU'EN Bluetooth : on force donc le transport.
+            transport = TransportType(args.transport)
+            backend = controller.transports.get(transport)
+            if backend is None:
+                sys.exit(f"Transport {args.transport} indisponible. "
+                         "Pour le BLE : lancer depuis Terminal.app (autorisation Bluetooth macOS).")
+
+            print(f"Recherche de {args.name or args.device_id} via {transport.value.upper()}…")
+            discovery = await wait_for_discovery(backend, args.device_id, args.name, args.timeout)
 
             print("Appairage HAP…")
             finish = await discovery.async_start_pairing(args.alias)
             pairing = await finish(normalize_pin(args.pin))
+
+            # `save_data()` ne serialise que `controller.aliases`. Or on a appaire via
+            # le backend de transport directement (pour eviter la course entre CoAP et
+            # BLE), et `async_start_pairing()` a donc enregistre l'alias sur le BACKEND,
+            # pas sur le controleur de haut niveau. Sans ce report, save_data ecrit un
+            # "{}" et les cles long-terme sont perdues : l'ampoule reste appairee a un
+            # controleur fantome et il faut la reinitialiser.
+            controller.aliases[args.alias] = pairing
             controller.save_data(str(store))
+
+            # Garde-fou : on relit le fichier. Une perte de cles ne doit JAMAIS passer
+            # inapercue, puisqu'elle se repare uniquement par un nouveau reset materiel.
+            written = json.loads(store.read_text() or "{}")
+            if args.alias not in written:
+                sys.exit(f"ECHEC CRITIQUE : {store} ne contient pas l'alias "
+                         f"{args.alias!r} (contenu : {list(written)}).\n"
+                         "Les cles d'appairage sont perdues — l'ampoule devra etre "
+                         "reinitialisee puis reappairee.")
             print(f'  appairage "{args.alias}" enregistre dans {store}')
 
             # Sans cette etape l'ampoule reste sur BLE seul : joignable de tout pres,
@@ -178,8 +304,12 @@ async def run(args: argparse.Namespace) -> int:
             await pairing.thread_provision(dataset)
             print("  envoye — l'ampoule rejoint le maillage (~1 min)")
 
+            # L'ampoule met ~1 min a rejoindre le maillage puis a s'annoncer en mDNS.
+            print("Bascule vers le transport Thread…")
+            await migrate_to_coap(controller, args.alias, store, timeout=args.settle * 4)
+
             print("Verification…")
-            await asyncio.sleep(args.settle)
+            await asyncio.sleep(5)
             try:
                 await verify(pairing)
             except Exception as err:  # noqa: BLE001
@@ -197,12 +327,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--alias", required=True, help="nom court de l'appairage (ex. a19-35q2)")
-    parser.add_argument("--device-id", required=True,
-                        help="Device ID HomeKit, donne par `aiohomekit discover`")
+    parser.add_argument("--device-id",
+                        help="Device ID HomeKit (change a chaque reset — prefere --name)")
+    parser.add_argument("--name",
+                        help="nom annonce par l'ampoule, ex. 'Nanoleaf A19 26N3'. "
+                             "Stable a travers les resets, contrairement au device-id.")
     parser.add_argument("--pin", required=True,
                         help="code HomeKit a 8 chiffres, avec ou sans tirets")
     parser.add_argument("--file", default=str(DEFAULT_STORE), help="fichier de stockage des appairages")
     parser.add_argument("--timeout", type=float, default=60.0, help="delai de decouverte, en secondes")
+    parser.add_argument("--transport", choices=["ble", "coap", "ip"], default="ble",
+                        help="transport de decouverte (defaut: ble — le seul valable "
+                             "pour une ampoule fraichement reinitialisee)")
     parser.add_argument("--settle", type=float, default=45.0,
                         help="attente avant verification, le temps que Thread s'etablisse")
 
@@ -214,7 +350,10 @@ def main() -> int:
     thread.add_argument("--extpanid", help="Extended PAN ID, 16 caracteres hexa")
     thread.add_argument("--networkkey", help="cle reseau, 32 caracteres hexa")
 
-    return asyncio.run(run(parser.parse_args()))
+    args = parser.parse_args()
+    if not args.name and not args.device_id:
+        parser.error("il faut --name (recommande) ou --device-id")
+    return asyncio.run(run(args))
 
 
 if __name__ == "__main__":

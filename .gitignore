@@ -26,7 +26,7 @@ qlc-plus/home.qxw
 qlc-plus/*.bak-*
 
 # Appairages HomeKit-sur-Thread (contiennent des cles privees)
-tools/homekit-thread/pairings.json
+tools/homekit-thread/pairings.json*
 tools/homekit-thread/charmap.json
 tools/homekit-thread/.venv/
 __pycache__/
