@@ -8,24 +8,23 @@
 // la vue lit l'univers, pas le matériel. Le sélecteur "Aller au projecteur"
 // permet de sauter directement sur leur plage de canaux.
 import { useMemo, useState } from "react";
-import { Fixture, UniverseState } from "@lightbridgedmx/shared";
-import { computeVisibleChannels, FixtureColor, VisibleChannel } from "../lib/fixtures";
+import { useAppData } from "../contexts/AppDataContext";
+import { useUniverseState } from "../contexts/UniverseStateContext";
+import { computeVisibleChannels, VisibleChannel } from "../lib/fixtures";
 import { clamp } from "../lib/math";
 import { toPct } from "../lib/programmer";
 import { MaFader } from "./ma/MaFader";
 
-type ChannelGridProps = {
-  universeState: UniverseState | null;
-  fixtures: Fixture[];
-  fixtureColors: Record<string, FixtureColor>;
-  onUpdate: (channel: number, value: number) => void;
-  error?: Error | null;
-};
-
 // Nombre de canaux par page : l'univers en compte 512, on le parcourt par pages.
 const channelPageSize = 32;
 
-export const ChannelGrid = ({ universeState, fixtures, fixtureColors, onUpdate, error }: ChannelGridProps) => {
+export const ChannelGrid = () => {
+  // La fenêtre fournit le cadre et le titre : ce composant ne dessine que son
+  // contenu et va chercher lui-même ce dont il a besoin dans les contextes.
+  const { fixtures, fixtureColors, mutations, handleUpdateChannel } = useAppData();
+  const { universeState } = useUniverseState();
+  const onUpdate = handleUpdateChannel;
+  const error = mutations.setChannel.error as Error | null | undefined;
   // Premier canal affiché (1 à 512).
   const [channelStart, setChannelStart] = useState(1);
   // Tranche de canaux visible + étiquettes/couleurs, recalculée à la demande.
@@ -68,15 +67,11 @@ export const ChannelGrid = ({ universeState, fixtures, fixtureColors, onUpdate, 
   const currentJump = fixtureJumps.find((f) => f.address >= first && f.address <= last)?.id ?? "";
 
   return (
-    <div className="card channel-card">
-      <h2>
-        DMX Fader View
-        <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 400 }}>
+    <div className="channel-card">
+      <div className="channel-toolbar">
+        <span className="channel-range">
           Canaux {first} → {last} / 512
         </span>
-      </h2>
-
-      <div className="channel-toolbar">
         <div className="input-inline">
           <label>
             Aller au projecteur

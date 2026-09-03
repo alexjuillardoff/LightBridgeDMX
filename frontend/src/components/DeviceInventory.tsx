@@ -96,7 +96,7 @@ const DeviceRow = ({
   );
 };
 
-export const DevicesPage = () => {
+export const DeviceInventory = () => {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<Filter>("all");
   const [pairError, setPairError] = useState<{ host: string; message: string } | null>(null);
@@ -148,14 +148,11 @@ export const DevicesPage = () => {
 
   return (
     <>
-      <div className="section-title">
-        <h2>Appareils</h2>
-        <span className="muted">
-          {devices.length > 0
-            ? `${controllableCount} pilotable${controllableCount > 1 ? "s" : ""} sur ${devices.length} détecté${devices.length > 1 ? "s" : ""}`
-            : "Tout ce que LightBridge voit sur le réseau, pilotable ou non"}
-        </span>
-      </div>
+      <p className="muted network-lead">
+        {devices.length > 0
+          ? `${controllableCount} pilotable${controllableCount > 1 ? "s" : ""} sur ${devices.length} détecté${devices.length > 1 ? "s" : ""}`
+          : "Tout ce que LightBridge voit sur le réseau, pilotable ou non"}
+      </p>
 
       <div className="filter-pills" role="tablist" aria-label="Filtre de l'inventaire">
         {(

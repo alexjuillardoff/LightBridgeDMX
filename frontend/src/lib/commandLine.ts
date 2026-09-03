@@ -24,6 +24,17 @@ export type ParsedCommand =
   // Ecriture directe sur une liste de canaux de l'univers (deja developpee :
   // "1 thru 4 + 9" arrive ici sous la forme [1, 2, 3, 4, 9]).
   | { kind: "channel"; channels: number[]; value: number }
+  // Memorisation : "store 3", "store group 2 Salon", "store preset 1 Bleu".
+  // `number` est le numero affiche (1-indexe), pas l'index interne.
+  | { kind: "store"; target: "exec" | "group" | "preset"; number: number; name?: string }
+  // Rappel d'un executor : "go 3".
+  | { kind: "go"; number: number }
+  // Extinction d'un executor : "off 3".
+  | { kind: "off"; number: number }
+  // Rappel d'un groupe de selection : "group 2".
+  | { kind: "group"; number: number }
+  // Application d'un preset : "preset 4".
+  | { kind: "preset"; number: number }
   // Changement de vue (onglet).
   | { kind: "view"; view: string }
   | { kind: "error"; message: string };
@@ -65,18 +76,36 @@ const ATTR_WORDS: Record<string, AttrKey> = {
 
 // Vues (onglets) atteignables par "goto <vue>".
 const VIEW_WORDS: Record<string, string> = {
-  dashboard: "dashboard",
-  vue: "dashboard",
-  fixtures: "projecteurs",
-  projecteurs: "projecteurs",
-  patch: "projecteurs",
-  lampes: "lampes",
-  lights: "lampes",
   live: "live",
   console: "live",
-  reglages: "reglages",
-  settings: "reglages",
-  setup: "reglages"
+  dashboard: "live",
+  vue: "live",
+  patch: "patch",
+  fixtures: "patch",
+  projecteurs: "patch",
+  reseau: "reseau",
+  network: "reseau",
+  lampes: "reseau",
+  lights: "reseau",
+  appareils: "reseau",
+  devices: "reseau",
+  setup: "setup",
+  reglages: "setup",
+  settings: "setup"
+};
+
+// Cibles de STORE : "store 1" vise un executor par defaut, "store group 2" un
+// groupe, "store preset 3" un preset.
+const STORE_TARGETS: Record<string, "exec" | "group" | "preset"> = {
+  exec: "exec",
+  executor: "exec",
+  scene: "exec",
+  cue: "exec",
+  group: "group",
+  groupe: "group",
+  grp: "group",
+  preset: "preset",
+  pre: "preset"
 };
 
 // Normalise un mot : minuscules et sans accents, pour accepter "intensité"
@@ -177,6 +206,59 @@ export const parseCommand = (input: string): ParsedCommand => {
     return { kind: "view", view: target };
   }
 
+  // "store 3" / "store group 2 Salon" / "store preset 1 Bleu"
+  // Sans mot de cible, STORE vise un executor : c'est le geste le plus courant.
+  if (head === "store" || head === "memoriser" || head === "st") {
+    let i = 1;
+    let target: "exec" | "group" | "preset" = "exec";
+    const maybeTarget = tokens[1] ? norm(tokens[1]) : "";
+    if (STORE_TARGETS[maybeTarget]) {
+      target = STORE_TARGETS[maybeTarget];
+      i = 2;
+    }
+    const numberToken = tokens[i] ? norm(tokens[i]) : "";
+    if (!/^\d+$/.test(numberToken)) {
+      return { kind: "error", message: "Numéro attendu (ex. STORE 1, STORE GROUP 2)" };
+    }
+    // Tout ce qui suit le numero est le nom libre de la memoire.
+    const name = tokens.slice(i + 1).join(" ").trim();
+    return { kind: "store", target, number: Number(numberToken), name: name || undefined };
+  }
+
+  // "go 3" (le mot de cible est tolere : "go exec 3").
+  if (head === "go") {
+    const i = tokens[1] && STORE_TARGETS[norm(tokens[1])] ? 2 : 1;
+    const numberToken = tokens[i] ? norm(tokens[i]) : "";
+    if (!/^\d+$/.test(numberToken)) {
+      return { kind: "error", message: "Numéro d'executor attendu (ex. GO 1)" };
+    }
+    return { kind: "go", number: Number(numberToken) };
+  }
+
+  // "off 3" eteint un executor. "off" tout court reste le raccourci dimmer a zero,
+  // traite juste en dessous : c'est la presence du numero qui tranche.
+  if ((head === "off" || head === "release") && tokens[1] && /^\d+$/.test(norm(tokens[1]))) {
+    return { kind: "off", number: Number(norm(tokens[1])) };
+  }
+
+  // "group 2" rappelle un groupe de selection.
+  if (head === "group" || head === "groupe" || head === "grp") {
+    const numberToken = tokens[1] ? norm(tokens[1]) : "";
+    if (!/^\d+$/.test(numberToken)) {
+      return { kind: "error", message: "Numéro de groupe attendu (ex. GROUP 1)" };
+    }
+    return { kind: "group", number: Number(numberToken) };
+  }
+
+  // "preset 4" applique un preset du pool.
+  if (head === "preset" || head === "pre") {
+    const numberToken = tokens[1] ? norm(tokens[1]) : "";
+    if (!/^\d+$/.test(numberToken)) {
+      return { kind: "error", message: "Numéro de preset attendu (ex. PRESET 1)" };
+    }
+    return { kind: "preset", number: Number(numberToken) };
+  }
+
   // Raccourcis pupitre : "full" / "out" appliques directement a la selection.
   if (head === "full" || head === "out" || head === "off") {
     return { kind: "attr", attr: "dimmer", value: head === "full" ? 255 : 0 };
@@ -259,6 +341,10 @@ export const COMMAND_HELP: string[] = [
   "RED 100 / PAN 51D   règle un attribut (valeur en %, suffixe D = brut 0-255)",
   "CH 12 THRU 20 AT 75 écrit directement des canaux de l'univers",
   "ALL / CLEAR         sélectionne tout / vide la sélection",
+  "STORE 1 Ambiance    mémorise le plateau dans l'executor 1",
+  "GO 1 / OFF 1        rejoue / éteint un executor",
+  "STORE GROUP 2 Salon mémorise la sélection · GROUP 2 la rappelle",
+  "STORE PRESET 3 Bleu mémorise des valeurs · PRESET 3 les applique",
   "BLACKOUT            remet les 512 canaux à zéro",
-  "GOTO LIVE           change de vue (dashboard, patch, lampes, live, réglages)"
+  "GOTO PATCH          change de vue (live, patch, réseau, setup)"
 ];

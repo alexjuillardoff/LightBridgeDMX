@@ -1,19 +1,17 @@
 // Chassis de l'interface, pense comme la surface d'un pupitre grandMA :
 //
-//   ┌ barre d'etat (univers, sortie DMX, horloge, blackout) ┐
-//   │ barre de vues (onglets numerotes)                     │
-//   │ ecran (la vue active)            │ rail de touches      │
-//   │ ligne de commande                                     │
-//   └ navigation basse (mobile uniquement)                  ┘
+//   ┌ barre d'etat (univers, sortie DMX, programmer, horloge, blackout) ┐
+//   │ barre de vues (Live / Patch / Reseau / Setup)                     │
+//   │ ecran (la vue active)            │ rail de touches                │
+//   │ ligne de commande                                                 │
+//   └ navigation basse (mobile uniquement)                              ┘
 //
 // La vue active est lue/ecrite dans le hash de l'URL (useHashTab), donc un
 // rafraichissement ou un lien partage rouvre la meme vue.
 import { Suspense, lazy, useEffect } from "react";
-import { DashboardPage } from "../pages/DashboardPage";
-import { DevicesPage } from "../pages/DevicesPage";
-import { FixturesPage } from "../pages/FixturesPage";
-import { SettingsPage } from "../pages/SettingsPage";
-import { SmartLightsPage } from "../pages/SmartLightsPage";
+import { NetworkPage } from "../pages/NetworkPage";
+import { PatchPage } from "../pages/PatchPage";
+import { SetupPage } from "../pages/SetupPage";
 import { BottomNav } from "./BottomNav";
 import { CommandLine } from "./CommandLine";
 import { KeypadRail } from "./KeypadRail";
@@ -22,8 +20,8 @@ import { TabBar } from "./TabBar";
 import { TABS, TabId } from "./tabs";
 import { useHashTab } from "./useHashTab";
 
-// La vue Live est chargee a la demande (lazy) : c'est la plus lourde
-// (console DMX temps reel) et elle est inutile tant qu'on ne l'ouvre pas.
+// La vue Live est chargee a la demande (lazy) : c'est la plus lourde (plan de
+// travail, fenetres, pools) et elle est inutile tant qu'on ne l'ouvre pas.
 const LivePage = lazy(() => import("../pages/LivePage"));
 
 // Affiche pendant le telechargement du chunk de la vue Live.
@@ -37,24 +35,19 @@ const PageFallback = () => (
 // Choisit le composant de vue a afficher.
 const renderPage = (tab: TabId) => {
   switch (tab) {
-    case "dashboard":
-      return <DashboardPage />;
-    case "projecteurs":
-      return <FixturesPage />;
-    case "lampes":
-      return <SmartLightsPage />;
-    case "appareils":
-      return <DevicesPage />;
+    case "patch":
+      return <PatchPage />;
+    case "reseau":
+      return <NetworkPage />;
+    case "setup":
+      return <SetupPage />;
     case "live":
+    default:
       return (
         <Suspense fallback={<PageFallback />}>
           <LivePage />
         </Suspense>
       );
-    case "reglages":
-      return <SettingsPage />;
-    default:
-      return <DashboardPage />;
   }
 };
 

@@ -1,26 +1,31 @@
 // Rail de touches à droite de l'écran : la surface de commande du pupitre.
 //
-// Il reprend la colonne de touches d'un grandMA2 onPC — touches de fonction
-// (Fixture, Group, Thru, At…), pavé numérique, Please, Clear, B.O. — et chaque
-// touche écrit dans la même ligne de commande que la saisie clavier.
+// Il reprend la colonne de touches d'un grandMA2 onPC — touches de désignation
+// (Fixture, Group), opérateurs (Thru, +, At), pavé numérique, touches de mémoire
+// (Store, Go, Off), Please et B.O. — et chaque touche écrit dans la même ligne de
+// commande que la saisie clavier.
 //
 // On ne met ici que des touches qui font réellement quelque chose : pas de
-// décor inerte.
+// décor inerte. C'est aussi pour ça que Store / Go / Off n'y figuraient pas
+// avant — ils ne menaient nulle part tant que les executors n'existaient pas.
 import { useAppData } from "../contexts/AppDataContext";
 import { useCommand } from "../contexts/CommandContext";
+import { useConsole } from "../contexts/ConsoleContext";
 import { useSelection } from "../contexts/SelectionContext";
 
 // Une touche du rail : libellé, action, et variante de couleur.
 type KeyDef = {
   label: string;
   onPress: () => void;
-  tone?: "amber" | "red" | "please";
+  tone?: "amber" | "red" | "please" | "store";
   span?: boolean;
+  title?: string;
 };
 
 const KeyButton = ({ def }: { def: KeyDef }) => (
   <button
     type="button"
+    title={def.title}
     className={`ma-key ${
       def.tone === "amber"
         ? "ma-key-amber"
@@ -28,6 +33,8 @@ const KeyButton = ({ def }: { def: KeyDef }) => (
         ? "ma-key-red"
         : def.tone === "please"
         ? "ma-key-please"
+        : def.tone === "store"
+        ? "ma-key-store"
         : ""
     } ${def.span ? "ma-key-wide" : ""}`}
     onClick={def.onPress}
@@ -39,6 +46,7 @@ const KeyButton = ({ def }: { def: KeyDef }) => (
 export const KeypadRail = () => {
   const { input, setInput, append, backspace, submit, runLine } = useCommand();
   const { selectedIds, clear } = useSelection();
+  const { executors, groups } = useConsole();
   const { handleBlackout, handleRefreshLibrary } = useAppData();
 
   // Touche Clear : efface la saisie en cours si elle existe, sinon vide la
@@ -54,7 +62,7 @@ export const KeypadRail = () => {
   // Touches de désignation (haut du rail).
   const targetKeys: KeyDef[] = [
     { label: "Fixture", onPress: () => append("fixture"), tone: "amber" },
-    { label: "Channel", onPress: () => append("channel"), tone: "amber" },
+    { label: "Group", onPress: () => append("group"), tone: "amber" },
     { label: "All", onPress: () => runLine("all"), tone: "amber" }
   ];
 
@@ -71,10 +79,23 @@ export const KeypadRail = () => {
     onPress: () => append(d)
   }));
 
-  // Valeurs rapides et exécution.
+  // Valeurs rapides.
   const valueKeys: KeyDef[] = [
     { label: "Full", onPress: () => runLine("full"), tone: "amber" },
     { label: "Out", onPress: () => runLine("out"), tone: "amber" }
+  ];
+
+  // Mémoire : ces trois touches préfixent la ligne, on complète par un numéro
+  // puis Please — « Store 3 Please », exactement comme sur un pupitre.
+  const memoryKeys: KeyDef[] = [
+    {
+      label: "Store",
+      onPress: () => append("store"),
+      tone: "store",
+      title: "Store <n> Please — mémorise dans l'executor n"
+    },
+    { label: "Go", onPress: () => append("go"), tone: "amber", title: "Go <n> Please — rejoue l'executor n" },
+    { label: "Off", onPress: () => append("off"), tone: "amber", title: "Off <n> Please — éteint l'executor n" }
   ];
 
   return (
@@ -108,24 +129,36 @@ export const KeypadRail = () => {
         <KeyButton def={{ label: "Clear", onPress: onClear }} />
       </div>
 
+      <div className="ma-rail-title">Mémoire</div>
+      <div className="ma-keys-3">
+        {memoryKeys.map((k) => (
+          <KeyButton key={k.label} def={k} />
+        ))}
+      </div>
+
       <div className="ma-keys-3">
         <KeyButton def={{ label: "Please", onPress: submit, tone: "please", span: true }} />
         <KeyButton def={{ label: "B.O.", onPress: () => void handleBlackout(), tone: "red" }} />
       </div>
 
-      <div className="ma-rail-title">Système</div>
+      <div className="ma-rail-title">Vues</div>
       <div className="ma-keys-3">
-        <KeyButton def={{ label: "Help", onPress: () => runLine("help") }} />
-        <KeyButton def={{ label: "Patch", onPress: () => runLine("goto patch") }} />
         <KeyButton def={{ label: "Live", onPress: () => runLine("goto live") }} />
+        <KeyButton def={{ label: "Patch", onPress: () => runLine("goto patch") }} />
+        <KeyButton def={{ label: "Réseau", onPress: () => runLine("goto reseau") }} />
         <KeyButton def={{ label: "Setup", onPress: () => runLine("goto setup") }} />
-        <KeyButton def={{ label: "Lights", onPress: () => runLine("goto lights") }} />
+        <KeyButton def={{ label: "Help", onPress: () => runLine("help") }} />
         <KeyButton def={{ label: "Update", onPress: () => void handleRefreshLibrary() }} />
       </div>
 
-      {/* Rappel de l'état du programmer, comme le compteur de sélection MA. */}
-      <div className="ma-rail-title">
-        Programmer : {selectedIds.length ? `${selectedIds.length} fixture(s)` : "vide"}
+      {/* Rappel de l'état des pools, comme les compteurs de la surface MA. */}
+      <div className="ma-rail-state">
+        <span>Programmer</span>
+        <strong>{selectedIds.length ? `${selectedIds.length} fixture(s)` : "vide"}</strong>
+        <span>Executors</span>
+        <strong>{executors.filter(Boolean).length} assigné(s)</strong>
+        <span>Groupes</span>
+        <strong>{groups.length}</strong>
       </div>
     </aside>
   );

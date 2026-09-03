@@ -13,6 +13,7 @@ import {
   MerossConsumption,
   MerossStatus,
   NanoleafDiscovered,
+  Preset,
   QxfLibraryFixture,
   Scene,
   SmartLight,
@@ -101,8 +102,23 @@ export const api = {
       fetchJSON<Fixture>("/api/fixtures/import/qxf-library", { method: "POST", body: JSON.stringify(body) })
   },
   // Scenes enregistrees (etats rappelables de plusieurs canaux).
+  // Ce sont les "executors" du pupitre : STORE ecrit une scene, GO la rejoue.
   scenes: {
-    list: () => fetchJSON<Scene[]>("/api/scenes")
+    list: () => fetchJSON<Scene[]>("/api/scenes"),
+    create: (body: { name: string; steps: { fixtureId: string; values: number[] }[] }) =>
+      fetchJSON<Scene>("/api/scenes", { method: "POST", body: JSON.stringify(body) }),
+    // Rejoue la scene cote backend : chaque pas est reecrit sur le DMX, puis un
+    // evenement scene_activated est diffuse a toutes les UI connectees.
+    activate: (id: string) =>
+      fetchJSON<{ ok: true }>(`/api/scenes/${id}/activate`, { method: "POST" })
+  },
+  // Presets : jeux de valeurs de canaux reutilisables (le "pool" du pupitre).
+  presets: {
+    list: () => fetchJSON<Preset[]>("/api/presets"),
+    create: (body: { name: string; payload: Record<string, number> }) =>
+      fetchJSON<Preset>("/api/presets", { method: "POST", body: JSON.stringify(body) }),
+    apply: (id: string) =>
+      fetchJSON<{ ok: true }>(`/api/presets/${id}/apply`, { method: "POST" })
   },
   // Univers DMX : ecrit la valeur 0-255 d'un canal donne (console DMX / curseurs).
   universe: {

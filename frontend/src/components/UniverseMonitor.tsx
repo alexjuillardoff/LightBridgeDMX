@@ -33,13 +33,10 @@ export const UniverseMonitor = () => {
   const active = values.filter((v) => v > 0).length;
 
   return (
-    <div className="card grid-span-full">
-      <h2>
-        DMX Sheet · Univers 01
-        <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 400 }}>
-          {active} canaux actifs / 512
-        </span>
-      </h2>
+    <div className="monitor-wrap">
+      <p className="monitor-head">
+        Univers 01 · <strong>{active}</strong> canaux actifs / 512
+      </p>
 
       <div className="ma-monitor" role="img" aria-label={`Univers DMX : ${active} canaux actifs sur 512`}>
         {values.map((value, index) => {

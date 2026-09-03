@@ -1,13 +1,18 @@
 // Bandeau d'encodeurs, calqué sur le haut d'écran d'un grandMA2 : une rangée
 // d'onglets de groupe numérotés (1 Dimmer, 2 Color, 3 Position, 4 Beam) et,
-// en dessous, quatre molettes avec leur boîte de valeur à liseré rouge.
+// en dessous, les molettes avec leur boîte de valeur à liseré rouge.
 //
 // Les encodeurs agissent sur TOUS les projecteurs sélectionnés à la fois ; la
 // valeur affichée est la plus haute de la sélection (convention HTP).
+//
+// Sous les molettes, une rangée de valeurs rapides (0 / 25 / 50 / 75 / Full)
+// évite de faire tourner un encodeur au pixel près pour poser une valeur ronde —
+// c'est le réflexe « At 50 Please » de la ligne de commande, à portée de clic.
 import { useMemo, useState } from "react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useSelection } from "../contexts/SelectionContext";
 import { useUniverseState } from "../contexts/UniverseStateContext";
+import { isLockedFixture } from "../lib/fixtureGuard";
 import {
   ATTR_COLORS,
   ATTR_GROUPS,
@@ -20,6 +25,9 @@ import {
 } from "../lib/programmer";
 import { MaKnob } from "./ma/MaKnob";
 
+// Valeurs rapides proposées sous chaque encodeur, en pourcent.
+const QUICK_VALUES = [0, 25, 50, 75, 100];
+
 export const EncoderBar = () => {
   const { fixtures, handleUpdateChannel } = useAppData();
   const { universeState } = useUniverseState();
@@ -28,25 +36,19 @@ export const EncoderBar = () => {
   const [groupId, setGroupId] = useState<AttrGroupId>("dimmer");
 
   const values = useMemo(() => universeState?.values ?? new Array(512).fill(0), [universeState]);
+  // Double garde : la sélection est déjà purgée des verrouillés, mais un
+  // projecteur peut avoir été renommé « chambre » depuis qu'il a été sélectionné.
   const selected = useMemo(
-    () => fixtures.filter((f) => selectedIds.includes(f.id)),
+    () => fixtures.filter((f) => selectedIds.includes(f.id) && !isLockedFixture(f)),
     [fixtures, selectedIds]
   );
 
   const group = ATTR_GROUPS.find((g) => g.id === groupId) ?? ATTR_GROUPS[0];
-  // Quatre encodeurs maximum, comme sur la surface : on ne montre que les
-  // attributs réellement présents sur la sélection.
+  // On ne montre que les attributs réellement présents sur la sélection.
   const attrs = useMemo(() => attrsForSelection(selected, group).slice(0, 4), [selected, group]);
 
   return (
-    <div className="card">
-      <h2>
-        Encoders
-        <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 400 }}>
-          {selected.length ? `${selected.length} fixture(s) sélectionnée(s)` : "sélection vide"}
-        </span>
-      </h2>
-
+    <div className="encoder-wrap">
       {/* Onglets de groupe numérotés, comme la rangée du haut sur MA2. */}
       <div className="ma-grouptabs">
         {ATTR_GROUPS.map((g, index) => (
@@ -65,7 +67,7 @@ export const EncoderBar = () => {
 
       {!selected.length ? (
         <div className="ma-encoder-empty">
-          Sélectionnez une fixture dans la sheet, ou tapez FIXTURE 1 PLEASE
+          Sélectionnez un projecteur dans la Fixture Sheet, ou tapez <code>FIXTURE 1</code> puis Please
         </div>
       ) : !attrs.length ? (
         <div className="ma-encoder-empty">Aucun attribut « {group.label} » sur cette sélection</div>
@@ -87,6 +89,22 @@ export const EncoderBar = () => {
                   color={color}
                   onChange={(next) => applyAttr(selected, attr, next, handleUpdateChannel)}
                 />
+
+                <div className="ma-encoder-quick">
+                  {QUICK_VALUES.map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      className="ma-encoder-quickbtn"
+                      onClick={() =>
+                        applyAttr(selected, attr, Math.round((pct / 100) * 255), handleUpdateChannel)
+                      }
+                    >
+                      {pct === 100 ? "FL" : pct}
+                    </button>
+                  ))}
+                </div>
+
                 <span className="ma-cell-meta" style={{ textAlign: "center" }}>
                   {value} / 255 DMX
                 </span>

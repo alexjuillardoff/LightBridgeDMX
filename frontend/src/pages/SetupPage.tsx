@@ -1,4 +1,4 @@
-// Onglet Reglages : etat du pont HomeKit, configuration de la prise Meross,
+// Vue "Setup" : etat du pont HomeKit, configuration de la prise Meross,
 // infos runtime du frontend, rappel des variables backend et maintenance (redemarrage).
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ import { api, wsUrl } from "../lib/api";
 // Base de l'API : variable d'env Vite si definie, sinon on passe par le proxy Vite vers :5000.
 const apiBase = (import.meta.env.VITE_API_BASE as string | undefined) || "(proxy Vite → :5000)";
 
-export const SettingsPage = () => {
+export const SetupPage = () => {
   const { homekitStatus, homekitStatusLoading, homekitStatusError, wsStatus, wsBadge } = useAppData();
 
   // Redemarrage complet de LightBridgeDMX (backend + frontend + QLC+).

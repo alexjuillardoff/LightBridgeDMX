@@ -1,18 +1,20 @@
-// Hook React qui synchronise l'onglet actif de l'UI avec le hash de l'URL (ex. #live).
-// Avantage : l'onglet est dans l'URL, donc rafraichir la page ou partager le lien
-// conserve l'onglet ouvert, et les boutons precedent/suivant du navigateur fonctionnent.
+// Hook React qui synchronise la vue active de l'UI avec le hash de l'URL (ex. #live).
+// Avantage : la vue est dans l'URL, donc rafraichir la page ou partager le lien
+// conserve la vue ouverte, et les boutons precedent/suivant du navigateur fonctionnent.
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_TAB, TabId, isTabId } from "./tabs";
+import { DEFAULT_TAB, TabId, isTabId, resolveTabId } from "./tabs";
 
-// Lit l'onglet depuis le hash courant de l'URL.
-// Si le hash est absent, inconnu, ou si on est cote serveur (pas de window), on retombe sur l'onglet par defaut.
+// Lit la vue depuis le hash courant de l'URL.
+// Si le hash est absent, inconnu, ou si on est cote serveur (pas de window), on
+// retombe sur la vue par defaut. Les anciens hashs (#dashboard, #reglages...)
+// sont traduits vers leur equivalent actuel par resolveTabId.
 const fromHash = (): TabId => {
   if (typeof window === "undefined") return DEFAULT_TAB;
   const h = window.location.hash.replace(/^#/, "");
-  return isTabId(h) ? h : DEFAULT_TAB;
+  return resolveTabId(h) ?? DEFAULT_TAB;
 };
 
-// Renvoie [onglet actif, fonction pour changer d'onglet].
+// Renvoie [vue active, fonction pour changer de vue].
 export const useHashTab = (): [TabId, (next: TabId) => void] => {
   const [tab, setTab] = useState<TabId>(fromHash);
 
@@ -20,10 +22,12 @@ export const useHashTab = (): [TabId, (next: TabId) => void] => {
   // et met l'etat React a jour en consequence.
   useEffect(() => {
     const onChange = () => {
+      const raw = window.location.hash.replace(/^#/, "");
       const next = fromHash();
-      // Avertit dans la console si le hash existe mais ne correspond a aucun onglet connu : on retombe alors sur l'onglet par defaut.
-      if (!isTabId(window.location.hash.replace(/^#/, "")) && window.location.hash) {
-        console.warn(`Unknown tab hash "${window.location.hash}", falling back to #${DEFAULT_TAB}`);
+      // Avertit dans la console si le hash existe mais ne correspond a rien de
+      // connu : on retombe alors sur la vue par defaut.
+      if (raw && resolveTabId(raw) === null) {
+        console.warn(`Unknown tab hash "#${raw}", falling back to #${DEFAULT_TAB}`);
       }
       setTab(next);
     };
@@ -31,7 +35,7 @@ export const useHashTab = (): [TabId, (next: TabId) => void] => {
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
 
-  // Change d'onglet de maniere programmatique.
+  // Change de vue de maniere programmatique.
   const setActive = useCallback((next: TabId) => {
     if (!isTabId(next)) return;
     // On modifie le hash de l'URL : l'evenement "hashchange" ci-dessus fera alors le setTab.

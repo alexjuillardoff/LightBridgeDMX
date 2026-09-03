@@ -734,11 +734,6 @@ main.app-main {
   color: var(--faint);
 }
 
-.live-section {
-  scroll-margin-top: 6px;
-  margin-bottom: 10px;
-}
-
 .flex-between {
   display: flex;
   align-items: center;
@@ -864,16 +859,6 @@ button:focus-visible {
   gap: 3px;
   flex-wrap: wrap;
   margin-bottom: 6px;
-}
-
-.anchor-nav {
-  display: flex;
-  gap: 3px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-  padding: 3px;
-  background: var(--panel);
-  border: 1px solid var(--line-soft);
 }
 
 /* Onglets de groupe numérotés (1 Dimmer, 2 Position...) du bandeau encodeurs. */
@@ -1472,98 +1457,618 @@ select {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
-/* Rangée d'executors : tuiles rouge sombre avec numéro et "Go". */
-.ma-execs {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
-  gap: 3px;
-}
+/* ─── 8b. Plan de travail : fenêtres, views et pools ─────────────────────── */
 
-.ma-exec {
-  position: relative;
+/* La vue Live n'est plus une page qui défile : c'est un plan sur lequel on pose
+   des fenêtres. Tout ce qui suit dessine ce plan, ses fenêtres, et les tuiles
+   des pools (executors, groupes, presets). */
+
+.workspace-root {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+/* Barre des Views : rappel d'un agencement par son numéro. */
+.workspace-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 3px 6px;
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  color: var(--amber-text);
+}
+
+.workspace-bar-label {
+  margin-right: 4px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.workspace-bar-spacer {
+  flex: 1;
+}
+
+.workspace-hint {
+  font-size: 11px;
+}
+
+.workspace-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  color: var(--dim);
+}
+
+.workspace-view-num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.workspace-view-active {
+  background: linear-gradient(180deg, #3a2f10 0%, #141006 100%);
+  border-color: var(--edge);
+  color: #ffffff;
+}
+
+.workspace-view-active .workspace-view-num {
+  color: var(--yellow);
+}
+
+/* Menu « + Fenêtre » : une entrée par type déclaré au registre. */
+.workspace-add {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 3px;
-  min-height: 58px;
-  padding: 4px 6px 14px;
-  background: linear-gradient(180deg, #3a1210 0%, #170707 100%);
+  padding: 5px;
+  background: var(--panel);
   border: 1px solid var(--edge);
+}
+
+.workspace-add button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 8px;
   text-align: left;
 }
 
-.ma-exec-num {
-  position: absolute;
-  top: 2px;
-  right: 4px;
-  font-family: var(--font-mono);
-  font-size: 11px;
+.workspace-add button strong {
+  font-size: 12px;
   color: #ffffff;
 }
 
-.ma-exec-name {
-  font-size: 13px;
-  font-weight: 700;
+.workspace-add button .muted {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.workspace {
+  position: relative;
+  width: 100%;
+}
+
+.workspace-empty {
+  padding: 24px 12px;
+}
+
+/* --- Une fenêtre du plan --- */
+
+.ma-win {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--edge-grey);
+  overflow: hidden;
+}
+
+/* Pendant un glissement, la fenêtre s'éclaire : on voit ce qu'on déplace. */
+.ma-win-dragging {
+  border-color: var(--yellow);
+  box-shadow: 0 0 0 1px rgba(242, 197, 61, 0.35);
+}
+
+.ma-win-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  background: linear-gradient(180deg, #2b7fd0 0%, #10457d 100%);
+  border-bottom: 1px solid #0a2f57;
   color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: grab;
+  /* Indispensable au tactile : sans ça le navigateur défile au lieu de déplacer. */
+  touch-action: none;
+  user-select: none;
+}
+
+.ma-win-dragging .ma-win-title {
+  cursor: grabbing;
+}
+
+.ma-win-grip {
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+
+.ma-win-name {
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.ma-exec-meta {
+.ma-win-badge {
+  margin-left: auto;
+  padding: 0 5px;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: #c9a9a5;
+  font-weight: 400;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-/* Bandeau "Go" en pied de tuile, comme les executors MA. */
-.ma-exec::after {
-  content: "Go";
+.ma-win-close {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  margin-left: 2px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #cfe3f7;
+}
+
+.ma-win-close:hover {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+
+.ma-win-body {
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  overflow: auto;
+}
+
+/* Poignée de redimensionnement : les hachures d'angle d'une fenêtre MA. */
+.ma-win-resize {
   position: absolute;
-  left: 0;
   right: 0;
   bottom: 0;
-  padding: 0 4px;
-  font-size: 10px;
-  font-weight: 700;
-  color: #d8d8d8;
-  background: rgba(0, 0, 0, 0.55);
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  width: 15px;
+  height: 15px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(
+    135deg,
+    transparent 0 48%,
+    var(--edge) 48% 58%,
+    transparent 58% 70%,
+    var(--edge) 70% 80%,
+    transparent 80%
+  );
 }
 
-.ma-exec-empty {
-  background: #050505;
-  border-color: var(--line-soft);
+/* Variante empilée (mobile) : même habillage, sans géométrie ni glissement. */
+.ma-win-static {
+  position: relative;
+}
+
+.ma-win-static .ma-win-title {
   cursor: default;
 }
 
-.ma-exec-empty .ma-exec-name {
+.ma-win-static .ma-win-body {
+  max-height: 70vh;
+}
+
+.workspace-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Un panneau conçu comme une carte autonome (Dance…) posé dans une fenêtre perd
+   son propre cadre : c'est la fenêtre qui le fournit, on ne veut pas deux
+   bordures ni deux barres de titre imbriquées. */
+.ma-win-body .card {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.ma-win-body .card h2 {
+  margin: 0 0 5px;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--amber-text);
+}
+
+.ma-win-body .card h2::before {
+  display: none;
+}
+
+/* --- Pools : executors, groupes, presets --- */
+
+.pool {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pool-hint {
+  margin: 0;
+  font-size: 11px;
   color: var(--faint);
 }
 
-.ma-exec-empty::after {
-  content: "";
-  border-top: none;
+.pool-hint strong {
+  color: var(--amber-text);
 }
 
-/* ─── 9. Blocs spécifiques ──────────────────────────────────────────────── */
-
-.dashboard-grid {
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
-.quick-actions-grid {
+.pool-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 220px));
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 3px;
+  align-content: start;
+}
+
+.pool-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 78px;
+  padding: 4px 5px 5px;
+  text-align: left;
+  font-family: var(--font-ui);
+  background: linear-gradient(180deg, #141414 0%, #050505 100%);
+  border: 1px solid var(--edge-grey);
+}
+
+.pool-num {
+  position: absolute;
+  top: 2px;
+  right: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.pool-name {
+  padding-right: 16px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pool-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+/* Emplacement libre : liseré pointillé, comme un slot vide de pupitre. */
+.pool-tile-empty {
+  cursor: pointer;
+  border-style: dashed;
+}
+
+.pool-tile-empty .pool-name {
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.pool-tile-empty:hover {
+  border-color: var(--edge);
+  background: linear-gradient(180deg, #1c1c1c 0%, #0a0a0a 100%);
+}
+
+.pool-store {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: auto;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.pool-tile-empty:hover .pool-store {
+  color: var(--amber-text);
+}
+
+/* Code couleur par pool, comme les pools colorés d'un MA. */
+.pool-tile-exec {
+  background: linear-gradient(180deg, #3a1210 0%, #170707 100%);
+  border-color: var(--edge);
+}
+
+.pool-tile-group {
+  background: linear-gradient(180deg, #102a3a 0%, #061118 100%);
+  border-color: #2f6f96;
+}
+
+.pool-tile-preset {
+  background: linear-gradient(180deg, #2a1035 0%, #120618 100%);
+  border-color: #8a4a8a;
+}
+
+/* Bandeau d'action principal de la tuile (Go / Sélectionner / Appliquer). */
+.pool-go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: auto;
+  padding: 3px 4px;
+  font-size: 11px;
+  color: #e8e8e8;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.pool-go:hover:not(:disabled) {
+  background: var(--green);
+  border-color: #2c8f45;
+  color: #04170a;
+}
+
+.pool-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 3px;
+}
+
+.pool-actions button {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 2px 0;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--edge-grey);
+  color: var(--dim);
+}
+
+.pool-actions button:hover {
+  border-color: var(--edge);
+  color: var(--amber-text);
+}
+
+/* --- Playbacks : la rangée de faders master --- */
+
+.playbacks {
+  display: flex;
+  /* Chaque colonne garde sa hauteur naturelle : étirée, elle laisserait une
+     large bande vide sous les touches Go/Off. */
+  align-items: flex-start;
+  gap: 4px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+}
+
+.playback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 62px;
+  padding: 4px 3px 5px;
+  background: linear-gradient(180deg, #141414 0%, #050505 100%);
+  border: 1px solid var(--edge-grey);
+}
+
+.playback-empty {
+  opacity: 0.5;
+}
+
+.playback-num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--amber-text);
+}
+
+.playback-pct {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--yellow);
+}
+
+.playback-empty .playback-pct {
+  color: var(--faint);
+}
+
+.playback-name {
+  max-width: 58px;
+  font-size: 10px;
+  text-align: center;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playback-keys {
+  display: flex;
+  gap: 2px;
+}
+
+.playback-keys button {
+  padding: 2px 6px;
+}
+
+/* --- Fixture sheet : barre d'outils et regroupement par pièce --- */
+
+.sheet-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sheet-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.sheet-toolbar-keys {
+  display: flex;
   gap: 3px;
 }
 
-.quick-actions-grid button {
-  width: 100%;
-  min-height: 34px;
+.sheet-room {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
-.activity-card {
-  grid-column: 1 / -1;
+/* Titre de pièce : l'équivalent d'un layer de pupitre. */
+.sheet-room-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
+
+.sheet-room-count {
+  font-family: var(--font-mono);
+  color: var(--amber-text);
+}
+
+/* Projecteur verrouillé : hachuré, cadenas rouge, clic sans effet. Il reste
+   lisible (on veut voir son niveau) mais il est visiblement hors d'atteinte. */
+.ma-cell-locked,
+.ma-cell-locked:hover {
+  cursor: not-allowed;
+  border-color: var(--edge-grey);
+  background: repeating-linear-gradient(135deg, #0e0e0e 0 6px, #070707 6px 12px);
+}
+
+.ma-cell-locked:hover {
+  border-color: var(--red);
+}
+
+.ma-cell-locked .ma-cell-name,
+.ma-cell-locked .ma-cell-value {
+  color: var(--faint);
+}
+
+.ma-cell-lock {
+  flex: 0 0 auto;
+  color: var(--red-bright);
+}
+
+/* --- Encodeurs : valeurs rapides sous chaque molette --- */
+
+.encoder-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ma-encoder-quick {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+}
+
+.ma-encoder-quickbtn {
+  min-width: 26px;
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* --- Divers contenus de fenêtre --- */
+
+.channel-range {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--amber-text);
+}
+
+.monitor-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.monitor-head {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.monitor-head strong {
+  font-family: var(--font-mono);
+  color: var(--yellow);
+}
+
+.network-lead {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+/* Compteurs du bas du rail de touches : l'état des pools en un coup d'œil. */
+.ma-rail-state {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 8px;
+  margin-top: 8px;
+  padding: 5px 6px;
+  background: #000000;
+  border: 1px solid var(--line-soft);
+  font-size: 10px;
+}
+
+.ma-rail-state span {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.ma-rail-state strong {
+  font-family: var(--font-mono);
+  text-align: right;
+  color: var(--amber-text);
+}
+
+/* Touche Store : rouge sombre, comme la touche de mémorisation d'un pupitre. */
+.ma-key-store {
+  border-color: var(--red);
+  color: #ffb4ab;
+}
+
+/* ─── 9. Blocs spécifiques ──────────────────────────────────────────────── */
 
 .activity-list {
   margin: 0;
@@ -1801,9 +2306,6 @@ select {
   .channels {
     grid-template-columns: repeat(8, minmax(46px, 1fr));
   }
-  .quick-actions-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
   .ma-encoders {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -1836,7 +2338,7 @@ select {
      la sortie DMX (qui vire au rouge si le lien tombe) et la sélection, qui dit
      sur quoi les commandes vont agir. L'horloge (le téléphone l'affiche déjà),
      l'univers, le compteur de projecteurs, les canaux actifs et les LED sont
-     masqués : on les retrouve sur le tableau de bord. */
+     masqués : ils restent lisibles dès qu'on élargit la fenêtre. */
   .ma-readout-clock,
   .ma-readout-secondary,
   .ma-statusbar .ma-led {
@@ -1886,13 +2388,25 @@ select {
     height: 16px;
   }
 
+  /* Pools : deux colonnes suffisent, les tuiles restent cliquables au pouce. */
+  .pool-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  }
+
+  .sheet-toolbar {
+    flex-wrap: wrap;
+  }
+
+  /* Le plan de travail est empilé sous 1024 px : ses fenêtres prennent toute
+     la largeur et n'ont plus de hauteur imposée. */
+  .ma-win-static .ma-win-body {
+    max-height: none;
+  }
+
   .ma-encoders {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .quick-actions-grid {
-    grid-template-columns: 1fr;
-  }
 
   .input-inline {
     flex-direction: column;
