@@ -69,6 +69,10 @@ type RuntimeEntry = {
   /** Derniere trame par zone lue depuis le miroir DMX par zone (null si pas de miroir zones,
    *  ou tant qu'aucun tick DMX n'est passe). Sert aussi de reference pour detecter un changement. */
   dmxZones: Array<{ index: number; r: number; g: number; b: number }> | null;
+  /** Rang de la derniere ecriture DMX faite par le moteur d'effets pour cette lampe
+   *  (0 = jamais). Sert a detecter qu'un autre auteur — fader, scene, blackout — a
+   *  ecrit sur le bloc miroir depuis notre derniere trame. */
+  effectDmxSeq: number;
   /** True quand le bloc DMX par zone a bouge en dernier — le DMX possede alors le bandeau
    *  (priorite sur l'effet et sur desired.on). Une ecriture locale (painter, effet, couleur)
    *  rend la main jusqu'au prochain mouvement du DMX. */
@@ -484,7 +488,8 @@ export class SmartLightService extends EventEmitter {
       // On repart d'un backoff neuf a chaque (re)enregistrement : un changement de
       // config est justement l'occasion de retenter tout de suite.
       streamRetryAt: 0,
-      streamFailures: 0
+      streamFailures: 0,
+      effectDmxSeq: 0
     });
   }
 
@@ -792,6 +797,15 @@ export class SmartLightService extends EventEmitter {
       zones.push({ index: i, r, g, b });
     }
 
+    // Le moteur d'effets publie sa trame sur ces memes canaux (pour que le pupitre
+    // la voie bouger) : en la relisant ici, on la prendrait pour une commande DMX et
+    // le miroir volerait le bandeau a l'effet a la trame suivante. On memorise donc
+    // les valeurs comme reference, sans y voir un mouvement du DMX.
+    if (this.dmx.isBlockOwnedBy(cfg.startChannel, cfg.zoneCount * 3, effectDmxSource(entry.light.id))) {
+      entry.dmxZones = zones;
+      return;
+    }
+
     const prev = entry.dmxZones;
     const changed =
       !prev ||
@@ -897,6 +911,50 @@ export class SmartLightService extends EventEmitter {
     }
   }
 
+  /** Publie la trame calculee par le moteur d'effets sur les canaux du miroir DMX
+   *  par zone, s'il est configure.
+   *
+   *  Pourquoi : sans cela, un effet est invisible du reste du pupitre — les canaux du
+   *  bandeau restent a zero pendant que le ruban joue, on ne voit rien bouger dans la
+   *  Fader View ni dans la DMX Sheet, et un « all out » qui ecrit zero sur des canaux
+   *  deja a zero ne change rien, donc n'eteint pas le bandeau. En publiant la trame,
+   *  l'effet devient une source DMX comme une autre : on la voit, et on peut la reprendre.
+   *
+   *  L'ecriture est signee (source) pour que le miroir reconnaisse ses propres valeurs
+   *  en les relisant, au lieu d'y voir une commande venue du pupitre. */
+  private publishEffectToDmx(entry: RuntimeEntry, frame: Array<{ r: number; g: number; b: number }>): void {
+    const cfg = entry.light.dmxMirror?.zones;
+    if (!cfg) return;
+    const count = Math.min(cfg.zoneCount, frame.length);
+    const values = new Array<number>(count * 3);
+    for (let i = 0; i < count; i++) {
+      const c = frame[i];
+      values[i * 3] = c.r;
+      values[i * 3 + 1] = c.g;
+      values[i * 3 + 2] = c.b;
+    }
+    this.dmx.applyWrite({ address: cfg.startChannel, values }, effectDmxSource(entry.light.id));
+    entry.effectDmxSeq = this.dmx.writeSequence();
+  }
+
+  /** Rend le bandeau au DMX si un autre auteur a ecrit sur le bloc miroir depuis la
+   *  derniere trame d'effet. C'est ce qui fait qu'un blackout ou un fader reprend la
+   *  main sur un effet en cours, sans course entre les deux boucles a 30 Hz. */
+  private yieldIfDmxWroteOverEffect(entry: RuntimeEntry): void {
+    const cfg = entry.light.dmxMirror?.zones;
+    if (!cfg || entry.effectDmxSeq === 0 || entry.dmxZonesOwned) return;
+    const foreign = this.dmx.hasForeignWriteSince(
+      cfg.startChannel,
+      cfg.zoneCount * 3,
+      effectDmxSource(entry.light.id),
+      entry.effectDmxSeq
+    );
+    if (!foreign) return;
+    entry.dmxZonesOwned = true;
+    entry.effectDmxSeq = 0;
+    entry.lastLocalWriteAt = Date.now();
+  }
+
   /** Chemin UDP : pour chaque lampe en streaming, envoie l'etat voulu courant toutes les ~33 ms.
    *  On envoie a CHAQUE tick (pas seulement sur diff) parce que :
    *    1. l'UDP est peu couteux (pas de poignee de main TCP) ;
@@ -913,6 +971,12 @@ export class SmartLightService extends EventEmitter {
     for (const entry of this.runtime.values()) {
       const s = entry.streamer;
       if (!s?.isEnabled()) continue;
+      // Quelqu'un d'autre (fader, scene, blackout « all out ») a-t-il ecrit sur le
+      // bloc miroir depuis notre derniere trame d'effet ? Cette question se pose ici,
+      // et pas a la lecture du tick DMX : entre deux ticks, l'effet a le temps de
+      // repeindre le bloc, et le blackout passerait inapercu.
+      this.yieldIfDmxWroteOverEffect(entry);
+
       // Miroir DMX par zone actif : le pupitre possede le bandeau. On passe donc
       // AVANT la garde desired.on, pour qu'un noir envoye depuis le DMX (blackout)
       // eteigne bien le bandeau au lieu de rendre la main a l'effet en cours.
@@ -932,6 +996,7 @@ export class SmartLightService extends EventEmitter {
         const layout = entry.light.zoneLayout ?? defaultLinearLayout(entry.light.streaming?.zoneCount ?? 50);
         const frame = evaluateEffect(effect, layout, tNow);
         s.sendZones(frame.map((c, i) => ({ index: i, r: c.r, g: c.g, b: c.b })));
+        this.publishEffectToDmx(entry, frame);
         continue;
       }
       if (entry.zonePalette) {
@@ -942,6 +1007,12 @@ export class SmartLightService extends EventEmitter {
       s.sendUniform(rgb);
     }
   }
+}
+
+/** Signature des ecritures DMX faites par le moteur d'effets pour une lampe donnee.
+ *  Une lampe par signature : deux bandeaux ne se reconnaissent pas l'un l'autre. */
+function effectDmxSource(lightId: string): string {
+  return `effect:${lightId}`;
 }
 
 /** Deux configs de miroir par zone visent-elles le meme bloc de canaux ?

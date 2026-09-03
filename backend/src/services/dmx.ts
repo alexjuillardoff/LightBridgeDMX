@@ -45,6 +45,13 @@ export class DmxService extends EventEmitter {
   // Etat des 512 canaux DMX (valeurs 0-255). C'est la source de verite poussee
   // a chaque trame.
   private universe: number[] = Array(512).fill(0);
+  // Qui a ecrit chaque canal en dernier, et a quel rang d'ecriture. Deux tableaux
+  // de 512 entrees tenus a jour par applyWrite/setChannel : ils ne changent rien a
+  // la sortie, ils repondent seulement a « ce canal a-t-il bouge sous ma main ou
+  // sous une autre ? ». Voir hasForeignWriteSince / isBlockOwnedBy.
+  private writeSeq = 0;
+  private channelSeq: number[] = Array(512).fill(0);
+  private channelSource: Array<string | undefined> = Array(512).fill(undefined);
   // Minuteur de la boucle de trames (un setTimeout reprogramme a chaque tick).
   private tickTimer: NodeJS.Timeout | null = null;
   // Horodatage cible du prochain tick, sert a corriger la derive du minuteur.
@@ -137,20 +144,62 @@ export class DmxService extends EventEmitter {
   // Applique une ecriture DMX : pose les valeurs a partir de l'adresse de depart.
   // NB : address est 1-based (canal 1 = 1er canal), d'ou le "- 1" pour l'index
   // du tableau. Les canaux hors univers sont ignores en silence.
-  applyWrite(write: DmxWrite) {
+  //
+  // `source` identifie l'auteur de l'ecriture (ex. "effect:<id>"). Il n'a aucun
+  // effet sur la sortie : il sert a repondre a la question « qui a ecrit ce canal
+  // en dernier ? », dont un ecrivain periodique a besoin pour savoir si quelqu'un
+  // d'autre lui est passe dessus entre deux de ses trames. Sans lui, un effet qui
+  // repeint le meme bloc 30 fois par seconde ecraserait silencieusement un blackout.
+  applyWrite(write: DmxWrite, source?: string) {
     const { address, values } = write;
     values.forEach((value, idx) => {
       const channel = address + idx - 1;
       if (channel >= 0 && channel < this.universe.length) {
         this.universe[channel] = clampValue(value);
+        this.channelSeq[channel] = ++this.writeSeq;
+        this.channelSource[channel] = source;
       }
     });
   }
 
   // Ecrit un seul canal (numerote 1 a 512).
-  setChannel(channel: number, value: number) {
+  setChannel(channel: number, value: number, source?: string) {
     if (channel < 1 || channel > 512) return;
     this.universe[channel - 1] = clampValue(value);
+    this.channelSeq[channel - 1] = ++this.writeSeq;
+    this.channelSource[channel - 1] = source;
+  }
+
+  /** Numero de la derniere ecriture effectuee, tous canaux confondus. A memoriser
+   *  juste apres avoir ecrit pour pouvoir demander ensuite « quelqu'un a-t-il ecrit
+   *  apres moi ? » (voir hasForeignWriteSince). */
+  writeSequence(): number {
+    return this.writeSeq;
+  }
+
+  /** Un auteur AUTRE que `source` a-t-il ecrit sur ce bloc depuis l'ecriture n° `since` ?
+   *  C'est ce qui permet a un ecrivain periodique de rendre la main : un fader, une
+   *  scene ou un blackout qui touche le bloc est detecte meme s'il est deja recouvert
+   *  par la trame suivante de cet ecrivain. */
+  hasForeignWriteSince(startChannel: number, count: number, source: string, since: number): boolean {
+    for (let i = 0; i < count; i++) {
+      const channel = startChannel + i - 1;
+      if (channel < 0 || channel >= this.universe.length) continue;
+      if (this.channelSeq[channel] > since && this.channelSource[channel] !== source) return true;
+    }
+    return false;
+  }
+
+  /** Tout ce bloc a-t-il ete ecrit en dernier par `source` ? Sert a reconnaitre ses
+   *  propres valeurs en relisant l'univers, au lieu de les prendre pour une commande
+   *  exterieure. */
+  isBlockOwnedBy(startChannel: number, count: number, source: string): boolean {
+    for (let i = 0; i < count; i++) {
+      const channel = startChannel + i - 1;
+      if (channel < 0 || channel >= this.universe.length) continue;
+      if (this.channelSource[channel] !== source) return false;
+    }
+    return true;
   }
 
   // Renvoie une copie figee (instantane) des 512 canaux courants.
