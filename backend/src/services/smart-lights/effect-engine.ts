@@ -171,13 +171,19 @@ export function evaluateEffect(
     case "ma": {
       const bri = (effect.brightness ?? 100) / 100;
 
-      // Rang de chaque zone parmi les zones ACTIVES (les spare ne comptent pas).
-      // Sans cela, un bandeau de 38 LED declare sur 50 zones tasserait tout le
-      // motif sur ses trois quarts avant, avec un trou fixe au bout.
+      // Zones que l'effet pilote reellement : ni spare, ni hors des sections
+      // retenues par `sides`. Tout le reste du calcul (rang, etendue spatiale)
+      // ne porte que sur elles — un effet limite au plafond doit se repartir sur
+      // le plafond, pas sur un bandeau dont il n'eclaire qu'un septieme.
+      const included = includedZones(layout, effect.sides, spare);
+
+      // Rang de chaque zone parmi les zones retenues. Sans cela, un bandeau de
+      // 38 LED declare sur 50 zones tasserait tout le motif sur ses trois quarts
+      // avant, avec un trou fixe au bout.
       const rank = new Array<number>(zoneCount).fill(0);
       let activeCount = 0;
       for (let i = 0; i < zoneCount; i++) {
-        if (spare.has(i)) continue;
+        if (!included[i]) continue;
         rank[i] = activeCount;
         activeCount++;
       }
@@ -192,10 +198,18 @@ export function evaluateEffect(
       // au lieu de leur rang sur le ruban. Calculee une fois pour toute la trame,
       // car elle demande de connaitre l'etendue (min/max) de toutes les zones actives.
       const spatialU = effect.spatial
-        ? spatialPositions(layout, effect.spatial, spare, effect.matricks?.groups ?? 1)
+        ? spatialPositions(layout, effect.spatial, included, effect.matricks?.groups ?? 1)
         : null;
 
+      // Valeur des zones hors sections retenues : la valeur basse de l'effet. Avec
+      // la cible "dimmer" et un fond noir (le cas courant), elles sont donc eteintes.
+      const outOfScope = scale(colorForTarget(effect, effect.low / 100), bri);
+
       for (let i = 0; i < zoneCount; i++) {
+        if (!included[i]) {
+          out[i] = outOfScope;
+          continue;
+        }
         // Position 0..1 de la zone dans la distribution de phase.
         const u = spatialU ? spatialU[i] : matricksPosition(rank[i], n, effect.matricks);
         const phaseDeg = effect.phaseFrom + phaseSpan * u;
@@ -264,33 +278,84 @@ function envelope(u: number, effect: EffectMa): number {
 }
 
 /**
+ * Quelles zones l'effet pilote-t-il ? Toutes les zones non-spare par defaut ; celles
+ * des sections nommees (`zoneLayout.sides`) quand l'effet en liste.
+ *
+ * Si aucune des sections demandees n'existe dans le layout, on ne filtre rien : une
+ * etiquette mal orthographiee doit donner un effet sur tout le bandeau, pas un bandeau
+ * eteint sans explication.
+ */
+function includedZones(
+  layout: SmartLightZoneLayout,
+  sides: string[] | undefined,
+  spare: Set<number>
+): boolean[] {
+  const zoneCount = layout.segments.length;
+  const out = new Array<boolean>(zoneCount);
+  for (let i = 0; i < zoneCount; i++) out[i] = !spare.has(i);
+  if (!sides?.length || !layout.sides?.length) return out;
+
+  const wanted = new Set(sides.map((label) => label.toLowerCase()));
+  const keep = new Array<boolean>(zoneCount).fill(false);
+  let matched = false;
+  for (const side of layout.sides) {
+    if (!wanted.has(side.label.toLowerCase())) continue;
+    matched = true;
+    for (let i = side.zoneStart; i <= side.zoneEnd && i < zoneCount; i++) {
+      if (i >= 0) keep[i] = true;
+    }
+  }
+  if (!matched) return out;
+  for (let i = 0; i < zoneCount; i++) out[i] = out[i] && keep[i];
+  return out;
+}
+
+/**
  * Position 0..1 de CHAQUE zone d'apres sa place reelle dans la piece (layout 3D).
  * On mesure un scalaire par zone — projection sur un axe, ou distance a un point —
  * puis on ramene l'ensemble dans 0..1 par rapport a l'etendue mesuree. Deux zones
  * eloignees sur le ruban mais voisines dans la piece obtiennent donc la meme phase.
  *
- * Les zones spare sont exclues de la mesure de l'etendue (elles sont rangees dans un
- * coin fictif du layout et fausseraient min/max), et recoivent 0 : elles sont de toute
- * facon forcees en noir a la fin de l'evaluation.
+ * Seules les zones retenues (ni spare, ni hors des sections visees) entrent dans la
+ * mesure de l'etendue : les spare sont rangees dans un coin fictif du layout et
+ * fausseraient min/max, et une section visee doit se repartir sur sa propre etendue.
  *
  * `groups` repete le motif N fois sur l'etendue, comme en distribution par rang.
  */
 function spatialPositions(
   layout: SmartLightZoneLayout,
   spatial: EffectSpatial,
-  spare: Set<number>,
+  included: boolean[],
   groups: number
 ): number[] {
   const zoneCount = layout.segments.length;
+  const reps = Math.max(1, Math.floor(groups));
+  const axis = normalize(spatial.direction ?? { x: 1, y: 0, z: 0 });
+  const origin = spatial.origin ?? { x: 0, y: 0, z: 0 };
+
+  // Mode angulaire : l'azimut est deja une grandeur bornee (un tour = 360°), donc
+  // pas de mise a l'echelle sur l'etendue mesuree — sinon un bandeau qui ne ferait
+  // qu'un demi-tour verrait sa phase etiree sur un tour entier, et le balayage
+  // sauterait au moment de refermer la boucle.
+  if (spatial.mode === "angular") {
+    const out = new Array<number>(zoneCount).fill(0);
+    for (let i = 0; i < zoneCount; i++) {
+      if (!included[i]) continue;
+      const m = midpoint(layout.segments[i]);
+      // atan2 rend -PI..PI ; on ramene dans 0..1 en ajoutant un tour avant le modulo.
+      const angle = Math.atan2(m.x - origin.x, m.z - origin.z) / (2 * Math.PI);
+      const u = (angle - Math.floor(angle)) * reps;
+      out[i] = u - Math.floor(u);
+    }
+    return out;
+  }
+
   const scalars = new Array<number>(zoneCount).fill(0);
   let min = Infinity;
   let max = -Infinity;
 
-  const axis = normalize(spatial.direction ?? { x: 1, y: 0, z: 0 });
-  const origin = spatial.origin ?? { x: 0, y: 0, z: 0 };
-
   for (let i = 0; i < zoneCount; i++) {
-    if (spare.has(i)) continue;
+    if (!included[i]) continue;
     const m = midpoint(layout.segments[i]);
     const value =
       spatial.mode === "radial"
@@ -301,12 +366,11 @@ function spatialPositions(
     if (value > max) max = value;
   }
 
-  // Garde-fou : layout degenere (toutes les zones au meme endroit, ou que des spare).
+  // Garde-fou : layout degenere (toutes les zones au meme endroit, ou aucune retenue).
   const span = Math.max(max - min, 1e-6);
-  const reps = Math.max(1, Math.floor(groups));
   const out = new Array<number>(zoneCount).fill(0);
   for (let i = 0; i < zoneCount; i++) {
-    if (spare.has(i)) continue;
+    if (!included[i]) continue;
     const u = ((scalars[i] - min) / span) * reps;
     // Sans repetition, on garde la valeur telle quelle : la zone la plus eloignee
     // doit atteindre 1 (et donc phaseTo), pas repartir a 0. Avec repetition, le

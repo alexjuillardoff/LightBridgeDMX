@@ -39,6 +39,13 @@ const TARGET_LABELS: Record<EffectTarget, string> = {
   dimmer: "Intensité", color: "Couleur", hue: "Teinte"
 };
 
+// Familles du pool d'effets, dans l'ordre d'affichage.
+const GROUP_LABELS = {
+  pupitre: "Pupitre — phase répartie sur les zones",
+  "3d": "3D — phase répartie dans l'espace",
+  meuble: "Meuble — taillés pour la géométrie relevée"
+} as const;
+
 // Valeurs par defaut de chaque type d'effet : servies quand on change de famille,
 // pour avoir tout de suite un effet visible sans champ vide.
 const DEFAULTS: Record<Kind, SmartLightEffectConfig> = {
@@ -176,6 +183,7 @@ export const EffectDesigner = ({
           config={config}
           onChange={updateAndApply}
           hasLayout={(light.zoneLayout?.segments.length ?? 0) > 0}
+          sideLabels={(light.zoneLayout?.sides ?? []).map((s) => s.label)}
         />
       )}
     </div>
@@ -192,12 +200,15 @@ export const EffectDesigner = ({
 const MaPanel = ({
   config,
   onChange,
-  hasLayout
+  hasLayout,
+  sideLabels
 }: {
   config: EffectMa;
   onChange: (c: EffectMa) => void;
   /** La lampe a-t-elle un layout 3D ? Sans lui, la distribution spatiale n'a rien a mesurer. */
   hasLayout: boolean;
+  /** Sections nommees du layout (`sides`), que l'effet peut viser une par une. */
+  sideLabels: string[];
 }) => {
   const set = (patch: Partial<EffectMa>) => onChange({ ...config, ...patch });
   const matricks = config.matricks ?? {};
@@ -215,20 +226,30 @@ const MaPanel = ({
 
   return (
     <>
-      <div className="muted" style={{ fontSize: 12, margin: "2px 0 4px" }}>Pool d'effets</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 4, marginBottom: 10 }}>
-        {SMART_LIGHT_EFFECT_PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            title={preset.hint}
-            onClick={() => onChange(preset.config as EffectMa)}
-            style={activePreset?.id === preset.id ? poolActive : poolInactive}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </div>
+      {/* Pool d'effets, groupe par famille : les effets de pupitre marchent partout,
+          les 3D demandent un layout, ceux du meuble en plus ses sections nommees. */}
+      {(Object.keys(GROUP_LABELS) as (keyof typeof GROUP_LABELS)[]).map((group) => {
+        const presets = SMART_LIGHT_EFFECT_PRESETS.filter((p) => p.group === group);
+        if (!presets.length) return null;
+        return (
+          <div key={group} style={{ marginBottom: 8 }}>
+            <div className="muted" style={{ fontSize: 12, margin: "2px 0 4px" }}>{GROUP_LABELS[group]}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 4 }}>
+              {presets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  title={preset.hint}
+                  onClick={() => onChange(preset.config as EffectMa)}
+                  style={activePreset?.id === preset.id ? poolActive : poolInactive}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
       {activePreset ? (
         <p className="muted" style={{ fontSize: 12, margin: "0 0 10px" }}>{activePreset.hint}</p>
       ) : null}
@@ -280,19 +301,20 @@ const MaPanel = ({
         options={[
           { value: "index" as const, label: "Rang de zone" },
           { value: "axis" as const, label: "Axe 3D" },
-          { value: "radial" as const, label: "Radial 3D" }
+          { value: "radial" as const, label: "Radial 3D" },
+          { value: "angular" as const, label: "Angulaire 3D" }
         ]}
         value={config.spatial?.mode ?? "index"}
-        onChange={(mode) =>
-          set({
-            spatial:
-              mode === "index"
-                ? undefined
-                : mode === "axis"
-                  ? { mode: "axis", direction: config.spatial?.direction ?? { x: 0, y: 1, z: 0 } }
-                  : { mode: "radial", origin: config.spatial?.origin ?? { x: 0, y: 1.25, z: 0 } }
-          })
-        }
+        onChange={(mode) => {
+          if (mode === "index") return set({ spatial: undefined });
+          if (mode === "axis") {
+            return set({ spatial: { mode: "axis", direction: config.spatial?.direction ?? { x: 0, y: 1, z: 0 } } });
+          }
+          // radial et angular partagent le meme point d'origine : on le conserve
+          // en passant de l'un a l'autre.
+          const origin = config.spatial?.origin ?? { x: 0, y: 0.1, z: 0.2 };
+          return set({ spatial: { mode, origin } });
+        }}
       />
       {config.spatial && !hasLayout ? (
         <p style={{ fontSize: 12, color: "var(--accent-2)", margin: "0 0 6px" }}>
@@ -305,23 +327,59 @@ const MaPanel = ({
           onChange={(d) => set({ spatial: { mode: "axis", direction: d } })}
         />
       ) : null}
-      {config.spatial?.mode === "radial" ? (
+      {config.spatial && config.spatial.mode !== "axis" ? (
         <div style={{ margin: "4px 0" }}>
-          <span className="muted" style={{ fontSize: 13 }}>Origine (m)</span>
+          <span className="muted" style={{ fontSize: 13 }}>
+            {config.spatial.mode === "angular" ? "Axe de rotation (m)" : "Origine (m)"}
+          </span>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginTop: 2 }}>
             {(["x", "y", "z"] as const).map((axis) => {
-              const origin = config.spatial?.origin ?? { x: 0, y: 1.25, z: 0 };
+              const origin = config.spatial?.origin ?? { x: 0, y: 0.1, z: 0.2 };
+              const mode = config.spatial?.mode === "angular" ? ("angular" as const) : ("radial" as const);
               return (
                 <label key={axis} style={{ fontSize: 12 }}>
                   <span style={{ color: "var(--muted)" }}>{axis.toUpperCase()}: {origin[axis].toFixed(2)}</span>
                   <input type="range" min={-3} max={3} step={0.05} value={origin[axis]}
                     onChange={(e) =>
-                      set({ spatial: { mode: "radial", origin: { ...origin, [axis]: Number(e.target.value) } } })
+                      set({ spatial: { mode, origin: { ...origin, [axis]: Number(e.target.value) } } })
                     }
                     style={{ width: "100%" }} />
                 </label>
               );
             })}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Sections : restreindre l'effet a une partie relevee du bandeau (les niches,
+          le tour du bas...). Sans selection, l'effet joue partout. */}
+      {sideLabels.length ? (
+        <div style={{ margin: "6px 0" }}>
+          <span className="muted" style={{ fontSize: 13 }}>Sections visées</span>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 2 }}>
+            {sideLabels.map((label) => {
+              const selected = config.sides?.includes(label) ?? false;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    const next = selected
+                      ? (config.sides ?? []).filter((l) => l !== label)
+                      : [...(config.sides ?? []), label];
+                    set({ sides: next.length ? next : undefined });
+                  }}
+                  style={selected ? poolActive : poolInactive}
+                >
+                  {label}
+                </button>
+              );
+            })}
+            {config.sides?.length ? (
+              <button type="button" onClick={() => set({ sides: undefined })} style={poolInactive}>
+                ✕ tout
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

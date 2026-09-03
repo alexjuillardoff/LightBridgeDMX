@@ -528,7 +528,8 @@ type SmartLightEffectConfig =
       width: 1–100;                         // % du cycle en position haute (pwm / random)
       attack?: 0–100; decay?: 0–100;        // adoucissement des fronts durs
       matricks?: { blocks?: number; groups?: number; wings?: number };
-      spatial?: { mode: "axis"|"radial"; direction?: Point3D; origin?: Point3D };
+      spatial?: { mode: "axis"|"radial"|"angular"; direction?: Point3D; origin?: Point3D };
+      sides?: string[];                     // ne jouer que sur ces sections du layout
       color?, bgColor?, colorTo?: RgbColor; hueFrom?, hueTo?, saturation?: number;
       seed?: number; brightness?: 0–100 }
 
@@ -1239,15 +1240,59 @@ répartie 0 → 360 est un chenillard ; le même créneau avec `phaseFrom = phas
 économie de concepts est exactement celle du pupitre, et évite un effet codé en dur par motif.
 
 **Distribution spatiale (`spatial`).** Par défaut la phase se répartit sur le **rang** des zones —
-l'ordre de câblage du ruban. Avec `spatial`, elle se répartit sur leur **position réelle** dans la
-pièce, lue dans le layout 3D : projection sur un axe (`mode: "axis"`) ou distance à un point
-(`mode: "radial"`). Sur un bandeau en boucle fermée, c'est la différence entre « la 12ᵉ LED du
-ruban » et « la LED qui est à 1,80 m du sol » : une vague verticale allume alors ensemble les deux
-montées de coin et le plafond, quel que soit leur numéro de zone. Les zones `spare` sont exclues de
-la mesure de l'étendue (elles sont rangées loin dans le layout et écraseraient min/max).
+l'ordre de câblage du ruban. Avec `spatial`, elle se répartit sur leur **position réelle**, lue dans
+le layout 3D :
 
-Le pool `SMART_LIGHT_EFFECT_PRESETS` (dans `shared/`) livre 18 points de départ nommés — 12 en
-distribution par rang, 6 en 3D. Il est partagé backend/frontend pour ne pas dupliquer la liste.
+| Mode | Grandeur mesurée | Ce que ça donne |
+|------|------------------|-----------------|
+| `axis` | projection sur une direction 3D | vague verticale, balayage gauche→droite |
+| `radial` | distance à un point | onde qui part d'un point et s'éloigne |
+| `angular` | azimut autour d'un axe vertical | faisceau qui fait le **tour** de l'objet |
+
+C'est la différence entre « la 12ᵉ LED du ruban » et « la LED qui est en haut à gauche » : sur le
+bandeau du meuble TV, une vague verticale allume ensemble les trois niches, quel que soit leur numéro
+de zone. Les zones `spare` sont exclues de la mesure de l'étendue (elles sont rangées hors géométrie
+et écraseraient min/max).
+
+> **Piège : 360° se replie.** La sortie est périodique, donc une phase étalée sur exactement 360°
+> donne à la zone la plus lointaine la valeur de la plus proche. En distribution par rang c'est sans
+> conséquence (la dernière zone n'atteint jamais 360°), mais dans l'espace les extrêmes sont atteints.
+> Règles : effets directionnels sur **~300°** ; effets **angulaires sur 360°** (l'azimut est cyclique
+> par nature, c'est le comportement voulu) ; dégradé fixe dans l'espace = forme **`triangle` sur 180°**,
+> qui donne exactement `v = position`.
+
+**Restriction à des sections (`sides`).** Un effet peut ne jouer que sur des sections nommées du
+layout (`zoneLayout.sides`) — « les niches seulement », « le tour du bas seulement ». Les zones hors
+sélection prennent la valeur basse de l'effet, et l'étendue spatiale n'est mesurée que sur les zones
+retenues : un effet limité aux niches se répartit sur les niches, pas sur un ruban dont il n'éclaire
+qu'un tiers. Une étiquette inconnue ne filtre rien — un effet qui ne fait rien du tout est un pire
+mode de défaillance qu'un effet trop large.
+
+Le pool `SMART_LIGHT_EFFECT_PRESETS` (dans `shared/`) livre 26 points de départ nommés, groupés par
+famille : 12 en distribution par rang (`pupitre`), 6 en 3D générique (`3d`), 9 taillés pour la
+géométrie relevée du meuble TV (`meuble`). Il est partagé backend/frontend pour ne pas dupliquer la
+liste.
+
+**Un effet est une source DMX.** Quand la lampe a un miroir DMX par zone, le moteur publie sa trame
+sur ces canaux : l'effet devient visible dans la Fader View et la DMX Sheet, et un « all out » le
+reprend. Pour que le miroir ne relise pas la trame comme une commande venue du pupitre — ce qui lui
+ferait voler le bandeau à l'effet à la trame suivante — `DmxService` retient **qui a écrit chaque
+canal en dernier**, et à quel rang d'écriture. Le moteur vérifie avant chaque trame que personne ne
+lui est passé dessus depuis la précédente ; ce contrôle-là ne peut pas se faire à la lecture du tick,
+car entre deux ticks l'effet a le temps de recouvrir un blackout.
+
+### 8ter. Layouts : formes types et relevés
+
+`buildLinearLayout`, `buildUShapeLayout` et `buildRoomLoopLayout` génèrent des **formes types** à
+partir de quelques nombres. Une géométrie réelle n'entre pas toujours dans une forme type : le
+bandeau du salon suit le contour d'un meuble TV, avec trois niches, des passages cachés entre elles
+et deux longueurs de côté différentes.
+
+`buildPathLayout({ legs, spareZones })` couvre ce cas : on décrit le **chemin réel du ruban**,
+tronçon par tronçon (nom, nombre de zones, extrémités 3D), et les zones de chaque tronçon se
+répartissent régulièrement entre ses extrémités. Un tronçon nommé devient une section (`sides`) que
+les effets savent viser. Le relevé lui-même se fait au ZonePainter (peindre une couleur par section,
+appliquer, puis lire le bloc miroir DMX).
 
 ### 9. Lazy-loading du 3D editor
 Le `LayoutEditor3D` (React Three Fiber + drei + three) pèse ~600 KB minifié. Il est chargé en lazy via `React.lazy(() => import("./smart-lights/LayoutEditor3D"))` + `Suspense` — seul l'utilisateur qui clique sur "📐 Layout 3D" paie le coût de chargement.

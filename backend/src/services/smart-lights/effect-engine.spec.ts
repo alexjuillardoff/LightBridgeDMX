@@ -252,6 +252,119 @@ describe("effet ma — distribution spatiale (layout 3D)", () => {
   });
 });
 
+describe("effet ma — distribution angulaire (tour de piece)", () => {
+  // Quatre zones aux quatre points cardinaux autour de l'origine, plus une
+  // cinquieme au plafond exactement au-dessus de la premiere : c'est le cas du
+  // bandeau en boucle, ou la traversee de plafond surplombe la plinthe du fond.
+  const at = (x: number, y: number, z: number) => ({ start: { x, y, z }, end: { x, y, z } });
+  const ring: SmartLightZoneLayout = {
+    mode: "unlinked",
+    segments: [at(0, 0, -1), at(1, 0, 0), at(0, 0, 1), at(-1, 0, 0), at(0, 2.5, -1)]
+  };
+
+  it("deux zones dans la meme direction jouent ensemble, quelle que soit leur hauteur", () => {
+    const cfg: EffectMa = {
+      ...base, form: "sin", speed: 0.5, phaseFrom: 0, phaseTo: 360,
+      spatial: { mode: "angular", origin: { x: 0, y: 0, z: 0 } }
+    };
+    const frame = evaluateEffect(cfg, ring, 1.7);
+    expect(frame[4]).toEqual(frame[0]); // le plafond du fond suit la plinthe du fond
+  });
+
+  it("les quatre points cardinaux sont a 90° les uns des autres", () => {
+    const cfg: EffectMa = {
+      ...base, form: "rampUp", speed: 0, phaseFrom: 0, phaseTo: 360,
+      spatial: { mode: "angular", origin: { x: 0, y: 0, z: 0 } }
+    };
+    const frame = evaluateEffect(cfg, ring, 0);
+    // Un quart de tour = un quart de cycle de retard, dans l'ordre du tour d'horloge.
+    const quarters = frame.slice(0, 4).map((c) => Math.round((c.r / 255) * 4) / 4);
+    expect(new Set(quarters).size).toBe(4);
+  });
+
+  it("un demi-tour ne couvre qu'une demi-phase (pas de mise a l'echelle sur l'etendue)", () => {
+    // Trois zones sur un demi-cercle seulement : contrairement aux modes axis et
+    // radial, l'azimut n'est pas etire pour occuper toute la plage de phase.
+    const half: SmartLightZoneLayout = {
+      mode: "unlinked",
+      segments: [at(0, 0, -1), at(1, 0, 0), at(0, 0, 1)]
+    };
+    const cfg: EffectMa = {
+      ...base, form: "rampUp", speed: 0, phaseFrom: 0, phaseTo: 360,
+      spatial: { mode: "angular", origin: { x: 0, y: 0, z: 0 } }
+    };
+    const frame = evaluateEffect(cfg, half, 0);
+    // La zone 0 est a 180° de la zone 2 : un demi-cycle de retard, et pas un tour
+    // complet — l'azimut n'est pas etire pour occuper toute la plage de phase.
+    expect(frame[2].r).toBe(0);
+    expect(frame[0].r).toBe(128);
+  });
+});
+
+describe("effet ma — restriction a des sections du layout", () => {
+  const at = (x: number) => ({ start: { x, y: 0, z: 0 }, end: { x, y: 0, z: 0 } });
+  const twoSides: SmartLightZoneLayout = {
+    mode: "unlinked",
+    segments: [at(0), at(1), at(2), at(10), at(11), at(12)],
+    sides: [
+      { label: "plafond", zoneStart: 0, zoneEnd: 2 },
+      { label: "sol", zoneStart: 3, zoneEnd: 5 }
+    ]
+  };
+
+  it("les zones hors des sections visees prennent la valeur basse", () => {
+    const cfg: EffectMa = { ...base, form: "sin", low: 0, high: 100, sides: ["sol"] };
+    const frame = evaluateEffect(cfg, twoSides, 0.25);
+    expect(frame.slice(0, 3)).toEqual([
+      { r: 0, g: 0, b: 0 }, { r: 0, g: 0, b: 0 }, { r: 0, g: 0, b: 0 }
+    ]);
+    expect(frame[3].r).toBe(255); // sommet du sinus sur la section visee
+  });
+
+  it("la phase se repartit sur les seules zones retenues", () => {
+    const cfg: EffectMa = {
+      ...base, form: "rampUp", speed: 0, phaseFrom: 0, phaseTo: 360, sides: ["sol"]
+    };
+    const frame = evaluateEffect(cfg, twoSides, 0);
+    // Trois zones retenues : elles se partagent le cycle entier a elles seules.
+    expect(frame.slice(3).map((c) => c.r)).toEqual([0, 170, 85]);
+  });
+
+  it("l'etendue spatiale est mesuree sur les seules zones retenues", () => {
+    // Triangle sur 180° = degrade spatial exact (v = position), sans repli.
+    const cfg: EffectMa = {
+      ...base, form: "triangle", speed: 0, phaseFrom: 0, phaseTo: 180, sides: ["sol"],
+      spatial: { mode: "axis", direction: { x: 1, y: 0, z: 0 } }
+    };
+    const frame = evaluateEffect(cfg, twoSides, 0);
+    // Les X retenus vont de 10 a 12 : la section couvre bien 0 -> 100 %, et non
+    // la portion 10/12 qu'elle occuperait si les zones exclues comptaient encore.
+    expect(frame.slice(3).map((c) => c.r)).toEqual([0, 128, 255]);
+  });
+
+  it("un degrade fixe (triangle sur 180°) ne se replie pas aux extremites", () => {
+    // Le piege du moteur : sur 360°, la zone la plus lointaine retombe sur la
+    // valeur de la plus proche. Sur ce bandeau, tout le plafond passerait en phase
+    // avec tout le sol. Le triangle sur 180° donne exactement v = position.
+    const cfg: EffectMa = {
+      ...base, form: "triangle", speed: 0, phaseFrom: 0, phaseTo: 180,
+      spatial: { mode: "axis", direction: { x: 1, y: 0, z: 0 } }
+    };
+    const frame = evaluateEffect(cfg, twoSides, 0);
+    const values = frame.map((c) => c.r);
+    expect(values[0]).toBe(0);
+    expect(values[5]).toBe(255);
+    // Strictement croissant : aucun retour en arriere.
+    for (let i = 1; i < values.length; i++) expect(values[i]).toBeGreaterThan(values[i - 1]);
+  });
+
+  it("une section inconnue ne filtre rien (plutot qu'un bandeau eteint)", () => {
+    const cfg: EffectMa = { ...base, form: "sin", sides: ["mezzanine"] };
+    const frame = evaluateEffect(cfg, twoSides, 0.25);
+    expect(frame.every((c) => c.r === 255)).toBe(true);
+  });
+});
+
 describe("pool d'effets predefinis", () => {
   it("chaque preset est un effet valide et produit une trame de la bonne taille", () => {
     for (const preset of SMART_LIGHT_EFFECT_PRESETS) {

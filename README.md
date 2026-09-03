@@ -497,9 +497,11 @@ niveau, liseré ambre sur les canaux patchés.
 Le pool d'effets des bandeaux LED, sur le modèle du moteur d'effets d'un grandMA2 : on choisit une
 **forme** (sinus, rampe, triangle, créneau, random), une **vitesse** en BPM, et une **phase** répartie
 sur les zones — c'est elle qui transforme la même oscillation en chenillard, en vague ou en strobe.
-Dix-huit effets prêts à jouer servent de points de départ, dont six **effets 3D** qui se distribuent
-sur la position réelle des zones dans la pièce plutôt que sur leur ordre de câblage. C'est la view
-**4 Effets**.
+Vingt-six effets prêts à jouer servent de points de départ, groupés en trois familles : ceux qui se
+répartissent sur les zones du ruban, les **effets 3D** qui se répartissent sur la position réelle des
+zones (hauteur, distance à un point, ou tour de l'objet) plutôt que sur l'ordre de câblage, et ceux
+taillés pour la géométrie relevée du meuble — « les niches seulement », « le tour du bas ». C'est la
+view **4 Effets**.
 
 ##### Projecteurs verrouillés
 

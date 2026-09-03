@@ -589,13 +589,20 @@ export type EffectTarget = z.infer<typeof EffectTargetSchema>;
  *               l'oppose l'une de l'autre sur le ruban.
  *  - "radial" : distance a un point de la piece. L'effet part de ce point et s'en
  *               eloigne (ou l'inverse, en inversant les phases).
+ *  - "angular": angle (azimut) autour d'un axe vertical passant par `origin`. C'est
+ *               le mode d'un bandeau qui fait le TOUR d'une piece : la phase suit le
+ *               tour d'horloge, et un creneau etroit devient un phare qui balaie la
+ *               piece. Un tour complet = 360°, sans mise a l'echelle : deux zones
+ *               dans la meme direction (le plafond du fond et la plinthe du fond,
+ *               par exemple) s'allument ensemble.
  *  Sans `spatial`, la distribution reste celle du rang de zone (et les MAtricks
  *  blocks/wings s'appliquent) : c'est le comportement d'un pupitre sur une selection. */
 export const EffectSpatialSchema = z.object({
-  mode: z.enum(["axis", "radial"]),
+  mode: z.enum(["axis", "radial", "angular"]),
   /** Axe de projection (mode "axis"). Normalise automatiquement. Ex. (0,1,0) = vertical. */
   direction: Point3DSchema.optional(),
-  /** Point d'origine (mode "radial"), en metres dans le repere du layout. */
+  /** Point d'origine, en metres dans le repere du layout : centre des cercles du
+   *  mode "radial", et axe vertical de rotation du mode "angular" (son Y est ignore). */
   origin: Point3DSchema.optional()
 });
 export type EffectSpatial = z.infer<typeof EffectSpatialSchema>;
@@ -623,6 +630,13 @@ export const EffectMaSchema = z.object({
   attack: z.number().min(0).max(100).default(0).optional(),
   decay: z.number().min(0).max(100).default(0).optional(),
   matricks: EffectMatricksSchema.optional(),
+  /** Restreint l'effet a certaines sections nommees du layout (`zoneLayout.sides`) —
+   *  ex. ["topRightToLeft"] pour ne jouer que sur la traversee de plafond. Les zones
+   *  hors selection prennent la valeur basse (low) de l'effet : avec la cible "dimmer"
+   *  et un fond noir, elles restent donc eteintes. L'etendue mesuree par la distribution
+   *  spatiale ne porte que sur les zones retenues, sinon un effet limite au plafond
+   *  n'aurait plus aucune dynamique verticale a se mettre sous la dent. */
+  sides: z.array(z.string().min(1)).optional(),
   /** Distribution de la phase par la geometrie 3D plutot que par le rang de zone.
    *  Quand elle est definie, les MAtricks blocks/wings sont ignores (ils raisonnent
    *  en rang de zone) ; groups continue de repeter le motif sur l'etendue mesuree. */
@@ -666,10 +680,25 @@ export type SmartLightEffectConfig = z.infer<typeof SmartLightEffectConfigSchema
 //   • phaseFrom 0 -> phaseTo 360  = un cycle complet reparti sur le bandeau
 //     (l'effet DEFILE) ; phaseFrom = phaseTo = toutes les zones a l'unisson.
 //   • speed est en BPM : 60 BPM = un cycle par seconde.
+//   • ATTENTION en distribution SPATIALE : une phase etalee sur exactement 360°
+//     replie la zone la plus lointaine sur la valeur de la plus proche (360° = 0°).
+//     En distribution par rang ce n'est pas genant (la derniere zone n'atteint
+//     jamais tout a fait 360°), mais dans l'espace les extremes sont atteints —
+//     et sur un bandeau en boucle, ce sont les 17 zones du plafond qui se
+//     retrouveraient en phase avec les 17 zones du sol. D'ou :
+//       - effets DIRECTIONNELS (axis, radial) : etaler sur ~300°, pas 360° ;
+//       - effets ANGULAIRES : 360° est au contraire correct, l'azimut est
+//         cyclique par nature (un tour complet revient au point de depart) ;
+//       - DEGRADE FIXE dans l'espace : forme `triangle` sur 180°, qui donne
+//         exactement v = position, sans repli (voir le preset "Coucher de soleil").
 
 export interface SmartLightEffectPreset {
   /** Identifiant stable (anglais), utilisable dans une URL ou une commande. */
   id: string;
+  /** Famille affichee dans le pool : distribution par rang de zone (comme sur un
+   *  pupitre), distribution 3D generique, ou effet taille pour la geometrie relevee
+   *  d'un meuble precis. */
+  group: "pupitre" | "3d" | "meuble";
   /** Nom affiche dans le pool. */
   label: string;
   /** Une ligne d'explication : ce que l'on voit sur le bandeau. */
@@ -685,6 +714,7 @@ const BLACK = { r: 0, g: 0, b: 0 };
 export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   {
     id: "dimmer-soft",
+    group: "pupitre",
     label: "Dimmer soft",
     hint: "Sinus doux qui remonte le bandeau — l'effet de base d'un pupitre.",
     config: {
@@ -695,6 +725,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "chaser",
+    group: "pupitre",
     label: "Chaser",
     hint: "Creneau etroit + phase repartie : une tete qui court le long du bandeau.",
     config: {
@@ -705,6 +736,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "sweep",
+    group: "pupitre",
     label: "Balayage",
     hint: "Rampe montante : une lueur qui glisse sans coupure, plus douce que le chaser.",
     config: {
@@ -715,6 +747,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "rainbow",
+    group: "pupitre",
     label: "Arc-en-ciel",
     hint: "La forme balaie la teinte : tout le spectre etale sur le bandeau, qui tourne.",
     config: {
@@ -725,6 +758,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "pulse",
+    group: "pupitre",
     label: "Pulse",
     hint: "Toutes les zones a l'unisson (phase 0 -> 0) : le bandeau respire d'un bloc.",
     config: {
@@ -735,6 +769,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "strobe",
+    group: "pupitre",
     label: "Strobe",
     hint: "Creneau tres court a l'unisson. Prudence : flashs a 6 Hz.",
     config: {
@@ -745,6 +780,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "sparkle",
+    group: "pupitre",
     label: "Scintillement",
     hint: "Forme random : chaque zone s'allume a son propre rythme, en pointille.",
     config: {
@@ -756,6 +792,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "embers",
+    group: "pupitre",
     label: "Braises",
     hint: "Random lent par blocs de 3 zones, du rouge sombre a l'orange : un feu qui couve.",
     config: {
@@ -768,6 +805,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "color-wave",
+    group: "pupitre",
     label: "Vague couleur",
     hint: "Deux cycles de couleur sur la longueur (phase 0 -> 720), a intensite constante.",
     config: {
@@ -779,6 +817,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "theatre",
+    group: "pupitre",
     label: "Théâtre",
     hint: "Creneau au tiers, motif repete 8 fois (groups) : le chenillard des marquises.",
     config: {
@@ -790,6 +829,7 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "wings",
+    group: "pupitre",
     label: "Ailes",
     hint: "Bandeau plie en deux (wings) : l'effet part du centre vers les extremites.",
     config: {
@@ -799,57 +839,65 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
       color: { r: 0, g: 255, b: 180 }, bgColor: BLACK, brightness: 100
     }
   },
-  // ── Effets 3D : la phase suit la position reelle des zones dans la piece ────
-  // Ils n'ont de sens que si la lampe a un layout 3D (Room loop / U / editeur 3D).
-  // Sans layout, le moteur retombe sur une ligne droite et ils ressemblent aux autres.
+  // ── Effets 3D : la phase suit la position reelle des zones ─────────────────
+  // Ils ne dependent d'aucune forme particuliere : ils lisent le layout 3D de la
+  // lampe. Sans layout, le moteur retombe sur une ligne droite et ils ressemblent
+  // aux effets de pupitre.
+  // Rappel de reglage : en distribution spatiale, on etale sur ~300° et non 360°,
+  // sinon la zone la plus lointaine se replie sur la valeur de la plus proche.
   {
     id: "vertical-wave",
+    group: "3d",
     label: "Vague verticale",
-    hint: "3D — monte du sol au plafond : les montées de coin et le plafond s'allument à leur vraie hauteur.",
+    hint: "3D — suit la hauteur réelle : tout ce qui est à la même altitude s'allume ensemble, quel que soit l'ordre du ruban.",
     config: {
       kind: "ma", form: "sin", target: "dimmer", speed: 24,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
       spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
       color: { r: 120, g: 180, b: 255 }, bgColor: BLACK, brightness: 100
     }
   },
   {
     id: "sweep-x",
+    group: "3d",
     label: "Traversée G→D",
-    hint: "3D — balaie la pièce de gauche à droite : les murs opposés s'allument ensemble au même X.",
+    hint: "3D — balaie de gauche à droite : les tronçons opposés s'allument ensemble au même X.",
     config: {
       kind: "ma", form: "sin", target: "dimmer", speed: 20,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
       spatial: { mode: "axis", direction: { x: 1, y: 0, z: 0 } },
       color: WARM, bgColor: BLACK, brightness: 100
     }
   },
   {
     id: "sweep-z",
-    label: "Traversée F→A",
-    hint: "3D — voyage du fond vers l'avant : les murs gauche et droit défilent en parallèle.",
+    group: "3d",
+    label: "Traversée AR→AV",
+    hint: "3D — voyage de l'arrière vers l'avant : ce qui est en profondeur défile en parallèle.",
     config: {
       kind: "ma", form: "sin", target: "dimmer", speed: 20,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
       spatial: { mode: "axis", direction: { x: 0, y: 0, z: 1 } },
       color: CYAN, bgColor: BLACK, brightness: 100
     }
   },
   {
     id: "ripple",
+    group: "3d",
     label: "Onde radiale",
-    hint: "3D — une onde partant du centre de la pièce (1,25 m de haut) et gagnant les murs.",
+    hint: "3D — une onde qui part d'un point et gagne les extrémités, par distance réelle.",
     config: {
       kind: "ma", form: "sin", target: "dimmer", speed: 30,
       low: 0, high: 100, phaseFrom: 0, phaseTo: 540, width: 50,
-      spatial: { mode: "radial", origin: { x: 0, y: 1.25, z: 0 } },
+      spatial: { mode: "radial", origin: { x: 0, y: 0.1, z: 0.2 } },
       color: { r: 0, g: 220, b: 200 }, bgColor: BLACK, brightness: 100
     }
   },
   {
     id: "rainbow-3d",
+    group: "3d",
     label: "Arc-en-ciel 3D",
-    hint: "3D — le spectre est plaqué sur la hauteur de la pièce et non sur l'ordre du ruban.",
+    hint: "3D — le spectre plaqué sur la hauteur, et non sur l'ordre du ruban. La teinte étant cyclique, le tour complet passe inaperçu.",
     config: {
       kind: "ma", form: "rampUp", target: "hue", speed: 12,
       low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
@@ -859,25 +907,140 @@ export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
   },
   {
     id: "rain",
+    group: "3d",
     label: "Pluie",
-    hint: "3D — créneau court distribué en hauteur : des gouttes qui tombent du plafond.",
+    hint: "3D — créneau court distribué en hauteur, du haut vers le bas : des gouttes qui tombent.",
     config: {
       kind: "ma", form: "pwm", target: "dimmer", speed: 45,
-      low: 0, high: 100, phaseFrom: 360, phaseTo: 0, width: 15,
+      low: 0, high: 100, phaseFrom: 330, phaseTo: 0, width: 15,
       attack: 10, decay: 60,
       spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
       color: { r: 180, g: 220, b: 255 }, bgColor: BLACK, brightness: 100
     }
   },
+
+  // ── Effets taillés pour le meuble TV ───────────────────────────────────────
+  // Ils s'appuient sur le relevé fait à la main (peinture zone par zone) : le ruban
+  // part du contrôleur (amorce cachée), longe les trois niches de la droite vers la
+  // gauche, descend à gauche, puis fait le tour du bas — arrière→avant, façade,
+  // avant→arrière. Les zones cachées entre les niches sont marquées spare.
+  // Les sections nommées viennent de `zoneLayout.sides` : nicheRight, nicheMiddle,
+  // nicheLeft, leftDown, baseBackToFront, baseFront, baseFrontToBack. Sur une lampe
+  // qui n'a pas ces sections, l'effet joue simplement sur tout le ruban.
   {
-    id: "breathe-color",
-    label: "Respiration",
-    hint: "Triangle tres lent a l'unisson, du bleu nuit au blanc chaud : veilleuse.",
+    id: "lighthouse",
+    group: "meuble",
+    label: "Phare",
+    hint: "Meuble — un faisceau qui fait le tour du meuble en 5 s : les niches quand il pointe vers l'arrière, la façade quand il revient.",
     config: {
-      kind: "ma", form: "triangle", target: "color", speed: 8,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 0, width: 50,
-      color: { r: 10, g: 20, b: 60 }, colorTo: WARM,
+      kind: "ma", form: "pwm", target: "dimmer", speed: 12,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 12,
+      attack: 15, decay: 45,
+      spatial: { mode: "angular", origin: { x: 0, y: 0.1, z: 0.2 } },
+      color: { r: 255, g: 220, b: 170 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "radar",
+    group: "meuble",
+    label: "Radar",
+    hint: "Meuble — même rotation, mais avec une traîne : la lumière décroît derrière le balayage.",
+    config: {
+      kind: "ma", form: "rampDown", target: "dimmer", speed: 20,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      spatial: { mode: "angular", origin: { x: 0, y: 0.1, z: 0.2 } },
+      color: { r: 40, g: 255, b: 140 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "vortex",
+    group: "meuble",
+    label: "Tourbillon",
+    hint: "Meuble — le spectre entier plaqué sur le tour du meuble, qui tourne lentement.",
+    config: {
+      kind: "ma", form: "rampUp", target: "hue", speed: 10,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      spatial: { mode: "angular", origin: { x: 0, y: 0.1, z: 0.2 } },
+      hueFrom: 0, hueTo: 360, saturation: 95, brightness: 100
+    }
+  },
+  {
+    id: "two-levels",
+    group: "meuble",
+    label: "Haut / bas",
+    hint: "Meuble — le ruban n'a que deux hauteurs : les niches et le bandeau bas s'échangent la lumière.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 26,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 180, width: 50,
+      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
+      color: { r: 255, g: 150, b: 60 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "two-tone",
+    group: "meuble",
+    label: "Bicolore",
+    hint: "Meuble — rien ne bouge : ambre sur le bandeau bas, bleu dans les niches. Triangle sur 180°, le dégradé spatial exact.",
+    config: {
+      kind: "ma", form: "triangle", target: "color", speed: 0,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 180, width: 50,
+      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
+      color: { r: 255, g: 130, b: 40 }, colorTo: { r: 40, g: 90, b: 255 },
       brightness: 100
+    }
+  },
+  {
+    id: "niches-on",
+    group: "meuble",
+    label: "Niches allumées",
+    hint: "Meuble — les trois niches en lumière chaude fixe, le reste éteint. L'éclairage d'usage.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 0,
+      low: 100, high: 100, phaseFrom: 0, phaseTo: 0, width: 50,
+      sides: ["nicheRight", "nicheMiddle", "nicheLeft"],
+      color: { r: 255, g: 185, b: 110 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "niche-wave",
+    group: "meuble",
+    label: "Vague des niches",
+    hint: "Meuble — les niches seules, parcourues de droite à gauche. Le bandeau bas reste noir.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 30,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
+      sides: ["nicheRight", "nicheMiddle", "nicheLeft"],
+      spatial: { mode: "axis", direction: { x: -1, y: 0, z: 0 } },
+      color: { r: 255, g: 190, b: 120 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "niche-by-niche",
+    group: "meuble",
+    label: "Niche par niche",
+    hint: "Meuble — le motif se répète trois fois sur la largeur : les niches s'allument à tour de rôle.",
+    config: {
+      kind: "ma", form: "pwm", target: "dimmer", speed: 45,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 34,
+      attack: 20, decay: 40,
+      matricks: { groups: 3 },
+      sides: ["nicheRight", "nicheMiddle", "nicheLeft"],
+      spatial: { mode: "axis", direction: { x: -1, y: 0, z: 0 } },
+      color: { r: 120, g: 200, b: 255 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "base-loop",
+    group: "meuble",
+    label: "Tour du bas",
+    hint: "Meuble — le bandeau bas seul : une lueur qui fait le tour de la base, niches éteintes.",
+    config: {
+      kind: "ma", form: "pwm", target: "dimmer", speed: 25,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 18,
+      attack: 25, decay: 55,
+      sides: ["leftDown", "baseBackToFront", "baseFront", "baseFrontToBack"],
+      spatial: { mode: "angular", origin: { x: 0, y: 0, z: 0.2 } },
+      color: { r: 255, g: 140, b: 40 }, bgColor: BLACK, brightness: 100
     }
   }
 ];
@@ -909,6 +1072,77 @@ export function buildLinearLayout(zoneCount: number): SmartLightZoneLayout {
     });
   }
   return { mode: "linked", segments };
+}
+
+/**
+ * Construit un layout a partir du CHEMIN REEL du ruban : une suite de troncons
+ * (legs), chacun avec son nombre de zones et ses deux extremites en 3D. Les zones
+ * d'un troncon se repartissent regulierement de `from` a `to`.
+ *
+ * C'est le constructeur generique dont les presets de forme (U, boucle de piece)
+ * sont des cas particuliers. Il sert quand la geometrie n'est PAS une forme type
+ * mais un releve : on peint les zones une par une, on note ou chacune se trouve,
+ * et on decrit le parcours obtenu. Un meuble avec des niches, une rampe d'escalier
+ * ou un plan de travail n'entrent dans aucun preset — ce constructeur les accepte.
+ *
+ * Un troncon nomme (`label`) devient une SECTION du layout (`sides`), que les effets
+ * savent viser (champ `sides` de l'effet parametrique). Un troncon sans nom occupe
+ * bien sa place sur le ruban, mais ne se designe pas.
+ *
+ * `spareZones` liste les zones sans LED visible (amorce cachee, passage derriere une
+ * cloison...). Elles gardent une position — sinon le reste du ruban se decalerait —
+ * mais le moteur d'effets les force en noir et les exclut de ses mesures.
+ */
+export function buildPathLayout(opts: {
+  legs: Array<{
+    /** Nom de la section, s'il faut pouvoir la viser depuis un effet. */
+    label?: string;
+    /** Nombre de zones du ruban sur ce troncon (zones cachees comprises). */
+    zones: number;
+    from: Point3D;
+    to: Point3D;
+    /** Couleur (hex) de repere pour l'UI — typiquement celle utilisee au relevé. */
+    color?: string;
+  }>;
+  spareZones?: number[];
+}): SmartLightZoneLayout {
+  const segments: ZoneSegment[] = [];
+  const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
+
+  for (const leg of opts.legs) {
+    if (leg.zones <= 0) continue;
+    const first = segments.length;
+    for (let i = 0; i < leg.zones; i++) {
+      segments.push({
+        start: lerpPoint3D(leg.from, leg.to, i / leg.zones),
+        end: lerpPoint3D(leg.from, leg.to, (i + 1) / leg.zones)
+      });
+    }
+    if (leg.label) {
+      sides.push({
+        label: leg.label,
+        zoneStart: first,
+        zoneEnd: segments.length - 1,
+        ...(leg.color ? { color: leg.color } : {})
+      });
+    }
+  }
+
+  return {
+    mode: "linked",
+    segments,
+    ...(opts.spareZones?.length ? { spareZones: [...opts.spareZones] } : {}),
+    ...(sides.length ? { sides } : {})
+  };
+}
+
+/** Interpolation lineaire entre deux points 3D (t = 0 -> a, t = 1 -> b). */
+function lerpPoint3D(a: Point3D, b: Point3D, t: number): Point3D {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    z: a.z + (b.z - a.z) * t
+  };
 }
 
 /**

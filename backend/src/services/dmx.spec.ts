@@ -3,10 +3,14 @@
 // distinguer ses propres valeurs d'une commande venue du pupitre, et de rendre la
 // main quand un fader, une scene ou un blackout lui passe dessus.
 import { describe, expect, it } from "vitest";
+import type { FastifyBaseLogger } from "fastify";
 import pino from "pino";
 import { DmxService } from "./dmx";
 
-const service = () => new DmxService(pino({ level: "silent" }));
+// Le service n'attend qu'un logger : un pino muet suffit. Le cast evite d'exiger
+// ici les extras que Fastify ajoute au sien (msgPrefix), dont rien ne se sert.
+const silentLogger = pino({ level: "silent" }) as unknown as FastifyBaseLogger;
+const service = () => new DmxService(silentLogger);
 const EFFECT = "effect:strip";
 
 describe("DmxService — auteur des ecritures", () => {
