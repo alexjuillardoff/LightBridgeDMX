@@ -158,6 +158,35 @@ export const api = {
   homekit: {
     status: () => fetchJSON<HomeKitStatus>("/api/homekit")
   },
+  // Patch automatise des ampoules HomeKit-sur-Thread.
+  threadLights: {
+    // Appairees cote sidecar mais pas encore declarees : « pretes a patcher ».
+    candidates: () =>
+      fetchJSON<{
+        sidecarUp: boolean;
+        candidates: { alias: string; name: string; reachable: boolean }[];
+        message?: string;
+      }>("/api/smart-lights/thread/candidates"),
+    // Declare la lampe et lui donne une adresse DMX (ou la rattache a un projecteur
+    // existant via fixtureId), en une seule operation.
+    adopt: (body: {
+      alias: string;
+      name?: string;
+      room?: string;
+      patchDmx?: boolean;
+      fixtureId?: string;
+    }) =>
+      fetchJSON<{ light: SmartLight; fixture: Fixture | null; address: number | null }>(
+        "/api/smart-lights/thread/adopt",
+        { method: "POST", body: JSON.stringify(body) }
+      ),
+    // Lance l'appairage. Ouvre Terminal.app : le Bluetooth est inaccessible au backend.
+    pair: (body: { name: string; pin: string; alias?: string }) =>
+      fetchJSON<{ started: boolean; alias: string; message: string }>(
+        "/api/smart-lights/thread/pair",
+        { method: "POST", body: JSON.stringify(body) }
+      )
+  },
   // Inventaire unifie des appareils (DMX, lampes, prises, ponts, Matter).
   devices: {
     // Reponse immediate : sert le dernier scan mDNS en cache cote backend.

@@ -98,6 +98,26 @@ Le **SmartLightService** est un registry de lampes WiFi avec deux paths de sorti
 - `zoneLayout` (JSON) : `{ mode, segments[], spareZones[], sides[] }` — disposition 3D des LEDs
 - `currentEffect` (JSON) : config d'effet active évaluée à chaque tick UDP
 
+
+### Ampoules Thread (`tools/homekit-thread/`)
+
+Hors du monorepo Node, et pour une raison de fond : les ampoules Nanoleaf Essentials
+parlent **HAP sur CoAP** au bout du maillage Thread, protocole dont la seule
+implémentation utilisable est `aiohomekit`, en Python.
+
+Un **sidecar** Python tient donc les connexions CoAP et expose une API HTTP sur la
+boucle locale ; le backend TypeScript lui parle comme à n'importe quel autre backend
+de lampe (`backend/src/services/smart-lights/homekit-thread-client.ts`).
+
+    backend :5000 ──HTTP──▶ sidecar.py :5056 ──CoAP/Thread──▶ ampoule
+
+| Fichier | Rôle |
+|---------|------|
+| `pair_bulb.py` | Appairage BLE + provisionnement Thread + bascule CoAP. Ponctuel, exige le Bluetooth |
+| `sidecar.py` | Service permanent. Résout les `iid` par type de caractéristique, sérialise les écritures par ampoule. **Aucun Bluetooth** |
+| `pairings.json` | Clés long-terme des appairages. **Irremplaçables** (perte = reset matériel), gitignorées |
+| `README.md` | Procédure complète et les sept pièges |
+
 ### Frontend (`frontend/`)
 
 L'interface est un **pupitre grandMA2** : 3 vues (Live, Patch, Setup), routing par hash URL,

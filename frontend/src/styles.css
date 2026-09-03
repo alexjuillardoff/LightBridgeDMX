@@ -3250,3 +3250,18 @@ input[type="range"]:focus-visible {
     align-items: stretch;
   }
 }
+
+
+/* Sous-titre d'etape dans le panneau d'ajout des ampoules Thread. */
+.thread-step {
+  margin: 10px 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--amber-text);
+}
+
+.thread-step:first-of-type {
+  margin-top: 2px;
+}

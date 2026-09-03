@@ -14,6 +14,8 @@ import { DeviceCategory, DeviceInventoryEntry } from "@lightbridgedmx/shared";
 import { Boxes, Lightbulb, PlugZap, RadioTower, Router, Sliders } from "lucide-react";
 import { api } from "../lib/api";
 import { withoutHiddenFixtures } from "../lib/hiddenFixtures";
+import { useAppData } from "../contexts/AppDataContext";
+import { ThreadBulbPatch } from "./patch/ThreadBulbPatch";
 
 // Familles affichees, dans l'ordre : du plus pilotable au plus lointain.
 const GROUPS: { category: DeviceCategory; label: string; icon: typeof Sliders }[] = [
@@ -131,9 +133,17 @@ export const DeviceInventory = () => {
     onSettled: () => setPairingHost(null)
   });
 
+  const { fixtures } = useAppData();
   const devices = useMemo(
     () => withoutHiddenFixtures(inventory.data?.devices ?? []),
     [inventory.data]
+  );
+
+  // Ampoules Thread reperees sur le reseau : sert a pre-remplir l'appairage.
+  // On les reconnait au transport, seul champ qui distingue HAP/CoAP du reste.
+  const threadNames = useMemo(
+    () => devices.filter((d) => d.transport.startsWith("HomeKit sur Thread")).map((d) => d.name),
+    [devices]
   );
 
   const visible = useMemo(
@@ -191,6 +201,10 @@ export const DeviceInventory = () => {
           <span>{scan.isLoading ? "Scan…" : "Rescanner"}</span>
         </button>
       </div>
+
+      {/* Ajout automatise des ampoules Thread : place ici, dans l'inventaire, parce
+          que c'est la qu'on les decouvre — chercher puis ajouter est un seul geste. */}
+      <ThreadBulbPatch detectedNames={threadNames} fixtures={fixtures} />
 
       {inventory.isLoading ? <p className="muted">Chargement de l'inventaire…</p> : null}
       {inventory.error ? (

@@ -87,3 +87,21 @@ export class HomeKitThreadClient {
     }
   }
 }
+
+/** Interroge le sidecar sans passer par une lampe deja enregistree.
+ *  Sert au patch automatique : lister ce qui est appaire cote sidecar mais pas
+ *  encore declare dans LightBridge. */
+export async function listSidecarLights(
+  sidecarUrl = "http://127.0.0.1:5056",
+  timeoutMs = 4000
+): Promise<ThreadLightState[]> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${sidecarUrl.replace(/\/+$/, "")}/lights`, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`GET /lights -> HTTP ${res.status}`);
+    return (await res.json()) as ThreadLightState[];
+  } finally {
+    clearTimeout(timer);
+  }
+}

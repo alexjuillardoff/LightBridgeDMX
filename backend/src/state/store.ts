@@ -513,6 +513,38 @@ export class Store {
 
   // ----- Helpers internes : detection de chevauchement de canaux -----
 
+  /**
+   * Cherche le premier bloc de `channelCount` canaux CONSECUTIFS entierement libre.
+   *
+   * Sert au patch automatique : quand on adopte une lampe reseau, personne n'a envie
+   * de chercher a la main un trou dans l'univers. On renvoie l'adresse de depart, ou
+   * null si l'univers ne peut plus loger le bloc.
+   *
+   * On balaie dans l'ordre croissant pour tasser le patch vers le bas plutot que de
+   * laisser des trous derriere soi.
+   */
+  async findFreeAddress(channelCount: number, universe = 0): Promise<number | null> {
+    const all = (await this.listFixtures()).filter((f) => f.universe === universe);
+    const occupied = new Set<number>();
+    for (const fixture of all) {
+      for (const channel of this.computeRanges(fixture)) occupied.add(channel);
+    }
+    for (let start = 1; start + channelCount - 1 <= 512; start++) {
+      let free = true;
+      for (let offset = 0; offset < channelCount; offset++) {
+        if (occupied.has(start + offset)) {
+          free = false;
+          // Saute directement apres le canal fautif : inutile de retester les
+          // adresses de depart qui le recouvriraient forcement.
+          start += offset;
+          break;
+        }
+      }
+      if (free) return start;
+    }
+    return null;
+  }
+
   // Verifie qu'aucun canal du projecteur n'est deja occupe par un autre projecteur.
   // Deux projecteurs sur le meme slot DMX se piloteraient mutuellement : on l'interdit (409).
   // ignoreId permet de s'exclure soi-meme lors d'une mise a jour.

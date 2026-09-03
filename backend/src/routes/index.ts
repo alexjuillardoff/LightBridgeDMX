@@ -10,6 +10,7 @@ import { registerPresetRoutes } from "./presets";
 import { registerQxfRoutes } from "./qxf";
 import { registerSceneRoutes } from "./scenes";
 import { registerSmartLightRoutes } from "./smart-lights";
+import { registerThreadLightRoutes } from "./thread-lights";
 import { registerSystemRoutes } from "./system";
 import { registerHomeKitRoutes } from "./homekit";
 import { ErrorHandler, RouteContext } from "./types";
@@ -31,4 +32,5 @@ export const registerRoutes = (app: FastifyInstance, ctx: RouteContext, handleEr
   registerDanceRoutes(app, ctx, handleError);
   registerSmartLightRoutes(app, ctx, handleError);
   registerDeviceRoutes(app, ctx, handleError);
+  registerThreadLightRoutes(app, ctx, handleError);
 };

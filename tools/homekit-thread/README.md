@@ -42,7 +42,7 @@ nulle part.** C'est le seul point de non-retour de toute la procédure.
 |---|---|---|
 | Nom du réseau | `nn=` de `_meshcop._udp` | — |
 | Canal radio | app Maison / Home Assistant | absent du mDNS |
-| PAN ID (16 bits) | idem | s'écrit `e253` ou `0xe253` |
+| PAN ID (16 bits) | idem | s'écrit `1a2b` ou `0x1a2b` — les deux sont acceptés |
 | Extended PAN ID | `xp=` de `_meshcop._udp` | 16 car. hexa |
 | **Clé réseau** | app Maison / HA | 32 car. hexa |
 | ~~PSKc~~ | — | **PIÈGE : ce n'est PAS la clé réseau** |
@@ -59,15 +59,38 @@ l'autorisation à un processus sans interface (serveur VS Code, launchd). Lancer
 
 ---
 
-## 3. Appairer une ampoule
+## 3. La voie normale : depuis l'interface
 
-### 3.1 Relever son nom
+Tout ce qui suit (§4, §5) est la **procédure manuelle**, utile pour comprendre ou
+déboguer. Au quotidien, passer par **`#patch` → volet Inventaire réseau → panneau
+« Ampoules Thread »** :
+
+1. **Appairer** — saisir le nom de l'ampoule (proposé par le réseau) et son code à
+   8 chiffres, puis cliquer. Une fenêtre Terminal s'ouvre : réinitialiser l'ampoule
+   pendant qu'elle cherche. Cette étape ne peut pas être automatisée davantage — elle
+   exige le Bluetooth, et macOS ne l'accorde jamais à un service sans interface.
+2. **Patcher** — l'ampoule apparaît dans « prêtes à patcher ». Un clic déclare la
+   lampe, trouve une adresse DMX libre, crée le projecteur, pose le miroir et
+   l'expose dans HomeKit. Le menu déroulant permet de **rattacher** la lampe à un
+   projecteur existant plutôt que d'en créer un second.
+
+Prérequis : `THREAD_DATASET` dans `backend/.env` (le dataset MeshCoP en hexa, cf. §2)
+et le sidecar démarré. Si le sidecar est arrêté, le panneau le dit explicitement.
+
+Endpoints : `GET /api/smart-lights/thread/candidates`,
+`POST /api/smart-lights/thread/adopt`, `POST /api/smart-lights/thread/pair`.
+
+---
+
+## 4. Appairer une ampoule (manuel)
+
+### 4.1 Relever son nom
 
     ./.venv/bin/python -m aiohomekit discover
 
 Repérer la ligne `Nanoleaf A19 XXXX`. **Noter le NOM, pas le Device ID** : voir §6.
 
-### 3.2 Réinitialiser
+### 4.2 Réinitialiser
 
 Temporisation contre-intuitive, c'est la cause d'échec la plus fréquente :
 
@@ -78,7 +101,7 @@ physique classique : ni variateur, ni prise connectée.
 
 Supprimer d'abord l'accessoire dans l'app Maison est l'étape officielle et facilite les choses.
 
-### 3.3 Appairer + provisionner Thread
+### 4.3 Appairer + provisionner Thread
 
 Depuis **Terminal.app** :
 
@@ -97,14 +120,14 @@ l'ampoule met ~1 min à rejoindre le maillage.
 
 Le code est accepté avec ou sans tirets. Le PAN ID avec ou sans préfixe `0x`.
 
-### 3.4 Sauvegarder les clés
+### 4.4 Sauvegarder les clés
 
 `pairings.json` contient des clés **irremplaçables** : les perdre impose un nouveau
 reset matériel. Gitignoré. **En faire une copie hors du dépôt.**
 
 ---
 
-## 4. Rendre l'ampoule pilotable
+## 5. Rendre l'ampoule pilotable
 
 ### 4.1 Démarrer le sidecar
 
@@ -159,7 +182,7 @@ Lampes gardent le contrôle. Le dernier qui écrit gagne.
 
 ---
 
-## 5. Limites — ne pas promettre l'impossible
+## 6. Limites — ne pas promettre l'impossible
 
 **Pas de 30 Hz. Jamais.** Trois plafonds cumulés :
 
@@ -179,7 +202,7 @@ Le Mode Dance et le miroir DMX par zone ne conviennent pas à ces ampoules.
 
 ---
 
-## 6. Pièges rencontrés — tous coûteux, tous réels
+## 7. Pièges rencontrés — tous coûteux, tous réels
 
 **Le reset régénère le Device ID HAP.** Trois valeurs différentes en trois resets pour
 la même ampoule. → Toujours `--name`, jamais `--device-id`.
@@ -213,7 +236,7 @@ aboutissent. Origine non élucidée.
 
 ---
 
-## 7. État actuel
+## 8. État actuel
 
 | Ampoule | Alias | État |
 |---|---|---|

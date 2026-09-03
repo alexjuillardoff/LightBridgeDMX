@@ -576,6 +576,7 @@ interface SmartLight {
 
 | Méthode | Endpoint | Corps | Description |
 |---------|----------|-------|-------------|
+| `POST` | `/api/universe` | `{ values: { "<canal>": 0–255 } }` | **Écriture groupée** : plusieurs canaux en une requête. Utilisée par la console pendant un glissement de fader — un POST par événement de mouvement saturait les ~6 connexions du navigateur et la position finale arrivait en dernier. Max 512 entrées |
 | `POST` | `/api/universe/:channel` | `{ value: 0–255 }` | Définit la valeur d'un canal |
 | `POST` | `/api/test/fixtures/:id` | `{ values: number[] }` | Teste un projecteur avec les valeurs données |
 
@@ -617,6 +618,17 @@ interface SmartLight {
 | `POST` | `/api/smart-lights/:id/effects/select` | `{ name }` | Active un effet builtin Nanoleaf (sort du mode streaming si actif) |
 | `POST` | `/api/smart-lights/probe` | `{ host, port? }` | Test rapide de reachability sans pairing |
 | `POST` | `/api/smart-lights/discover` | `{ timeoutMs? }` | Scan mDNS (~3 s par défaut) — retourne les Nanoleaf trouvés |
+
+### Ampoules HomeKit-sur-Thread (patch automatisé)
+
+Ces trois endpoints ramènent l'ajout d'une ampoule Nanoleaf Essentials de sept étapes
+manuelles à deux clics. Voir `tools/homekit-thread/README.md` pour la procédure complète.
+
+| Méthode | Endpoint | Corps | Description |
+|---------|----------|-------|-------------|
+| `GET` | `/api/smart-lights/thread/candidates` | — | Ampoules appairées côté sidecar mais pas encore déclarées : la liste « prêtes à patcher ». Renvoie `{ sidecarUp, candidates[], message? }` — `sidecarUp: false` plutôt qu'une liste vide trompeuse si le sidecar est arrêté |
+| `POST` | `/api/smart-lights/thread/adopt` | `{ alias, name?, room?, patchDmx?, fixtureId?, universe? }` | Déclare la lampe **et** la patche : adresse DMX libre trouvée par `store.findFreeAddress()`, projecteur 4 canaux créé (`homekit.enabled: false`), miroir posé, accessoire HomeKit exposé. `fixtureId` rattache à un projecteur **existant** au lieu d'en créer un second. Transactionnel : la lampe est retirée si la création du projecteur échoue |
+| `POST` | `/api/smart-lights/thread/pair` | `{ name, pin, alias?, timeoutSec? }` | Lance l'appairage. **Ouvre Terminal.app via AppleScript** : l'appairage exige le Bluetooth, que macOS n'accorde jamais à un processus sans interface. Requiert `THREAD_DATASET`. Détaché — la requête n'attend pas les 2-4 min de la procédure |
 
 ### Prise Meross
 
@@ -981,6 +993,8 @@ QXF = format XML de définition de projecteur QLC+.
 | `HOMEKIT_STORAGE` | `".homekit/"` | Dossier de stockage HAP |
 | `MEROSS_PLUG_HOST` | — | **Seed seulement** (1er lancement, base vide) : IP de la prise Meross |
 | `MEROSS_PLUG_KEY` | — | **Seed seulement** : device key Meross (signature locale) |
+| `THREAD_DATASET` | — | Dataset Thread MeshCoP en hexa, requis par `/api/smart-lights/thread/pair`. **Secret réseau** (contient la clé du maillage) : `backend/.env` uniquement, jamais commité. `dotenv` charge à l'import → redémarrer le backend après ajout |
+| `THREAD_SIDECAR_URL` | `http://127.0.0.1:5056` | Base du sidecar HAP/CoAP |
 | `MEROSS_PLUG_CHANNEL` | `0` | **Seed seulement** : canal de la prise (0 = Plug Mini) |
 | `MEROSS_PLUG_REASSERT_MS` | `30000` | Délai max avant de ré-affirmer l'état « allumé » pendant l'activité DMX |
 | `MEROSS_OFF_TIMEOUT_MS` | `300000` | Durée de blackout DMX (tous les canaux d'extinction à 0) avant de couper la prise (5 min) |
@@ -1197,6 +1211,13 @@ Une fois `extControlVersion=v2` activé, le device sort de extControl après ~25
 
 ### NL72K3 panelLayout — endpoint absent
 L'endpoint `/api/v1/<token>/panelLayout/layout` n'existe pas sur le Lightstrip Essentials (404). On découvre les 50 zones empiriquement en streamant et observant. Pour d'autres modèles Nanoleaf (Lines, Shapes, Canvas) cet endpoint existe et donne les `panelId` + positions.
+
+### Ampoules Thread : sept pièges documentés à part
+
+Le reset régénère le Device ID HAP, `aiohomekit` a un bug dans `async_find()`, `aiocoap`
+n'active pas `udp6` hors Linux, `save_data()` ne sérialise que les alias du contrôleur de
+haut niveau… Chacun coûte un reset matériel si on le découvre trop tard.
+**Tout est dans `tools/homekit-thread/README.md` §7** — ne pas les redécouvrir.
 
 ### Smart Lights : streaming + Apple Home conflict
 Quand notre `NanoleafStreamer` est actif (extControl mode), Apple Home perd temporairement la possibilité de modifier le strip — le streaming "owns" l'output. C'est attendu. Pour rendre la main à HomeKit/Nanoleaf app, désactiver le streaming via UI ou `POST /streaming` avec `enabled: false` — le service revient à HTTP coalescé.

@@ -568,6 +568,27 @@ pilotable, avec la raison** : c'est le point de départ quand on se demande « p
 n'apparaît nulle part ? ». Le bouton **Rescanner** relance une écoute mDNS (~6 s), et un Nanoleaf en mode
 appairage se rattache directement depuis sa ligne.
 
+**Panneau « Ampoules Thread »** — ajout d'une ampoule Nanoleaf Essentials (A19, modèle NL45) en deux
+gestes. Ces ampoules ne parlent ni HTTP ni Matter mais HomeKit sur Thread, et n'apparaissent dans aucun
+scan IPv4 : il faut devenir leur contrôleur HAP, donc les sortir de la maison Apple.
+
+1. **Appairer** — saisis le nom de l'ampoule (proposé depuis le réseau) et son **code à 8 chiffres**,
+   relevé dans l'app Maison (accessoire → réglages → bas de page). Une fenêtre Terminal s'ouvre :
+   réinitialise l'ampoule pendant qu'elle cherche — *éteindre 3 s, rallumer 1 s, cinq fois*, jusqu'aux
+   trois clignotements rouges. Cette étape reste manuelle car elle exige le Bluetooth, que macOS
+   n'accorde jamais à un service sans interface.
+2. **Patcher** — l'ampoule apparaît dans *prêtes à patcher*. Un clic déclare la lampe, trouve une
+   adresse DMX libre, crée le projecteur, pose le miroir et l'expose dans HomeKit comme une **ampoule
+   normale** (une seule, avec teinte et saturation) et non canal par canal. Le menu déroulant permet de
+   la **rattacher à un projecteur existant** plutôt que d'en créer un second.
+
+> Sans le code à 8 chiffres, une ampoule réinitialisée n'est réappairable nulle part — ni dans Maison,
+> ni dans LightBridge. C'est le seul point de non-retour : relève-le **avant** de réinitialiser.
+
+Prérequis : `THREAD_DATASET` dans `backend/.env` et le sidecar Python démarré. Si le sidecar est
+arrêté, le panneau le dit et donne la commande. Procédure détaillée et pièges :
+[`tools/homekit-thread/README.md`](tools/homekit-thread/README.md).
+
 ##### Volet Lampes connectées (`/#patch/lampes`)
 
 - **Pastilles de filtre** en haut pour afficher uniquement une marque (Nanoleaf, etc.)

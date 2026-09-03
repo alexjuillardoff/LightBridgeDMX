@@ -79,7 +79,7 @@ def normalize_pin(raw: str) -> str:
 def parse_panid(raw: str) -> int:
     """Lit un PAN ID ecrit avec ou sans prefixe hexadecimal.
 
-    L'app Maison l'affiche nu ("e253"), d'autres outils le prefixent ("0xe253").
+    L'app Maison l'affiche nu ("1a2b"), d'autres outils le prefixent ("0x1a2b").
     On tente d'abord l'interpretation explicite, puis l'hexadecimal par defaut :
     un PAN ID est toujours hexadecimal, jamais decimal.
     """
@@ -116,7 +116,7 @@ def build_dataset(args: argparse.Namespace) -> str:
 
     dataset = Meshcop(
         channel=int(args.channel),
-        # Le PAN ID se note indifferemment "0xe253" ou "e253" selon l'outil qui
+        # Le PAN ID se note indifferemment "0x1a2b" ou "1a2b" selon l'outil qui
         # l'affiche : on accepte les deux plutot que de pieger l'utilisateur.
         panid=parse_panid(args.panid),
         extpanid=bytes.fromhex(args.extpanid),
