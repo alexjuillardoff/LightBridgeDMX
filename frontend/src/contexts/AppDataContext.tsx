@@ -16,6 +16,7 @@ import { UseMutationResult, useMutation, useQuery, useQueryClient } from "@tanst
 import { Fixture, QxfLibraryFixture, Scene, SmartLight } from "@lightbridgedmx/shared";
 import { HomeKitStatus, api } from "../lib/api";
 import { buildFixtureColors } from "../lib/fixtures";
+import { withoutHiddenFixtures } from "../lib/hiddenFixtures";
 import { clamp } from "../lib/math";
 import { LogEntry, useDmxWebsocket } from "../hooks/useDmxWebsocket";
 import { UniverseStateProvider } from "./UniverseStateContext";
@@ -190,7 +191,12 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
   });
 
   // ----- Valeurs derivees (recalculees a partir des requetes) -----
-  const fixtures = fixturesQuery.data ?? [];
+  // Les projecteurs masques (lib/hiddenFixtures) sont retires ici : tout ce qui
+  // consomme useAppData() ne les voit donc jamais.
+  const fixtures = useMemo(
+    () => withoutHiddenFixtures(fixturesQuery.data ?? []),
+    [fixturesQuery.data]
+  );
   // Couleurs d'affichage de chaque projecteur, derivees de ses capabilities r/g/b.
   const fixtureColors = useMemo(() => buildFixtureColors(fixtures), [fixtures]);
   // Ensemble des IDs de projecteurs exposes comme accessoires HomeKit (pour pastiller l'UI).

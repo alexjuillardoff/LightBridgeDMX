@@ -69,11 +69,11 @@ export const EffectDesigner = ({
   const streamingOn = light.streaming?.enabled ?? false;
 
   return (
-    <div style={{ padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+    <div style={{ padding: 10, background: "#0a0a0a", borderRadius: 0 }}>
       <div className="flex-between" style={{ marginBottom: 8 }}>
-        <strong style={{ fontSize: 13 }}>Effet position-aware</strong>
+        <strong style={{ fontSize: 14 }}>Effet position-aware</strong>
         {!streamingOn ? (
-          <span style={{ fontSize: 11, color: "var(--accent-2)" }}>⚠ Streaming UDP requis</span>
+          <span style={{ fontSize: 12, color: "var(--accent-2)" }}>⚠ Streaming UDP requis</span>
         ) : null}
       </div>
 
@@ -123,7 +123,7 @@ export const EffectDesigner = ({
             onChange={(v) => updateAndApply({ ...config, speed: v })} />
           <NumberRow label="Largeur tête" value={config.width} min={1} max={20} unit=" zones"
             onChange={(v) => updateAndApply({ ...config, width: v })} />
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, margin: "4px 0" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, margin: "4px 0" }}>
             <input type="checkbox" checked={config.bounce ?? false}
               onChange={(e) => updateAndApply({ ...config, bounce: e.target.checked })} />
             Ping-pong (rebond)
@@ -155,14 +155,14 @@ export const EffectDesigner = ({
 // on convertit donc dans les deux sens (hex <-> RgbColor) a l'affichage et a la saisie.
 const ColorRow = ({ label, value, onChange }: { label: string; value: RgbColor; onChange: (c: RgbColor) => void }) => (
   <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0" }}>
-    <span className="muted" style={{ fontSize: 12, width: 70 }}>{label}</span>
+    <span className="muted" style={{ fontSize: 13, width: 70 }}>{label}</span>
     <input
       type="color"
       value={rgbToHex(value)}
       onChange={(e) => onChange(hexToRgb(e.target.value))}
-      style={{ width: 32, height: 28, padding: 0, border: "1px solid var(--border)", borderRadius: 6, background: "transparent" }}
+      style={{ width: 32, height: 28, padding: 0, border: "1px solid var(--border)", borderRadius: 0, background: "transparent" }}
     />
-    <span style={{ fontSize: 11, color: "var(--muted)" }}>rgb({value.r},{value.g},{value.b})</span>
+    <span style={{ fontSize: 12, color: "var(--muted)" }}>rgb({value.r},{value.g},{value.b})</span>
   </label>
 );
 
@@ -174,9 +174,9 @@ const NumberRow = ({
 }) => (
   <label style={{ display: "block", margin: "4px 0" }}>
     <div className="flex-between" style={{ marginBottom: 2 }}>
-      <span className="muted" style={{ fontSize: 12 }}>{label}</span>
+      <span className="muted" style={{ fontSize: 13 }}>{label}</span>
       {/* 2 decimales pour les pas fins (< 1), sinon valeur entiere. */}
-      <span style={{ fontSize: 12 }}>{value.toFixed(step && step < 1 ? 2 : 0)}{unit}</span>
+      <span style={{ fontSize: 13 }}>{value.toFixed(step && step < 1 ? 2 : 0)}{unit}</span>
     </div>
     <input type="range" min={min} max={max} step={step ?? 1} value={value}
       onChange={(e) => onChange(Number(e.target.value))}
@@ -188,10 +188,10 @@ const NumberRow = ({
 // Utilise par gradient et wave pour orienter l'effet dans la disposition (layout) du bandeau.
 const DirectionRow = ({ value, onChange }: { value: Point3D; onChange: (p: Point3D) => void }) => (
   <div style={{ margin: "4px 0" }}>
-    <span className="muted" style={{ fontSize: 12 }}>Direction (XYZ)</span>
+    <span className="muted" style={{ fontSize: 13 }}>Direction (XYZ)</span>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginTop: 2 }}>
       {(["x", "y", "z"] as const).map((axis) => (
-        <label key={axis} style={{ fontSize: 11 }}>
+        <label key={axis} style={{ fontSize: 12 }}>
           <span style={{ color: "var(--muted)" }}>{axis.toUpperCase()}: {value[axis].toFixed(2)}</span>
           <input
             type="range" min={-1} max={1} step={0.05} value={value[axis]}
@@ -206,7 +206,7 @@ const DirectionRow = ({ value, onChange }: { value: Point3D; onChange: (p: Point
 
 // Styles des onglets de selection d'effet : base commune, puis variante active/inactive.
 const tabBase: React.CSSProperties = {
-  padding: "4px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer", border: "1px solid var(--border)"
+  padding: "4px 10px", borderRadius: 0, fontSize: 13, cursor: "pointer", border: "1px solid var(--border)"
 };
-const tabActive: React.CSSProperties = { ...tabBase, background: "var(--accent)", color: "#001a14", fontWeight: 600 };
-const tabInactive: React.CSSProperties = { ...tabBase, background: "rgba(255,255,255,0.06)", color: "var(--text)" };
+const tabActive: React.CSSProperties = { ...tabBase, background: "linear-gradient(180deg,#2b7fd0,#10457d)", color: "#fff", fontWeight: 700 };
+const tabInactive: React.CSSProperties = { ...tabBase, background: "linear-gradient(180deg,#1a1a1a,#050505)", color: "var(--dim)" };

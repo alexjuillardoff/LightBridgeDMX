@@ -1,22 +1,17 @@
-// Barre d'onglets du haut, utilisee sur grand ecran (desktop).
-// Meme liste partagee d'onglets (TABS) que la version mobile BottomNav.tsx,
-// mais ici on affiche le libelle complet et on relie chaque onglet a son
-// panneau via aria-controls pour l'accessibilite.
+// Barre de vues (haut d'ecran), equivalent des boutons de vue d'un pupitre.
+// Chaque vue est numerotee, comme les "Views" d'un grandMA que l'on rappelle
+// par leur numero. Meme liste partagee (TABS) que la navigation mobile.
 import { TABS, TabId } from "./tabs";
 
-// active : onglet actuellement selectionne.
-// onSelect : callback declenche au clic pour changer d'onglet.
 type TabBarProps = {
   active: TabId;
   onSelect: (next: TabId) => void;
 };
 
 export const TabBar = ({ active, onSelect }: TabBarProps) => (
-  <nav className="tabbar" role="tablist" aria-label="Navigation principale">
-    {TABS.map((tab) => {
-      // Composant icone lucide-react associe a l'onglet.
+  <nav className="ma-viewbar" role="tablist" aria-label="Vues">
+    {TABS.map((tab, index) => {
       const Icon = tab.icon;
-      // Vrai si cet onglet est celui en cours d'affichage.
       const isActive = tab.id === active;
       return (
         <button
@@ -24,13 +19,14 @@ export const TabBar = ({ active, onSelect }: TabBarProps) => (
           type="button"
           role="tab"
           aria-selected={isActive}
-          // aria-controls relie l'onglet au panneau qu'il pilote (id "panel-<onglet>").
+          // aria-controls relie le bouton de vue au panneau qu'il affiche.
           aria-controls={`panel-${tab.id}`}
-          className={`tabbar-item ${isActive ? "tabbar-item-active" : ""}`}
+          className={`ma-viewbtn ${isActive ? "ma-viewbtn-active" : ""}`}
           onClick={() => onSelect(tab.id)}
         >
-          {/* Sur desktop on a la place pour le libelle complet (label). */}
-          <Icon size={16} strokeWidth={2} aria-hidden="true" />
+          {/* Numero de vue, a gauche : reflexe de pupitre pour s'y retrouver. */}
+          <span className="ma-viewbtn-num">{index + 1}</span>
+          <Icon size={14} strokeWidth={2} aria-hidden="true" />
           <span>{tab.label}</span>
         </button>
       );

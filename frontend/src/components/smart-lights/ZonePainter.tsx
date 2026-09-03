@@ -124,13 +124,13 @@ export const ZonePainter = ({
   const activeCount = zoneCount - spare.size;
 
   return (
-    <div style={{ padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+    <div style={{ padding: 10, background: "#0a0a0a", borderRadius: 0 }}>
       <div className="flex-between" style={{ marginBottom: 6 }}>
-        <strong style={{ fontSize: 13 }}>
+        <strong style={{ fontSize: 14 }}>
           Painter — {activeCount} actives / {spare.size} spare / {zoneCount} total
         </strong>
         {!streamingOn ? (
-          <span style={{ fontSize: 11, color: "var(--accent-2)" }}>⚠ active Streaming UDP pour voir le rendu live</span>
+          <span style={{ fontSize: 12, color: "var(--accent-2)" }}>⚠ active Streaming UDP pour voir le rendu live</span>
         ) : null}
       </div>
 
@@ -151,7 +151,7 @@ export const ZonePainter = ({
               onClick={() => { setBrush(c); setBrushMode("color"); }}
               title={`R${c.r} G${c.g} B${c.b}`}
               style={{
-                width: 22, height: 22, borderRadius: 4,
+                width: 22, height: 22, borderRadius: 0,
                 background: `rgb(${c.r},${c.g},${c.b})`,
                 border: brushMode === "color" && brush.r === c.r && brush.g === c.g && brush.b === c.b
                   ? "2px solid var(--accent)" : "1px solid rgba(255,255,255,0.15)",
@@ -165,7 +165,7 @@ export const ZonePainter = ({
           onClick={() => setBrushMode("spare")}
           title="Marquer comme spare (zone non câblée physiquement)"
           style={{
-            width: 22, height: 22, borderRadius: 4, padding: 0,
+            width: 22, height: 22, borderRadius: 0, padding: 0,
             background: "repeating-linear-gradient(45deg, #444, #444 3px, #222 3px, #222 6px)",
             border: brushMode === "spare" ? "2px solid var(--accent)" : "1px solid rgba(255,255,255,0.15)",
             cursor: "pointer"
@@ -186,7 +186,7 @@ export const ZonePainter = ({
           height: 32,
           padding: 2,
           background: "#000",
-          borderRadius: 6,
+          borderRadius: 0,
           userSelect: "none"
         }}
       >
@@ -212,7 +212,7 @@ export const ZonePainter = ({
                 background: isSpare
                   ? "repeating-linear-gradient(45deg, #555, #555 2px, #222 2px, #222 4px)"
                   : `rgb(${c.r}, ${c.g}, ${c.b})`,
-                borderRadius: 2,
+                borderRadius: 0,
                 cursor: "crosshair"
               }}
             />
@@ -220,7 +220,7 @@ export const ZonePainter = ({
         })}
       </div>
 
-      <p className="muted" style={{ fontSize: 11, margin: "4px 0 0 0" }}>
+      <p className="muted" style={{ fontSize: 12, margin: "4px 0 0 0" }}>
         Clic = peindre · Clic droit = toggle spare · Pinceau hachuré = mode spare
       </p>
 
@@ -242,12 +242,12 @@ export const ZonePainter = ({
         </button>
       </div>
       {apply.error ? (
-        <p style={{ color: "var(--danger)", fontSize: 12, margin: "4px 0 0 0" }}>
+        <p style={{ color: "var(--danger)", fontSize: 13, margin: "4px 0 0 0" }}>
           {(apply.error as Error).message}
         </p>
       ) : null}
       {saveLayout.error ? (
-        <p style={{ color: "var(--danger)", fontSize: 12, margin: "4px 0 0 0" }}>
+        <p style={{ color: "var(--danger)", fontSize: 13, margin: "4px 0 0 0" }}>
           {(saveLayout.error as Error).message}
         </p>
       ) : null}
@@ -263,16 +263,16 @@ const PRESETS: RgbColor[] = [
 ];
 
 const buttonStylePrimary: React.CSSProperties = {
-  padding: "6px 12px", background: "var(--accent)", color: "#001a14",
-  border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13
+  padding: "6px 12px", background: "linear-gradient(180deg,#1a1a1a,#050505)", color: "var(--amber-text)",
+  border: "1px solid var(--edge)", borderRadius: 0, cursor: "pointer", fontWeight: 700, fontSize: 13
 };
 const buttonStyleSecondary: React.CSSProperties = {
-  padding: "6px 12px", background: "rgba(255,255,255,0.06)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer", fontSize: 13
+  padding: "6px 12px", background: "linear-gradient(180deg,#1a1a1a,#050505)", color: "var(--text)",
+  border: "1px solid var(--edge-grey)", borderRadius: 0, cursor: "pointer", fontWeight: 700, fontSize: 13
 };
 const swatchBoxStyle: React.CSSProperties = {
   width: 32, height: 32, padding: 0, border: "1px solid var(--border)",
-  borderRadius: 6, background: "transparent"
+  borderRadius: 0, background: "transparent"
 };
 
 // Convertit une couleur RGB (0-255) en chaine hex "#rrggbb" pour l'input <input type="color">.

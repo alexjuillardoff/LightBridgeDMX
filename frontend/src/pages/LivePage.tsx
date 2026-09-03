@@ -1,17 +1,20 @@
-// Page "Live" : regroupe sur un seul ecran les trois outils de pilotage temps reel.
-// Console DMX (curseurs des canaux), Mode Dance (chenillard strobe par piece)
-// et Scenes (capture/rappel des cues). Une barre d'ancres permet de sauter d'une
-// section a l'autre sans changer d'onglet.
+// Vue "Live" : l'écran principal du pupitre.
+// De haut en bas, on retrouve l'organisation d'un grandMA :
+//   1. le bandeau d'encodeurs (attributs de la sélection) ;
+//   2. la Fixture Sheet (sélection des projecteurs) ;
+//   3. la Fader View (les 512 canaux, page par page) ;
+//   4. le Mode Dance (chenillard) et la rangée d'executors.
+// Une barre d'ancres permet de sauter d'une section à l'autre.
 import { useCallback } from "react";
 import { ChannelGrid } from "../components/ChannelGrid";
 import { DancePanel } from "../components/DancePanel";
+import { EncoderBar } from "../components/EncoderBar";
+import { FixtureSheet } from "../components/FixtureSheet";
 import { ScenesSection } from "../components/ScenesSection";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUniverseState } from "../contexts/UniverseStateContext";
 
-// Fait defiler la page en douceur jusqu'a la section dont l'id est passe en argument.
-// Sert a la barre d'ancres (boutons Console / Dance / Scenes). Sort sans rien faire
-// si aucun element ne porte cet id.
+// Fait défiler l'écran jusqu'à la section demandée (barre d'ancres).
 const scrollToAnchor = (id: string) => {
   const el = document.getElementById(id);
   if (!el) return;
@@ -19,38 +22,47 @@ const scrollToAnchor = (id: string) => {
 };
 
 const LivePage = () => {
-  // Donnees partagees : liste des projecteurs (fixtures), couleurs associees,
-  // scenes enregistrees, et les mutations API (dont la mise a jour d'un canal).
   const { fixtures, fixtureColors, scenes, mutations, handleUpdateChannel } = useAppData();
-  // Etat live des 512 canaux de l'univers DMX, pousse par WebSocket.
   const { universeState } = useUniverseState();
 
-  // Raccourcis de navigation vers chaque section. useCallback evite de recreer
-  // ces fonctions a chaque rendu (les handlers restent stables).
+  const goSheet = useCallback(() => scrollToAnchor("live-sheet"), []);
   const goConsole = useCallback(() => scrollToAnchor("live-console"), []);
   const goDance = useCallback(() => scrollToAnchor("live-dance"), []);
-  const goScenes = useCallback(() => scrollToAnchor("live-scenes"), []);
+  const goExec = useCallback(() => scrollToAnchor("live-exec"), []);
 
   return (
     <>
       <div className="section-title">
         <h2>Live</h2>
-        <span className="muted">Console DMX · Mode Dance · Scènes</span>
+        <span className="muted">Encoders · Fixture Sheet · Fader View · Dance · Executors</span>
       </div>
 
-      <nav className="anchor-nav" aria-label="Navigation live">
+      <nav className="anchor-nav" aria-label="Navigation de la vue Live">
+        <button type="button" className="pill" onClick={goSheet}>
+          Fixtures
+        </button>
         <button type="button" className="pill" onClick={goConsole}>
-          Console DMX
+          Faders
         </button>
         <button type="button" className="pill" onClick={goDance}>
-          Mode Dance
+          Dance
         </button>
-        <button type="button" className="pill" onClick={goScenes}>
-          Scènes
+        <button type="button" className="pill" onClick={goExec}>
+          Executors
         </button>
       </nav>
 
-      {/* Section Console DMX : grille de curseurs pour piloter chaque canal a la main. */}
+      {/* 1. Encodeurs : agissent sur la sélection courante. */}
+      <section className="live-section">
+        <EncoderBar />
+      </section>
+
+      {/* 2. Fixture Sheet : c'est ici qu'on sélectionne les projecteurs. */}
+      <section id="live-sheet" className="live-section">
+        <FixtureSheet />
+      </section>
+
+      {/* 3. Fader View : accès canal par canal à l'univers DMX. */}
       <section id="live-console" className="live-section">
         <ChannelGrid
           universeState={universeState}
@@ -61,10 +73,10 @@ const LivePage = () => {
         />
       </section>
 
-      {/* Section Mode Dance : declenche le chenillard strobe coordonne par piece. */}
+      {/* 4a. Mode Dance : chenillard strobe coordonné par pièce. */}
       <section id="live-dance" className="live-section">
         <div className="section-title">
-          <h2>Mode Dance</h2>
+          <h2>Dance</h2>
           <span className="muted">Strobe coordonné par pièce avec patterns spatiaux</span>
         </div>
         <div className="grid">
@@ -72,12 +84,8 @@ const LivePage = () => {
         </div>
       </section>
 
-      {/* Section Scenes : capture et rappel des cues (tops de show). Fonction a venir. */}
-      <section id="live-scenes" className="live-section">
-        <div className="section-title">
-          <h2>Scènes</h2>
-          <span className="muted">Capture et rappel des cues de show (à venir)</span>
-        </div>
+      {/* 4b. Executors : scènes rappelables. */}
+      <section id="live-exec" className="live-section">
         <ScenesSection scenes={scenes} />
       </section>
     </>

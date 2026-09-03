@@ -6,6 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Power, RefreshCw, Square } from "lucide-react";
 import { DanceState } from "@lightbridgedmx/shared";
+import { UniverseMonitor } from "../components/UniverseMonitor";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUniverseState } from "../contexts/UniverseStateContext";
 import { countActiveChannels } from "../lib/fixtures";
@@ -14,12 +15,13 @@ import { setActiveTabHash } from "../shell/navigate";
 
 // Style commun des petits boutons "pilule" qui renvoient vers un autre onglet.
 const NAV_LINK_STYLE: React.CSSProperties = {
-  background: "transparent",
-  border: "1px solid var(--border)",
-  color: "var(--text)",
-  padding: "6px 12px",
-  borderRadius: 999,
+  background: "linear-gradient(180deg,#1a1a1a,#050505)",
+  border: "1px solid var(--edge)",
+  color: "var(--amber-text)",
+  padding: "4px 10px",
+  borderRadius: 0,
   cursor: "pointer",
+  fontWeight: 700,
   fontSize: 12
 };
 
@@ -109,7 +111,7 @@ export const DashboardPage = () => {
               <p>
                 État : <span className="badge">Désactivé</span>
               </p>
-              <p className="muted" style={{ fontSize: 12 }}>
+              <p className="muted" style={{ fontSize: 13 }}>
                 Définir <code>HOMEKIT_ENABLED=true</code> côté backend.
               </p>
             </>
@@ -140,7 +142,7 @@ export const DashboardPage = () => {
             </span>
           </p>
           {danceRunning ? (
-            <p className="muted" style={{ fontSize: 12 }}>
+            <p className="muted" style={{ fontSize: 13 }}>
               Pattern : <strong>{danceQuery.data?.currentPattern ?? "—"}</strong>
             </p>
           ) : null}
@@ -151,7 +153,7 @@ export const DashboardPage = () => {
 
         {/* Carte Actions rapides : Blackout (extinction totale), Stop Dance (arrete le
             chenillard, desactive si rien ne tourne) et Refresh QXF (recharge la bibliotheque) */}
-        <div className="card quick-actions">
+        <div className="card quick-actions grid-span-full">
           <h2>Actions rapides</h2>
           <div className="quick-actions-grid">
             <button type="button" className="btn-danger" onClick={() => void handleBlackout()}>
@@ -196,6 +198,8 @@ export const DashboardPage = () => {
             </ul>
           )}
         </div>
+        {/* Vue d'ensemble des 512 canaux de l'univers, en lecture seule. */}
+        <UniverseMonitor />
       </section>
     </>
   );

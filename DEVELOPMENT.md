@@ -82,30 +82,38 @@ LightBridgeDMX/
 │   │   ├── App.tsx                    ← wrap AppDataProvider + AppShell (12 lignes)
 │   │   ├── shell/                     ← navigation par onglets responsive
 │   │   │   ├── AppShell.tsx           ← layout racine : Header + TabBar + page active + BottomNav
-│   │   │   ├── TabBar.tsx             ← top bar desktop/tablet, cachée <640px
+│   │   │   ├── StatusBar.tsx          ← barre d'état haute (univers, sortie DMX, LED, horloge, Blackout)
+│   │   │   ├── TabBar.tsx             ← barre de vues numérotées, cachée <640px
 │   │   │   ├── BottomNav.tsx          ← bottom nav iOS-style mobile, cachée ≥640px, safe-area-inset
 │   │   │   ├── tabs.ts                ← source unique des 5 onglets (TabDef + icônes lucide)
+│   │   │   ├── CommandLine.tsx        ← ligne de commande turquoise (saisie + ligne de retour)
+│   │   │   ├── KeypadRail.tsx         ← rail droit : touches Fixture/Thru/At, pavé numérique, Please, B.O.
 │   │   │   ├── useHashTab.ts          ← hook routing par hash URL (#dashboard, #live, etc.)
 │   │   │   └── navigate.ts            ← helper setActiveTabHash() pour liens internes
 │   │   ├── contexts/
 │   │   │   ├── AppDataContext.tsx     ← provider central — queries, mutations, WS handlers, log history
+│   │   │   ├── SelectionContext.tsx   ← sélection de fixtures (le "programmer" du pupitre)
+│   │   │   ├── CommandContext.tsx     ← saisie + exécution des commandes (partagée cmdline/rail)
 │   │   │   └── UniverseStateContext.tsx ← context isolé pour universeState (30 Hz ticks)
 │   │   ├── pages/                     ← une page par onglet (consomment useAppData / useUniverseState)
 │   │   │   ├── DashboardPage.tsx      ← tuiles statut + HomeKit + Dance + Quick Actions + log history
 │   │   │   ├── FixturesPage.tsx       ← FixtureForm + QxfLibraryPanel + FixturesTable
 │   │   │   ├── SmartLightsPage.tsx    ← pills filtre backend + SmartLightsPanel
-│   │   │   ├── LivePage.tsx           ← ChannelGrid + DancePanel + ScenesSection (lazy via React.lazy)
+│   │   │   ├── LivePage.tsx           ← EncoderBar + FixtureSheet + ChannelGrid + DancePanel + Executors (lazy)
 │   │   │   └── SettingsPage.tsx       ← HomeKitCard + cartes Système / Variables backend
 │   │   ├── components/
-│   │   │   ├── Header.tsx             ← titre + icône Zap + badge statut WebSocket
-│   │   │   ├── StatusCards.tsx        ← 4 cartes : univers, fixtures, scènes, activité (legacy, gardé)
+│   │   │   ├── FixtureSheet.tsx       ← cellules fixtures + sélection (cadre jaune)
+│   │   │   ├── EncoderBar.tsx         ← onglets de groupe + 4 molettes sur la sélection
+│   │   │   ├── UniverseMonitor.tsx    ← DMX sheet 512 canaux en lecture seule (dashboard)
+│   │   │   ├── ma/MaFader.tsx         ← fader maison (pointeur + clavier), vertical ou horizontal
+│   │   │   ├── ma/MaKnob.tsx          ← molette d'encodeur (drag relatif, arc de niveau)
 │   │   │   ├── FixtureForm.tsx        ← formulaire création manuelle de fixture
 │   │   │   ├── FixturesTable.tsx      ← liste fixtures + suppression + data-label pour mobile cards
-│   │   │   ├── ChannelGrid.tsx        ← grille 512 canaux (8 → 6 → 4 colonnes selon viewport)
+│   │   │   ├── ChannelGrid.tsx        ← fader view 32 canaux/page (16 → 12 → 8 → 4 colonnes)
 │   │   │   ├── QxfLibraryPanel.tsx    ← navigateur bibliothèque QXF + import
 │   │   │   ├── HomeKitCard.tsx        ← statut HomeKit + QR code + PIN
 │   │   │   ├── DancePanel.tsx         ← config + contrôle du Dance mode
-│   │   │   ├── ScenesSection.tsx      ← liste scènes (placeholder)
+│   │   │   ├── ScenesSection.tsx      ← rangée d'executors (scènes, emplacements libres en creux)
 │   │   │   ├── SmartLightsPanel.tsx   ← accepte `backendFilter` + `hideSectionTitle` (extensible)
 │   │   │   └── smart-lights/
 │   │   │       ├── backendRegistry.ts     ← registre extensible (Nanoleaf + futurs Hue/Matter)
@@ -117,6 +125,8 @@ LightBridgeDMX/
 │   │   └── lib/
 │   │       ├── api.ts                 ← client fetch + wsUrl()
 │   │       ├── fixtures.ts            ← couleurs par fixture, canaux visibles, canaux actifs
+│   │       ├── programmer.ts          ← attributs ↔ canaux DMX (groupes, lecture/écriture sélection)
+│   │       ├── commandLine.ts         ← parser de la ligne de commande (texte → intention typée)
 │   │       ├── fixtureTemplates.ts    ← templates prédéfinis (rgb, rgbw, dimmer)
 │   │       └── math.ts               ← clamp(), addAlpha()
 └── packages/
@@ -129,23 +139,62 @@ LightBridgeDMX/
 
 ## Architecture UI (frontend)
 
-Navigation **par onglets**, responsive (desktop / tablet / mobile <640px), routing par hash URL sans dépendance.
+L'interface imite un **pupitre grandMA2** : fond noir, fenêtres à liseré ambre et barre de titre bleue,
+ligne de commande turquoise en bas, rail de touches à droite. Elle reste responsive (desktop / tablet /
+mobile <640px) et le routing se fait par hash URL, sans dépendance de routeur.
 
-### 5 onglets
+### Châssis (`shell/AppShell.tsx`)
+
+```
+┌ StatusBar ── univers · sortie DMX · canaux · sélection · LED · horloge · Blackout ┐
+│ TabBar ──── vues numérotées (masquée <640px)                                      │
+│ ma-body ─── écran défilant (la vue active)          │ KeypadRail (≥1280px)        │
+│ CommandLine ─ ligne de retour + saisie + touches rapides                          │
+└ BottomNav ── navigation mobile (<640px uniquement)                                ┘
+```
+
+Le `body` est en `overflow: hidden` : c'est l'écran (`.ma-screen`) qui défile, pas la page — le châssis
+reste donc fixe comme sur un vrai pupitre.
+
+### 5 vues
 
 | Onglet | Hash | Composant page | Contenu |
 |--------|------|----------------|---------|
-| **Tableau de bord** | `#dashboard` | `pages/DashboardPage.tsx` | Tuiles Univers / Fixtures / Scènes / HomeKit / Dance + Quick Actions (Blackout, Stop Dance, Refresh QXF) + Activity log (10 derniers événements) |
+| **Tableau de bord** | `#dashboard` | `pages/DashboardPage.tsx` | Tuiles Univers / Fixtures / Scènes / HomeKit / Dance + Quick Actions (Blackout, Stop Dance, Refresh QXF) + Activity log (10 derniers événements) + `UniverseMonitor` (DMX sheet 512 canaux) |
 | **Projecteurs** | `#projecteurs` | `pages/FixturesPage.tsx` | `FixtureForm` + `QxfLibraryPanel` + `FixturesTable` |
 | **Lampes connectées** | `#lampes` | `pages/SmartLightsPage.tsx` | Pills filtre backend (Tous / Nanoleaf / futurs Hue / Matter) + `SmartLightsPanel` |
-| **Live** | `#live` | `pages/LivePage.tsx` (lazy) | Ancres Console / Dance / Scènes + `ChannelGrid` + `DancePanel` + `ScenesSection` |
+| **Live** | `#live` | `pages/LivePage.tsx` (lazy) | `EncoderBar` + `FixtureSheet` + `ChannelGrid` (fader view) + `DancePanel` + `ScenesSection` (executors) |
 | **Réglages** | `#reglages` | `pages/SettingsPage.tsx` | `HomeKitCard` (QR + PIN + mappings) + cartes Système / Variables backend |
 
 ### Navigation responsive
 
-- **Desktop / tablet (≥640px)** : `shell/TabBar.tsx` — barre horizontale d'onglets en haut avec icônes lucide-react.
-- **Mobile (<640px)** : `shell/BottomNav.tsx` — bottom nav fixe avec `env(safe-area-inset-bottom)` pour iPhone notch, `backdrop-filter: blur`. La TabBar du haut est masquée.
+- **Desktop / tablet (≥640px)** : `shell/TabBar.tsx` — barre de vues numérotées (icônes lucide-react).
+- **Mobile (<640px)** : `shell/BottomNav.tsx` — nav basse avec `env(safe-area-inset-bottom)` pour l'encoche iPhone. La barre de vues du haut et la ligne de retour de commande sont masquées.
+- **Rail de touches** : `shell/KeypadRail.tsx`, affiché seulement ≥1280px (sous cette largeur la place manque ; la ligne de commande reste utilisable au clavier).
 - Routing : `shell/useHashTab.ts` (state + `hashchange` listener). Deep-link `#live` rend la page directement au premier paint (hash lu en synchrone dans le `useState` initializer).
+
+### Sélection et ligne de commande
+
+Trois briques, qui parlent d'**attributs** (Dimmer, Red, Pan…) et jamais de numéros de canaux :
+
+- `contexts/SelectionContext.tsx` — la sélection courante de fixtures (le *programmer*). Elle survit aux changements de vue.
+- `lib/programmer.ts` — traduit un attribut en canaux DMX absolus pour une fixture (`channelsForAttr`), lit une valeur (`readAttr`, convention HTP sur une sélection multiple) et écrit (`applyAttr`). Le dimmer retombe sur les canaux r/g/b quand la fixture n'a pas de canal d'intensité dédié — cas des PAR RGB.
+- `lib/commandLine.ts` — parser pur : texte → intention typée (`ParsedCommand`), sans jamais lever d'exception. L'exécution vit dans `contexts/CommandContext.tsx`, partagé par la barre du bas et le rail de touches.
+
+Syntaxe supportée (valeurs en **pourcent** par défaut, suffixe `d`/`dmx` pour du brut 0-255) :
+
+| Commande | Effet |
+|----------|-------|
+| `FIX 1 THRU 3` / `1 + 4` | sélectionne des fixtures par leur numéro d'affichage dans la sheet |
+| `FIX 1 AT 50` | sélectionne puis règle le dimmer |
+| `AT 50` · `FULL` · `OUT` | règle le dimmer de la sélection courante |
+| `RED 100` · `PAN 51D` | règle un attribut de la sélection |
+| `CH 12 THRU 20 AT 75` | écrit directement des canaux de l'univers |
+| `ALL` · `CLEAR` | sélectionne tout / vide la sélection |
+| `BLACKOUT` | remet les 512 canaux à zéro |
+| `GOTO LIVE` | change de vue (`dashboard`, `patch`, `lights`, `live`, `setup`) |
+
+Les mots-clés existent aussi en français (`projecteur`, `canal`, `rouge`, `couleur`…) et les accents sont ignorés.
 
 ### State management
 
@@ -168,12 +217,20 @@ export const SMART_LIGHT_BACKENDS = [
 
 `SmartLightsPanel` accepte une prop `backendFilter` ; la page consomme `SMART_LIGHT_BACKENDS` pour rendre les pills de filtre. Ajouter une ampoule Nanoleaf Essentials / Hue / Matter = ajouter une entrée + nouveau type dans `SmartLight.config.type` (discriminated union dans `shared/`).
 
-### CSS responsive (`frontend/src/styles.css`)
+### CSS (`frontend/src/styles.css`)
 
-- Breakpoints : `<640px` (mobile) / `640-1023px` (tablet) / `≥1024px` (desktop, contenu capé à 1200px).
-- `.channels` : `repeat(8, …)` → `repeat(6, …)` → `repeat(4, …)`.
+Feuille unique, sans framework, organisée en 10 sections commentées (variables → châssis → fenêtres →
+boutons → formulaires → tables → faders → sheet/executors → blocs spécifiques → responsive).
+
+- **Thème** : tokens `--edge` (ambre, le liseré signature), `--blue` (barres de titre), `--teal` (ligne de commande), `--yellow` (sélection, valeurs). Anciens noms (`--border`, `--card`, `--accent`…) conservés comme alias pour les styles inline hérités. Aucun arrondi : `border-radius: 0` partout.
+- **Fenêtres** : une `.card` est une fenêtre ; son `<h2>` devient la barre de titre bleue pleine largeur (marges négatives) avec la bille jaune en `::before`. Un titre imbriqué dans un autre conteneur ne s'étend donc pas — mettre le `<h2>` en enfant direct de la `.card`, et loger les badges dedans avec `margin-left: auto`.
+- Breakpoints : `<640px` (mobile) / `640-1023px` (tablet) / `≥1024px` / `≥1280px` (rail de touches).
+- **Mobile** : la barre d'état ne garde que « Sortie » et « Sélection » (classes `.ma-readout-clock` / `.ma-readout-secondary` masquées, LED comprises — la perte du lien se voit sur « Sortie », qui passe au rouge), la ligne de commande perd ses touches rapides au profit de la saisie, et le moniteur d'univers passe à 16 canaux par ligne.
+- `.channels` : `repeat(16, …)` → `repeat(12, …)` → `repeat(8, …)` → `repeat(4, …)`.
 - `.table` se transforme en cartes empilées sur mobile via `data-label="…"` + pseudo-elements (pas de composant dupliqué).
-- Classes utilitaires : `.grid-span-full`, `.dashboard-grid`, `.quick-actions-grid`, `.activity-list`, `.kv` (key/value list), `.anchor-nav`, `.live-section`, `.filter-pills`, `.tabbar-item`, `.bottomnav-item`.
+- Classes utilitaires : `.grid-span-full`, `.dashboard-grid`, `.quick-actions-grid`, `.activity-list`, `.kv`, `.anchor-nav`, `.live-section`, `.filter-pills`, `.ma-viewbtn`, `.ma-key`, `.ma-cell`, `.ma-exec`, `.ma-monitor`, `.bottomnav-item`.
+
+> Les faders et molettes ne sont **pas** des `<input type="range">` : `ma/MaFader.tsx` et `ma/MaKnob.tsx` sont pilotés aux Pointer Events, avec `role="slider"` et raccourcis clavier. Rendu identique sur tous les navigateurs, et plus de dépendance à `writing-mode: vertical-lr` pour les curseurs verticaux.
 
 ### Dépendances frontend
 

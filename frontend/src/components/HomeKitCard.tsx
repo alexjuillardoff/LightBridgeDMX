@@ -19,15 +19,16 @@ export const HomeKitCard = ({ status, isLoading, error }: HomeKitCardProps) => {
 
   return (
     <div className="card">
-      <div className="flex-between" style={{ marginBottom: 8 }}>
-        <div>
-          <h2>HomeKit bridge</h2>
-          <p className="muted">Expose les fixtures RGB en ampoules HomeKit</p>
-        </div>
-        {/* Badge d'etat : "Actif" si le pont tourne, "Activable" s'il est autorise
-            mais pas encore demarre, "Desactive" si HomeKit est coupe. */}
-        <span className="badge">{enabled ? (status?.started ? "Actif" : "Activable") : "Désactivé"}</span>
-      </div>
+      {/* Le titre fait office de barre de fenetre ; le badge d'etat se loge
+          dedans : "Actif" si le pont tourne, "Activable" s'il est autorise mais
+          pas encore demarre, "Desactive" si HomeKit est coupe. */}
+      <h2>
+        HomeKit bridge
+        <span className={`badge ${enabled && status?.started ? "badge-on" : ""}`} style={{ marginLeft: "auto" }}>
+          {enabled ? (status?.started ? "Actif" : "Activable") : "Désactivé"}
+        </span>
+      </h2>
+      <p className="muted" style={{ marginTop: 0 }}>Expose les fixtures RGB en ampoules HomeKit</p>
 
       {/* Etats de chargement et d'erreur du statut HomeKit. */}
       {isLoading ? <p className="muted">Chargement du statut…</p> : null}

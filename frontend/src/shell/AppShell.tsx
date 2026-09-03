@@ -1,32 +1,40 @@
-// Shell principal de l'application React.
-// Assemble la coquille de l'UI : en-tete, barre d'onglets (TabBar),
-// contenu de l'onglet actif et navigation basse (BottomNav, mobile).
-// L'onglet courant est lu/ecrit dans le hash de l'URL via useHashTab.
+// Chassis de l'interface, pense comme la surface d'un pupitre grandMA :
+//
+//   ┌ barre d'etat (univers, sortie DMX, horloge, blackout) ┐
+//   │ barre de vues (onglets numerotes)                     │
+//   │ ecran (la vue active)            │ rail de touches      │
+//   │ ligne de commande                                     │
+//   └ navigation basse (mobile uniquement)                  ┘
+//
+// La vue active est lue/ecrite dans le hash de l'URL (useHashTab), donc un
+// rafraichissement ou un lien partage rouvre la meme vue.
 import { Suspense, lazy, useEffect } from "react";
-import { Header } from "../components/Header";
-import { useAppData } from "../contexts/AppDataContext";
 import { DashboardPage } from "../pages/DashboardPage";
+import { DevicesPage } from "../pages/DevicesPage";
 import { FixturesPage } from "../pages/FixturesPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { SmartLightsPage } from "../pages/SmartLightsPage";
 import { BottomNav } from "./BottomNav";
+import { CommandLine } from "./CommandLine";
+import { KeypadRail } from "./KeypadRail";
+import { StatusBar } from "./StatusBar";
 import { TabBar } from "./TabBar";
 import { TABS, TabId } from "./tabs";
 import { useHashTab } from "./useHashTab";
 
-// La page Live est chargee a la demande (lazy) : elle est lourde
-// (console DMX temps reel) et inutile tant qu'on ne l'ouvre pas.
+// La vue Live est chargee a la demande (lazy) : c'est la plus lourde
+// (console DMX temps reel) et elle est inutile tant qu'on ne l'ouvre pas.
 const LivePage = lazy(() => import("../pages/LivePage"));
 
-// Affiche pendant que le chunk lazy de la page Live se telecharge.
+// Affiche pendant le telechargement du chunk de la vue Live.
 const PageFallback = () => (
-  <div className="card" style={{ marginTop: 16 }}>
-    <p className="muted" style={{ margin: 0 }}>Chargement de la page…</p>
+  <div className="card">
+    <h2>Chargement</h2>
+    <p className="muted">Préparation de la console…</p>
   </div>
 );
 
-// Choisit le composant de page a afficher selon l'onglet actif.
-// L'onglet "live" est enveloppe dans Suspense car charge en lazy.
+// Choisit le composant de vue a afficher.
 const renderPage = (tab: TabId) => {
   switch (tab) {
     case "dashboard":
@@ -35,6 +43,8 @@ const renderPage = (tab: TabId) => {
       return <FixturesPage />;
     case "lampes":
       return <SmartLightsPage />;
+    case "appareils":
+      return <DevicesPage />;
     case "live":
       return (
         <Suspense fallback={<PageFallback />}>
@@ -48,14 +58,10 @@ const renderPage = (tab: TabId) => {
   }
 };
 
-// Composant racine de l'interface.
-// wsBadge : indicateur d'etat de la connexion WebSocket affiche dans l'en-tete.
-// active : onglet courant, synchronise avec le hash de l'URL.
 export const AppShell = () => {
-  const { wsBadge } = useAppData();
   const [active, setActive] = useHashTab();
 
-  // Met a jour le titre de l'onglet du navigateur a chaque changement d'onglet.
+  // Titre de l'onglet du navigateur, mis a jour a chaque changement de vue.
   useEffect(() => {
     const tab = TABS.find((t) => t.id === active);
     if (!tab) return;
@@ -63,13 +69,19 @@ export const AppShell = () => {
   }, [active]);
 
   return (
-    <>
-      <main className="app-main" id={`panel-${active}`}>
-        <Header wsBadge={wsBadge} />
-        <TabBar active={active} onSelect={setActive} />
-        <div className="app-content">{renderPage(active)}</div>
-      </main>
+    <div className="ma-desk">
+      <StatusBar />
+      <TabBar active={active} onSelect={setActive} />
+      {/* Corps : l'ecran a gauche, le rail de touches a droite (masque sous
+          1280 px, ou la place manque). */}
+      <div className="ma-body">
+        <main className="ma-screen" id={`panel-${active}`}>
+          {renderPage(active)}
+        </main>
+        <KeypadRail />
+      </div>
+      <CommandLine />
       <BottomNav active={active} onSelect={setActive} />
-    </>
+    </div>
   );
 };

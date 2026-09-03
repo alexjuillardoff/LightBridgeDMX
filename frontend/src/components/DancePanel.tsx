@@ -14,6 +14,7 @@ import {
   SmartLight
 } from "@lightbridgedmx/shared";
 import { api } from "../lib/api";
+import { withoutHiddenFixtures } from "../lib/hiddenFixtures";
 
 // Libelles FR affiches dans l'UI pour chaque pattern de chase (les ids restent en anglais).
 const PATTERN_LABELS: Record<DancePatternId, string> = {
@@ -85,7 +86,10 @@ export const DancePanel = () => {
   const state = stateQuery.data;
   const config = state?.config;
   const rooms = roomsQuery.data ?? [];
-  const fixtures = fixturesQuery.data ?? [];
+  const fixtures = useMemo(
+    () => withoutHiddenFixtures(fixturesQuery.data ?? []),
+    [fixturesQuery.data]
+  );
   const smartLights = smartLightsQuery.data ?? [];
   const running = state?.running ?? false;
 

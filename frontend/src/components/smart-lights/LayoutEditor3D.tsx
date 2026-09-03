@@ -160,10 +160,10 @@ export const LayoutEditor3D = ({
   };
 
   return (
-    <div style={{ padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+    <div style={{ padding: 10, background: "#0a0a0a", borderRadius: 0 }}>
       <div className="flex-between" style={{ marginBottom: 8 }}>
-        <strong style={{ fontSize: 13 }}>Layout 3D ({zoneCount} zones)</strong>
-        <span style={{ fontSize: 11, color: "var(--muted)" }}>
+        <strong style={{ fontSize: 14 }}>Layout 3D ({zoneCount} zones)</strong>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
           Drag les sphères. Clic droit = rotation. Molette = zoom.
         </span>
       </div>
@@ -174,11 +174,11 @@ export const LayoutEditor3D = ({
           style={buttonStyleSecondary}>
           Mode : <strong>{mode === "linked" ? "Linked (polyline)" : "Unlinked (libre)"}</strong>
         </button>
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
           <input type="checkbox" checked={yLocked} onChange={(e) => setYLocked(e.target.checked)} />
           Verrouiller Y
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
           <input type="checkbox" checked={hideSpare} onChange={(e) => setHideSpare(e.target.checked)} />
           Cacher spare ({spareSet.size})
         </label>
@@ -198,8 +198,8 @@ export const LayoutEditor3D = ({
       </div>
 
       {showUForm ? (
-        <div style={{ padding: 8, background: "rgba(255,255,255,0.04)", borderRadius: 6, marginBottom: 6 }}>
-          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>
+        <div style={{ padding: 8, background: "#0a0a0a", borderRadius: 0, marginBottom: 6 }}>
+          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 13 }}>
             Génère un layout en U (counter-clockwise vu de dessus). Ordre le long du strip :{" "}
             <strong>{uSpareAtStart ? "spare → " : ""}fond → gauche → avant → droit{!uSpareAtStart ? " → spare" : ""}</strong>.<br />
             Total actif : <strong>{uBack + uLeft + uFront + uRight}</strong> / {zoneCount} —{" "}
@@ -215,7 +215,7 @@ export const LayoutEditor3D = ({
             <SidesInput label="Largeur (m)" value={uWidth} onChange={setUWidth} step={0.1} />
             <SidesInput label="Profondeur (m)" value={uDepth} onChange={setUDepth} step={0.1} />
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, marginBottom: 6 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, marginBottom: 6 }}>
             <input type="checkbox" checked={uSpareAtStart} onChange={(e) => setUSpareAtStart(e.target.checked)} />
             Zones spare au début du strip (côté contrôleur)
           </label>
@@ -224,8 +224,8 @@ export const LayoutEditor3D = ({
       ) : null}
 
       {showRoomForm ? (
-        <div style={{ padding: 8, background: "rgba(255,255,255,0.04)", borderRadius: 6, marginBottom: 6 }}>
-          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>
+        <div style={{ padding: 8, background: "#0a0a0a", borderRadius: 0, marginBottom: 6 }}>
+          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 13 }}>
             Boucle 3D autour de la pièce : strip entre au sol back-droit, monte au plafond, traverse le haut, redescend back-gauche, fait le tour au sol. <strong>7 sections</strong> dans l'ordre du strip.
             Total : <strong>{rBackRightFloor + rBackRightUp + rTopRightToLeft + rBackLeftDown + rLeftBToF + rFrontLToR + rRightFToB}</strong> / {zoneCount}.
           </p>
@@ -248,11 +248,11 @@ export const LayoutEditor3D = ({
       ) : null}
 
       {layout.sides && layout.sides.length > 0 ? (
-        <p className="muted" style={{ fontSize: 11, margin: "0 0 6px 0" }}>
+        <p className="muted" style={{ fontSize: 12, margin: "0 0 6px 0" }}>
           Sides :{" "}
           {layout.sides.map((s, i) => (
             <span key={s.label} style={{ marginRight: 8 }}>
-              <span style={{ display: "inline-block", width: 10, height: 10, background: s.color ?? "#888", borderRadius: 2, verticalAlign: "middle", marginRight: 3 }} />
+              <span style={{ display: "inline-block", width: 10, height: 10, background: s.color ?? "#888", borderRadius: 0, verticalAlign: "middle", marginRight: 3 }} />
               {s.label} [{s.zoneStart}–{s.zoneEnd}]
               {i < (layout.sides?.length ?? 0) - 1 ? " ·" : ""}
             </span>
@@ -260,7 +260,7 @@ export const LayoutEditor3D = ({
         </p>
       ) : null}
 
-      <div style={{ width: "100%", height: 360, background: "#050a18", borderRadius: 6, overflow: "hidden" }}>
+      <div style={{ width: "100%", height: 360, background: "#000", borderRadius: 0, overflow: "hidden" }}>
         <Canvas camera={{ position: [1.5, 1.5, 1.5], fov: 50 }}>
           <ambientLight intensity={0.6} />
           <pointLight position={[2, 3, 2]} intensity={1.0} />
@@ -282,7 +282,7 @@ export const LayoutEditor3D = ({
         </Canvas>
       </div>
 
-      <p className="muted" style={{ fontSize: 11, margin: "6px 0 0 0" }}>
+      <p className="muted" style={{ fontSize: 12, margin: "6px 0 0 0" }}>
         Zone sélectionnée :{" "}
         {selectedZone !== null ? (
           <strong>
@@ -473,7 +473,7 @@ const DraggableHandle = ({
       />
       {/* Au survol, on affiche les coordonnees du point dans une petite etiquette HTML. */}
       {hovered ? (
-        <Html distanceFactor={8} style={{ pointerEvents: "none", fontSize: 11, color: "#fff", background: "rgba(0,0,0,0.7)", padding: "2px 6px", borderRadius: 4, whiteSpace: "nowrap" }}>
+        <Html distanceFactor={8} style={{ pointerEvents: "none", fontSize: 12, color: "#fff", background: "rgba(0,0,0,0.7)", padding: "2px 6px", borderRadius: 0, whiteSpace: "nowrap" }}>
           {fmt(position)}
         </Html>
       ) : null}
@@ -506,7 +506,7 @@ const SidesInput = ({
   onChange: (v: number) => void;
   step?: number;
 }) => (
-  <label style={{ fontSize: 11, color: "var(--muted)" }}>
+  <label style={{ fontSize: 12, color: "var(--muted)" }}>
     {label}
     <input
       type="number"
@@ -519,11 +519,11 @@ const SidesInput = ({
         width: "100%",
         marginTop: 2,
         padding: "4px 6px",
-        background: "rgba(0,0,0,0.25)",
+        background: "#000",
         color: "var(--text)",
         border: "1px solid var(--border)",
-        borderRadius: 4,
-        fontSize: 12
+        borderRadius: 0,
+        fontSize: 13
       }}
     />
   </label>
@@ -531,10 +531,10 @@ const SidesInput = ({
 
 // Styles partages des boutons : primaire (action principale, ex. Enregistrer) et secondaire.
 const buttonStylePrimary: React.CSSProperties = {
-  padding: "6px 12px", background: "var(--accent)", color: "#001a14",
-  border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13
+  padding: "6px 12px", background: "linear-gradient(180deg,#1a1a1a,#050505)", color: "var(--amber-text)",
+  border: "1px solid var(--edge)", borderRadius: 0, cursor: "pointer", fontWeight: 700, fontSize: 13
 };
 const buttonStyleSecondary: React.CSSProperties = {
-  padding: "6px 12px", background: "rgba(255,255,255,0.06)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer", fontSize: 13
+  padding: "6px 12px", background: "linear-gradient(180deg,#1a1a1a,#050505)", color: "var(--text)",
+  border: "1px solid var(--edge-grey)", borderRadius: 0, cursor: "pointer", fontWeight: 700, fontSize: 13
 };

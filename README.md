@@ -131,22 +131,26 @@ LightBridgeDMX/
 
 ### Frontend (`frontend/`)
 
-Le tableau de bord React est organisé en **5 onglets responsive** avec routing par hash URL :
+Le tableau de bord React reprend l'apparence d'un **pupitre grandMA2** (fond noir, liserés ambre, barres
+de titre bleues, ligne de commande turquoise) et s'organise en **5 vues responsive** avec routing par hash URL :
 
 | Onglet | Hash | Contenu |
 |--------|------|---------|
 | Tableau de bord | `#dashboard` | Statut universe, fixtures, scènes, HomeKit, Dance, quick actions, log |
 | Projecteurs | `#projecteurs` | Ajout / import QXF / liste des fixtures DMX |
 | Lampes connectées | `#lampes` | Nanoleaf et futurs backends (Hue, Matter…) avec filtre par marque |
-| Live | `#live` | Console DMX 512 sliders, Mode Dance, Scènes |
+| Live | `#live` | Encodeurs, Fixture Sheet, fader view 512 canaux, Mode Dance, Executors |
 | Réglages | `#reglages` | QR code HomeKit, prise Meross (config + état), infos système, redémarrage |
 
-Sur desktop/tablet : barre d'onglets en haut. Sur mobile (<640px) : bottom nav iOS-style.
+Sur desktop/tablet : barre de vues numérotées en haut. Sur mobile (<640px) : navigation basse.
+En permanence : la **barre d'état** en haut (sortie DMX, canaux actifs, sélection, horloge, Blackout) et la
+**ligne de commande** en bas ; au-delà de 1280 px de large s'ajoute le **rail de touches** à droite
+(Fixture, Thru, At, pavé numérique, Please, B.O.).
 
 | Fichier | Rôle |
 |---------|------|
 | `src/App.tsx` | Wrap `AppDataProvider` + `AppShell` |
-| `src/shell/AppShell.tsx` | Layout racine : Header + TabBar + page active + BottomNav |
+| `src/shell/AppShell.tsx` | Châssis : StatusBar + TabBar + vue active + KeypadRail + CommandLine + BottomNav |
 | `src/shell/TabBar.tsx` / `BottomNav.tsx` | Navigation desktop / mobile |
 | `src/shell/useHashTab.ts` | Routing par hash URL (sans react-router) |
 | `src/contexts/AppDataContext.tsx` | État partagé : queries, mutations, WS handlers |
@@ -337,15 +341,40 @@ L'accès est **restreint au réseau local** : le proxy ne répond qu'aux apparei
 
 ### Vue d'ensemble de l'interface
 
-Le tableau de bord est organisé en **5 onglets** accessibles via la barre de navigation (top bar sur desktop/tablet, bottom nav iOS-style sur mobile <640px). Chaque onglet a une URL dédiée pour le bookmarking et le partage de lien :
+L'interface imite un pupitre lumière **grandMA2** : fond noir, fenêtres cernées d'ambre avec barre de titre
+bleue, valeurs en jaune, ligne de commande turquoise en bas d'écran. Elle est organisée en **5 vues**
+accessibles via la barre de navigation (barre de vues sur desktop/tablet, navigation basse sur mobile
+<640px). Chaque vue a une URL dédiée pour le bookmarking et le partage de lien :
 
 | Onglet | URL | Contenu |
 |--------|-----|---------|
 | **Tableau de bord** | `/#dashboard` | Statut univers, fixtures, scènes, HomeKit, Dance + actions rapides + log |
 | **Projecteurs** | `/#projecteurs` | Création manuelle, import QXF, liste des projecteurs DMX |
 | **Lampes connectées** | `/#lampes` | Pairing et contrôle des Nanoleaf (et futurs Hue/Matter) |
-| **Live** | `/#live` | Console DMX 512 sliders, Mode Dance, Scènes |
+| **Live** | `/#live` | Encodeurs, Fixture Sheet, fader view 512 canaux, Mode Dance, Executors |
 | **Réglages** | `/#reglages` | QR code HomeKit, PIN, infos système |
+
+#### La ligne de commande
+
+En bas de l'écran, la barre turquoise se pilote comme celle d'un pupitre : on tape une phrase courte,
+puis **Entrée** (ou la touche **Please** du rail de droite). Les valeurs sont en **pourcent** ; ajouter
+`d` donne une valeur DMX brute (`pan 51d`).
+
+| Exemple | Effet |
+|---------|-------|
+| `fix 1 thru 3` | sélectionne les projecteurs 1 à 3 (les numéros affichés dans la Fixture Sheet) |
+| `fix 1 + 4 at 50` | sélectionne les projecteurs 1 et 4 et met leur dimmer à 50 % |
+| `at 50` · `full` · `out` | règle le dimmer de la sélection courante |
+| `red 100` · `pan 51d` | règle un attribut de la sélection |
+| `ch 12 thru 20 at 75` | écrit directement des canaux de l'univers |
+| `all` · `clear` | sélectionne tout / vide la sélection |
+| `blackout` | remet les 512 canaux à zéro |
+| `goto live` | change de vue |
+| `help` | rappelle la liste des commandes |
+
+Les mots-clés fonctionnent aussi en français (`projecteur`, `canal`, `rouge`, `couleur`…), les flèches
+haut/bas rappellent les commandes précédentes, et la ligne au-dessus de la saisie affiche le résultat de
+la dernière commande (ou le dernier message du backend).
 
 #### Onglet Tableau de bord
 
@@ -356,6 +385,7 @@ Vue synthétique du système avec :
   - **Stop Dance** : arrête le Mode Dance en cours
   - **Refresh QXF** : recharge la bibliothèque de projecteurs depuis GitHub
 - **Activité récente** : 10 derniers événements (logs temps réel via WebSocket)
+- **DMX Sheet** : les 512 canaux de l'univers en une grille (une case par canal, hauteur = niveau, liseré ambre sur les canaux patchés)
 
 #### Onglet Projecteurs
 
@@ -410,24 +440,41 @@ Pairing et pilotage des lampes WiFi (Nanoleaf aujourd'hui, Hue/Matter à venir).
 
 #### Onglet Live
 
-Trois surfaces de pilotage temps réel, accessibles via la sous-nav d'ancres (Console / Dance / Scènes) :
+Les surfaces de pilotage temps réel, dans l'ordre d'un écran de pupitre, avec une sous-nav d'ancres
+(Fixtures / Faders / Dance / Executors) :
 
-##### Console DMX (Live channels)
+##### Encodeurs
 
-La grille affiche les **512 canaux DMX** avec des sliders verticaux :
-- Chaque slider contrôle un canal de 0 à 255
+Quatre molettes agissant sur la **sélection courante**, regroupées par famille d'attributs
+(1 Dimmer, 2 Color, 3 Position, 4 Beam). On tourne une molette en glissant dessus (haut/droite = plus),
+au clavier avec les flèches (Maj = pas de 10, Début/Fin = 0 / 100 %). Seuls les attributs réellement
+présents sur les projecteurs sélectionnés sont affichés.
+
+##### Fixture Sheet
+
+Une cellule par projecteur : son numéro, son nom, son niveau de dimmer en %, une barre de niveau, sa
+couleur RGB courante et son adresse. **Cliquer une cellule la sélectionne** (cadre jaune) ; la sélection
+est la cible des encodeurs et de la ligne de commande, et elle est conservée quand on change de vue.
+
+> Le numéro affiché (001, 002…) est celui qu'on tape dans la ligne de commande : `fix 2 at 50`.
+
+##### Fader view (canaux DMX)
+
+La grille affiche les **512 canaux DMX** page par page, en faders verticaux :
+- Chaque fader contrôle un canal de 0 à 255 (glisser dessus, ou saisir la valeur sous le fader)
 - Les canaux appartenant à un projecteur sont **colorés** et annotés avec le nom du projecteur et du canal
-- Utilise **Précédent / Suivant** pour naviguer par pages (32 canaux à la fois)
-- Le layout s'adapte : 8 colonnes sur desktop, 6 sur tablet, 4 sur mobile
+- Utilise **Page − / Page +** pour naviguer (32 canaux à la fois)
+- Le layout s'adapte : 16 colonnes sur grand écran, 12 / 8 sur écran moyen, 4 sur mobile
 - Les modifications sont envoyées en temps réel au backend
 
 ##### Mode Dance
 
 Strobe coordonné par pièce avec patterns spatiaux (12 patterns disponibles : chase, ping-pong, vagues, alternance, paires, random subset, full hit, strobe synchrone, bookend…). Voir les commandes dans le code de `DancePanel.tsx`.
 
-##### Scènes
+##### Executors
 
-Liste des scènes enregistrées (capture et recall des cues — UI complète à venir).
+Les scènes enregistrées, présentées comme les executors d'un pupitre (tuile numérotée, nom, nombre de
+projecteurs). Les emplacements libres restent visibles en creux. Le rappel de cue arrive plus tard.
 
 #### Onglet Réglages
 

@@ -160,7 +160,7 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
         </div>
         {/* Liste des lampes detectees par le scan : un clic pre-remplit l'IP et le nom. */}
         {discovered.length > 0 ? (
-          <div style={{ fontSize: 12 }}>
+          <div style={{ fontSize: 13 }}>
             <span className="muted">Détectés : </span>
             {discovered.map((d) => (
               <button
@@ -200,7 +200,7 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
           </button>
         </div>
         {probe ? (
-          <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+          <p className="muted" style={{ marginTop: 4, fontSize: 13 }}>
             {probe.reachable
               ? probe.inPairingMode
                 ? "API joignable, mode pairing détecté."
@@ -208,7 +208,7 @@ const PairCard = ({ onPaired }: { onPaired: (light: SmartLight) => void }) => {
               : "API injoignable. Vérifie l'IP et l'option 'API' dans l'app Nanoleaf."}
           </p>
         ) : null}
-        {error ? <p style={{ color: "var(--danger)", fontSize: 13, margin: 0 }}>{error}</p> : null}
+        {error ? <p style={{ color: "var(--danger)", fontSize: 14, margin: 0 }}>{error}</p> : null}
       </div>
     </div>
   );
@@ -285,7 +285,7 @@ const SmartLightCard = ({
       <div className="flex-between" style={{ marginBottom: 8 }}>
         <div>
           <h2 style={{ marginBottom: 4 }}>{light.name}</h2>
-          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
             {light.config.type === "nanoleaf-http"
               ? `Nanoleaf · ${light.config.host}`
               : light.backend}
@@ -313,7 +313,7 @@ const SmartLightCard = ({
 
       {/* Alerte si la lampe n'est pas joignable (reachable) sur le reseau. */}
       {state.reachable === false ? (
-        <p style={{ color: "var(--danger)", fontSize: 12, margin: "4px 0" }}>
+        <p style={{ color: "var(--danger)", fontSize: 13, margin: "4px 0" }}>
           Injoignable — vérifie le réseau ou re-paire.
         </p>
       ) : null}
@@ -335,10 +335,10 @@ const SmartLightCard = ({
             const { r, g, b } = hexToRgb(e.target.value);
             setState.mutate({ rgb: { r, g, b }, on: true });
           }}
-          style={{ width: 40, height: 32, padding: 0, border: "1px solid var(--border)", borderRadius: 8, background: "transparent" }}
+          style={{ width: 40, height: 32, padding: 0, border: "1px solid var(--border)", borderRadius: 0, background: "transparent" }}
           title="Couleur"
         />
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }} className="muted">
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }} className="muted">
           <input
             type="checkbox"
             checked={streaming}
@@ -394,7 +394,7 @@ const SmartLightCard = ({
       {/* Editeur 3D charge en differe (Suspense) : voir le lazy() en haut du fichier. */}
       {tab === "layout3d" ? (
         <div style={{ marginTop: 10 }}>
-          <Suspense fallback={<p className="muted" style={{ fontSize: 12 }}>Chargement de l'éditeur 3D…</p>}>
+          <Suspense fallback={<p className="muted" style={{ fontSize: 13 }}>Chargement de l'éditeur 3D…</p>}>
             <LayoutEditor3D light={light} onUpdated={onUpdated} />
           </Suspense>
         </div>
@@ -402,10 +402,10 @@ const SmartLightCard = ({
 
       {/* Panneau avance : choix d'un effet builtin de la lampe + edition du mirror DMX. */}
       {showAdvanced ? (
-        <div style={{ marginTop: 10, padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
-          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>Effets builtin</p>
+        <div style={{ marginTop: 10, padding: 10, background: "#0a0a0a", borderRadius: 0 }}>
+          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 13 }}>Effets builtin</p>
           {effectsQuery.isLoading ? (
-            <p className="muted" style={{ fontSize: 12 }}>Chargement…</p>
+            <p className="muted" style={{ fontSize: 13 }}>Chargement…</p>
           ) : (
             <select
               value={state.currentEffect ?? ""}
@@ -438,8 +438,8 @@ const SliderRow = ({
 }) => (
   <label style={{ display: "block", margin: "4px 0" }}>
     <div className="flex-between" style={{ marginBottom: 2 }}>
-      <span className="muted" style={{ fontSize: 12 }}>{label}</span>
-      <span style={{ fontSize: 12 }}>{value}{unit}</span>
+      <span className="muted" style={{ fontSize: 13 }}>{label}</span>
+      <span style={{ fontSize: 13 }}>{value}{unit}</span>
     </div>
     <input
       type="range" min={min} max={max} value={value}
@@ -471,7 +471,7 @@ const MirrorEditor = ({
 
   return (
     <div style={{ marginTop: 10 }}>
-      <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 12 }}>
+      <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 13 }}>
         Mirror DMX (lier ce strip à des canaux 1–512)
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
@@ -504,7 +504,7 @@ const MirrorEditor = ({
 
 // Petit champ de saisie d'un numero de canal DMX (libelle + input numerique).
 const ChanInput = ({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) => (
-  <label className="muted" style={{ fontSize: 12 }}>
+  <label className="muted" style={{ fontSize: 13 }}>
     {label}
     <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="1–512" inputMode="numeric" style={inputStyle} />
   </label>
@@ -514,16 +514,16 @@ const ChanInput = ({ label, value, onChange }: { label: string; value: string; o
 
 const inputStyle: React.CSSProperties = {
   display: "block", width: "100%", marginTop: 4, padding: "6px 8px",
-  background: "rgba(0,0,0,0.25)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: 6, fontSize: 13
+  background: "#000", color: "var(--text)",
+  border: "1px solid var(--border)", borderRadius: 0, fontSize: 14
 };
 const buttonStylePrimary: React.CSSProperties = {
-  padding: "6px 12px", background: "var(--accent)", color: "#001a14",
-  border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13
+  padding: "6px 12px", background: "linear-gradient(180deg,#1a1a1a,#050505)", color: "var(--amber-text)",
+  border: "1px solid var(--edge)", borderRadius: 0, cursor: "pointer", fontWeight: 700, fontSize: 13
 };
 const buttonStyleSecondary: React.CSSProperties = {
-  padding: "6px 12px", background: "rgba(255,255,255,0.06)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer", fontSize: 13
+  padding: "6px 12px", background: "linear-gradient(180deg,#1a1a1a,#050505)", color: "var(--text)",
+  border: "1px solid var(--edge-grey)", borderRadius: 0, cursor: "pointer", fontWeight: 700, fontSize: 13
 };
 
 // ─── utilitaires couleur ─────────────────────────────────────────────────────
