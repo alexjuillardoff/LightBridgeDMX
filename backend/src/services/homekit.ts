@@ -10,7 +10,16 @@
 // est reflete (mirror) vers HomeKit pour garder l'app Maison synchronisee.
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { Fixture, SmartLight, SmartLightStateInput, UniverseState } from "@lightbridgedmx/shared";
+import {
+  COLOR_TEMP_MAX_K,
+  COLOR_TEMP_MIN_K,
+  Fixture,
+  kelvinToMired,
+  miredToKelvin,
+  SmartLight,
+  SmartLightStateInput,
+  UniverseState
+} from "@lightbridgedmx/shared";
 import { FastifyBaseLogger } from "fastify";
 import {
   Accessory,
@@ -497,6 +506,16 @@ export class HomeKitBridge {
       .onGet(() => Math.round(current()?.sat ?? 0))
       .onSet((v: CharacteristicValue) => write({ sat: Number(v) }));
 
+    // Temperature de couleur. HomeKit la manipule en MIRED (153 = froid,
+    // 470 = chaud) alors que LightBridge raisonne en Kelvin : la conversion se
+    // fait ici, aux deux sens. Sans cette caracteristique, l'app Maison
+    // n'offrait aucun reglage de blanc alors que l'ampoule en est capable.
+    svc
+      .addCharacteristic(Characteristic.ColorTemperature)
+      .setProps({ minValue: kelvinToMired(COLOR_TEMP_MAX_K), maxValue: kelvinToMired(COLOR_TEMP_MIN_K) })
+      .onGet(() => kelvinToMired(current()?.ct ?? COLOR_TEMP_MIN_K))
+      .onSet((v: CharacteristicValue) => write({ ct: miredToKelvin(Number(v)) }));
+
     return managed;
   }
 
@@ -509,6 +528,12 @@ export class HomeKitBridge {
     managed.service.updateCharacteristic(Characteristic.Brightness, Math.round(state.brightness));
     managed.service.updateCharacteristic(Characteristic.Hue, Math.round(state.hue));
     managed.service.updateCharacteristic(Characteristic.Saturation, Math.round(state.sat));
+    // On ne remonte la temperature que si la lampe est effectivement en mode
+    // blanc : ecrire ColorTemperature en mode couleur ferait basculer l'app
+    // Maison sur l'onglet blanc a chaque rafraichissement.
+    if (state.colorMode === "ct" && state.ct !== undefined) {
+      managed.service.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.ct));
+    }
   }
 
   // ─── Projecteurs a canaux (un accessoire HomeKit par canal) ───────────────

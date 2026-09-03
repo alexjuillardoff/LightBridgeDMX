@@ -7,6 +7,7 @@
 //
 // Ce fichier est volontairement mince : toute la complexite HAP vit dans le sidecar.
 import type { FastifyBaseLogger } from "fastify";
+import { kelvinToMired, miredToKelvin } from "@lightbridgedmx/shared";
 
 /** Etat d'une ampoule tel que le sidecar le renvoie. */
 export type ThreadLightState = {
@@ -17,6 +18,7 @@ export type ThreadLightState = {
   brightness?: number; // 0-100
   hue?: number;        // 0-360
   sat?: number;        // 0-100
+  ct?: number;         // KELVIN (le sidecar parle mired, on convertit ici)
 };
 
 /** Champs acceptes en ecriture. Tout est optionnel : on n'envoie que ce qui change. */
@@ -25,7 +27,13 @@ export type ThreadLightPatch = {
   brightness?: number;
   hue?: number;
   sat?: number;
+  ct?: number;         // KELVIN, converti en mired juste avant l'envoi
 };
+
+/** Forme brute du sidecar : identique, mais `ct` y est en MIRED (unite HAP).
+ *  La conversion est confinee a ce fichier — c'est la frontiere entre le
+ *  protocole HAP et le reste de LightBridge, qui raisonne en Kelvin. */
+type SidecarLightState = Omit<ThreadLightState, "ct"> & { ct?: number };
 
 export class HomeKitThreadClient {
   private readonly base: string;
@@ -61,19 +69,25 @@ export class HomeKitThreadClient {
 
   /** Etat courant de l'ampoule, tel que vu par le sidecar. */
   async getState(): Promise<ThreadLightState> {
-    const lights = await this.request<ThreadLightState[]>("/lights");
+    const lights = await this.request<SidecarLightState[]>("/lights");
     const mine = lights.find((l) => l.alias === this.alias);
     if (!mine) throw new Error(`alias ${this.alias} absent du sidecar`);
-    return mine;
+    return { ...mine, ...(mine.ct !== undefined ? { ct: miredToKelvin(mine.ct) } : {}) };
   }
 
   /** Ecrit les champs fournis. Le sidecar serialise les ecritures par ampoule. */
   async setState(patch: ThreadLightPatch): Promise<ThreadLightState> {
-    return this.request<ThreadLightState>(`/lights/${encodeURIComponent(this.alias)}/state`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch)
-    });
+    // Le sidecar attend des mired : convertir ici, et nulle part ailleurs.
+    const wire = { ...patch, ...(patch.ct !== undefined ? { ct: kelvinToMired(patch.ct) } : {}) };
+    const res = await this.request<SidecarLightState>(
+      `/lights/${encodeURIComponent(this.alias)}/state`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(wire)
+      }
+    );
+    return { ...res, ...(res.ct !== undefined ? { ct: miredToKelvin(res.ct) } : {}) };
   }
 
   /** Le sidecar tourne-t-il ? Sert a distinguer "ampoule injoignable" de

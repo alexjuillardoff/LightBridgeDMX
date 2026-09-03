@@ -24,7 +24,7 @@ const absoluteChannels = (fixture: Fixture): number[] =>
   fixture.channels.map((ch) => fixture.address + ch.channel - 1);
 
 // Cles du miroir uniforme : des canaux ABSOLUS, sans lien avec le projecteur.
-const UNIFORM_KEYS = ["rChannel", "gChannel", "bChannel", "briChannel"] as const;
+const UNIFORM_KEYS = ["rChannel", "gChannel", "bChannel", "briChannel", "ctChannel"] as const;
 
 /** Fait suivre les miroirs DMX des lampes connectees quand un projecteur bouge.
  *

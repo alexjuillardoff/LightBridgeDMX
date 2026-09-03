@@ -778,6 +778,52 @@ Le numéro de série suit (`<id>-r<n>`) pour que deux générations ne se prése
 diffère. Se règle à la main sur la façade :
 `PUT /api/fixtures/:id {"homekit":{"enabled":true,"accessoryRevision":1}}`.
 
+### Température de couleur (blanc variable)
+
+Le Nanoleaf Essentials (NL45) déclare `ColorTemperature` en **mired**, plage 153–470 (≈ 6535–2127 K),
+en lecture/écriture. Trois unités se croisent, et les confondre donne un réglage qui marche à l'envers
+sans jamais lever d'erreur :
+
+| Étage | Unité | Sens |
+|---|---|---|
+| Pupitre / DMX | 0–255 | 0 = le plus chaud |
+| LightBridge, UI, API | **Kelvin** (2127–6535) | croissant = plus froid |
+| HAP (ampoule + app Maison) | **mired** (153–470) | **inverse** : croissant = plus chaud |
+
+Les conversions vivent dans `packages/shared` (`kelvinToMired`, `miredToKelvin`, `dmxToKelvin`,
+`kelvinToDmx`, `clampKelvin`) et sont couvertes par `backend/src/services/color-temp.spec.ts`. Elles ne
+sont appliquées qu'aux **frontières** : `homekit-thread-client.ts` (Kelvin ↔ mired vers le sidecar) et
+`homekit.ts` (Kelvin ↔ mired vers l'app Maison). Le sidecar reste fidèle au protocole : il parle mired.
+
+Le mappage DMX est linéaire **en Kelvin**, pas en mired : c'est la graduation qu'on lit sur les
+projecteurs à blanc variable, donc celle qu'on attend au fader.
+
+#### Couleur et blanc sont exclusifs
+
+L'ampoule ne peut pas recevoir teinte/saturation **et** température : HAP n'a d'ailleurs aucune
+caractéristique de « mode ». Le miroir DMX arbitre donc au dernier fader touché (`onDmxTick`) :
+
+- bouger le canal température → mode `ct` ; bouger un canal R/V/B → mode `hs` ;
+- tant que personne ne bouge, le mode courant **persiste** — remonter le dimmer ne doit pas faire
+  retomber un blanc réglé sur une couleur ;
+- un canal température laissé à 0 n'impose **rien** : sans cette règle, le seul fait de câbler le canal
+  coincerait la lampe sur le blanc le plus chaud.
+
+Corollaire côté relecture : `refreshFromDevice` ne reprend plus le `colorMode` de l'appareil (il n'en
+déclare pas) et ne réécrit pas un `ct` en attente lorsque la lampe est éteinte — la couleur n'étant
+poussée qu'à l'allumage, la consigne serait effacée avant d'avoir servi.
+
+#### Le dimmer échelonne le mélange RGB
+
+`rgbToHsv` normalise : rouge à 50 % ressort en teinte 0, saturation 100, **valeur 50**. Prendre la
+luminosité du seul `briChannel` jetait cette valeur — toute couleur sortait à fond et le dimmer semblait
+s'ajouter par-dessus. On multiplie désormais, comme un projecteur RGB réel :
+`brightness = V(rgb) × (dimmer / 255)`.
+
+> **Conséquence à connaître** : R/V/B tous à zéro donne 0 %, même dimmer ouvert — c'est le comportement
+> d'un projecteur RGB. Pour du blanc au dimmer seul, passer par le canal température (ou monter R/V/B
+> à parts égales).
+
 ### Façade DMX d'une lampe connectée
 
 Une Nanoleaf pilotée en DMX a **deux faces** : la lampe (`SmartLight`) et un projecteur bidon dont les

@@ -6,6 +6,8 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  COLOR_TEMP_MAX_K,
+  COLOR_TEMP_MIN_K,
   NanoleafDiscovered,
   SmartLight,
   SmartLightDmxMirror,
@@ -358,7 +360,8 @@ const SmartLightCard = ({
         onChange={(v) => setState.mutate({ hue: v })} />
       <SliderRow label="Saturation" value={Math.round(state.sat)} min={0} max={100} unit="%"
         onChange={(v) => setState.mutate({ sat: v })} />
-      <SliderRow label="Temp. couleur" value={Math.round(state.ct ?? 2700)} min={2127} max={6535} unit=" K"
+      <SliderRow label="Temp. couleur" value={Math.round(state.ct ?? 2700)}
+        min={COLOR_TEMP_MIN_K} max={COLOR_TEMP_MAX_K} unit=" K"
         onChange={(v) => setState.mutate({ ct: v })} />
 
       {/* Barre d'onglets : chaque bouton bascule (toggle) son panneau, sauf Avance et Supprimer. */}

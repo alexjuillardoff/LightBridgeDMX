@@ -16,6 +16,7 @@ export type AttrKey =
   | "white"
   | "strobe"
   | "color"
+  | "ctemp"
   | "gobo"
   | "pan"
   | "tilt"
@@ -34,7 +35,7 @@ export type AttrGroup = {
 
 export const ATTR_GROUPS: AttrGroup[] = [
   { id: "dimmer", label: "Dimmer", attrs: ["dimmer", "strobe"] },
-  { id: "color", label: "Color", attrs: ["red", "green", "blue", "white", "color"] },
+  { id: "color", label: "Color", attrs: ["red", "green", "blue", "white", "color", "ctemp"] },
   { id: "position", label: "Position", attrs: ["pan", "tilt"] },
   { id: "beam", label: "Beam", attrs: ["gobo", "focus", "beam"] }
 ];
@@ -48,6 +49,8 @@ export const ATTR_LABELS: Record<AttrKey, string> = {
   white: "White",
   strobe: "Strobe",
   color: "Color",
+  // Blanc variable : 0 % = le plus chaud, 100 % = le plus froid.
+  ctemp: "CTemp",
   gobo: "Gobo",
   pan: "Pan",
   tilt: "Tilt",
@@ -65,6 +68,7 @@ export const ATTR_COLORS: Record<AttrKey, string> = {
   blue: "#5a95e0",
   white: "var(--attr-dimmer)",
   color: "var(--attr-color)",
+  ctemp: "var(--attr-color)",
   gobo: "var(--attr-gobo)",
   pan: "var(--attr-position)",
   tilt: "var(--attr-position)",
@@ -112,6 +116,7 @@ const ATTR_CAPABILITY: Record<AttrKey, Capability> = {
   white: "w",
   strobe: "strobe",
   color: "color",
+  ctemp: "colorTemp",
   gobo: "gobo",
   pan: "pan",
   tilt: "tilt",

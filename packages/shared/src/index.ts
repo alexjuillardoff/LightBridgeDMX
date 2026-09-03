@@ -467,10 +467,48 @@ export const SmartLightDmxMirrorSchema = z.object({
   gChannel: z.number().int().min(1).max(512).optional(),
   bChannel: z.number().int().min(1).max(512).optional(),
   briChannel: z.number().int().min(1).max(512).optional(), // override optionnel du dimmer maitre
+  /** Canal de temperature de couleur : 0 = blanc chaud, 255 = blanc froid.
+   *  Le faire bouger bascule la lampe en mode blanc (voir COLOR_TEMP_MIN_K). */
+  ctChannel: z.number().int().min(1).max(512).optional(),
   /** Miroir par zone — prioritaire sur le miroir uniforme tant que le DMX bouge. */
   zones: SmartLightDmxZoneMirrorSchema.optional()
 });
 export type SmartLightDmxMirror = z.infer<typeof SmartLightDmxMirrorSchema>;
+
+// ─── Temperature de couleur ──────────────────────────────────────────────────
+//
+// Deux unites cohabitent, et les confondre donne un reglage qui marche a l'envers :
+//   - LightBridge raisonne en KELVIN (2127 = blanc chaud, 6535 = blanc froid) ;
+//   - HomeKit/HAP raisonne en MIRED, l'inverse (153 = froid, 470 = chaud).
+// Les bornes ci-dessous sont celles du Nanoleaf Essentials (NL45/NL72K3), qui
+// declare 153-470 mired sur sa caracteristique ColorTemperature.
+
+/** Blanc le plus chaud, en Kelvin. */
+export const COLOR_TEMP_MIN_K = 2127;
+/** Blanc le plus froid, en Kelvin. */
+export const COLOR_TEMP_MAX_K = 6535;
+
+/** Kelvin -> mired (unite HAP). L'echelle s'inverse : 2127 K -> 470 mired. */
+export const kelvinToMired = (kelvin: number): number =>
+  Math.round(1_000_000 / clampKelvin(kelvin));
+
+/** Mired (unite HAP) -> Kelvin. */
+export const miredToKelvin = (mired: number): number =>
+  clampKelvin(Math.round(1_000_000 / Math.max(1, mired)));
+
+/** Ramene une temperature dans les bornes pilotables. */
+export const clampKelvin = (kelvin: number): number =>
+  Math.min(COLOR_TEMP_MAX_K, Math.max(COLOR_TEMP_MIN_K, Math.round(kelvin)));
+
+/** Valeur DMX (0-255) -> Kelvin, lineaire : 0 = le plus chaud, 255 = le plus froid.
+ *  Lineaire en Kelvin et non en mired, car c'est la graduation qu'on lit sur les
+ *  projecteurs a blanc variable et donc celle qu'on attend au fader. */
+export const dmxToKelvin = (value: number): number =>
+  clampKelvin(COLOR_TEMP_MIN_K + (Math.min(255, Math.max(0, value)) / 255) * (COLOR_TEMP_MAX_K - COLOR_TEMP_MIN_K));
+
+/** Kelvin -> valeur DMX (0-255), reciproque de dmxToKelvin. */
+export const kelvinToDmx = (kelvin: number): number =>
+  Math.round(((clampKelvin(kelvin) - COLOR_TEMP_MIN_K) / (COLOR_TEMP_MAX_K - COLOR_TEMP_MIN_K)) * 255);
 
 // Mode couleur courant d'une lampe : teinte/saturation (hs), temperature (ct)
 // ou effet (effect).

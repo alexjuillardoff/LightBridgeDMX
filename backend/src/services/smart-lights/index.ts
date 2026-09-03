@@ -15,6 +15,7 @@
 import { EventEmitter } from "node:events";
 import type { FastifyBaseLogger } from "fastify";
 import {
+  dmxToKelvin,
   SmartLight,
   SmartLightEffectConfig,
   SmartLightDmxZoneMirror,
@@ -56,7 +57,9 @@ type RuntimeEntry = {
   lastLocalWriteAt: number;
   /** Derniere combinaison de canaux DMX appliquee par le miroir, sous forme de cle.
    *  Sert a n'agir que sur un VRAI changement du DMX (voir onDmxTick). */
-  lastMirrorKey: string | null;
+  /** Derniere lecture des canaux du miroir uniforme. On garde les valeurs et non
+   *  une empreinte : savoir QUEL groupe a bouge decide du mode couleur. */
+  lastMirror: { r?: number; g?: number; b?: number; bri?: number; ct?: number } | null;
   /** Chien de garde (watchdog) du streaming : un seul controle en vol a la fois. */
   streamCheckInflight: boolean;
   /** Horodatage avant lequel le watchdog ne retente pas (backoff exponentiel). */
@@ -477,7 +480,7 @@ export class SmartLightService extends EventEmitter {
       lastPushAt: existing?.lastPushAt ?? 0,
       inflight: false,
       lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0,
-      lastMirrorKey: existing?.lastMirrorKey ?? null,
+      lastMirror: existing?.lastMirror ?? null,
       streamCheckInflight: false,
       // On repart d'un backoff neuf a chaque (re)enregistrement : un changement de
       // config est justement l'occasion de retenter tout de suite.
@@ -600,7 +603,18 @@ export class SmartLightService extends EventEmitter {
           brightness: s.brightness ?? entry.desired.brightness,
           hue: s.hue ?? entry.desired.hue,
           sat: s.sat ?? entry.desired.sat,
-          colorMode: "hs",
+          // On ne reprend la temperature de l'ampoule que si on n'a pas de
+          // consigne en attente : la couleur n'est poussee qu'a l'allumage, donc
+          // une consigne donnee lampe eteinte serait sinon effacee avant d'avoir
+          // servi.
+          ...(s.ct !== undefined && !(entry.desired.colorMode === "ct" && !entry.desired.on)
+            ? { ct: s.ct }
+            : {}),
+          // L'ampoule ne declare pas son mode : HAP n'a pas de caracteristique
+          // pour ca. On garde donc le mode qu'on lui a demande, au lieu de
+          // retomber systematiquement sur "hs" — ce qui effacait le blanc
+          // des qu'un rafraichissement passait.
+          colorMode: entry.desired.colorMode ?? "hs",
           reachable: s.reachable
         };
         entry.lastPushed = entry.desired;
@@ -666,27 +680,55 @@ export class SmartLightService extends EventEmitter {
       const g = read(mirror.gChannel);
       const b = read(mirror.bChannel);
       const bri = read(mirror.briChannel);
+      const ct = read(mirror.ctChannel);
 
       // Aucun des canaux miroir n'est cable pour ce projecteur : rien a faire.
-      if (r === undefined && g === undefined && b === undefined && bri === undefined) continue;
+      if (r === undefined && g === undefined && b === undefined && bri === undefined && ct === undefined) {
+        continue;
+      }
 
       const next: SmartLightState = { ...entry.desired };
+      const prevMirror = entry.lastMirror;
+      const moved = (value: number | undefined, previous: number | undefined) =>
+        value !== undefined && prevMirror !== null && value !== previous;
 
-      if (r !== undefined || g !== undefined || b !== undefined) {
+      // Couleur et blanc variable sont deux modes EXCLUSIFS sur l'ampoule : on ne
+      // peut pas pousser les deux. C'est donc le dernier fader touche qui decide,
+      // et le mode courant qui persiste tant que personne ne bouge — sinon
+      // remonter le dimmer ferait retomber sur une couleur un blanc deja regle.
+      //
+      // Un canal de temperature laisse a 0 ne doit surtout RIEN imposer : sans
+      // cette regle, le seul fait de cabler le canal coincerait la lampe sur le
+      // blanc le plus chaud et la couleur ne passerait jamais.
+      const ctMoved = moved(ct, prevMirror?.ct);
+      const rgbMoved = moved(r, prevMirror?.r) || moved(g, prevMirror?.g) || moved(b, prevMirror?.b);
+      const hasRgb = r !== undefined || g !== undefined || b !== undefined;
+      const useCt = ct !== undefined && (ctMoved || (next.colorMode === "ct" && !rgbMoved));
+
+      if (hasRgb && !useCt) {
         const { h, s, v } = rgbToHsv(r ?? 0, g ?? 0, b ?? 0);
         next.hue = h;
         next.sat = s;
         next.colorMode = "hs";
-        // Si aucun canal d'intensite (briChannel) dedie, la luminosite vient du RGB.
-        if (bri === undefined) {
-          next.brightness = v;
-          next.on = v > 0;
-        }
-      }
-      // Un canal d'intensite explicite a la priorite : il fixe la luminosite et le on/off.
-      if (bri !== undefined) {
+        // Le dimmer ECHELONNE le melange RGB, il ne s'y substitue pas.
+        //
+        // rgbToHsv normalise : rouge a 50 % ressort en teinte 0, saturation 100,
+        // VALEUR 50 — et prendre la luminosite du seul dimmer jetait cette
+        // valeur. Toute couleur sortait donc a fond, le dimmer paraissant "en
+        // rajouter une couche" par-dessus. Un projecteur RGB reel multiplie les
+        // deux : rouge a 50 % avec dimmer a 100 % donne un rouge a mi-intensite.
+        next.brightness = bri === undefined ? v : v * (bri / 255);
+        next.on = next.brightness > 0;
+      } else if (bri !== undefined) {
+        // Pas de contribution couleur (mode blanc, ou aucun canal RGB cable) :
+        // le dimmer pilote seul l'intensite.
         next.brightness = (bri / 255) * 100;
         next.on = bri > 0;
+      }
+
+      if (useCt) {
+        next.ct = dmxToKelvin(ct as number);
+        next.colorMode = "ct";
       }
 
       // Le miroir ne s'applique QUE si les canaux DMX ont reellement bouge.
@@ -699,9 +741,16 @@ export class SmartLightService extends EventEmitter {
       //
       // Desormais c'est le dernier qui ecrit qui gagne : bouger un fader reprend la
       // main, mais tant que le DMX ne bouge pas il laisse les autres sources agir.
-      const mirrorKey = `${r ?? ""}/${g ?? ""}/${b ?? ""}/${bri ?? ""}`;
-      if (entry.lastMirrorKey === mirrorKey) continue;
-      entry.lastMirrorKey = mirrorKey;
+      const mirrorNow = { r, g, b, bri, ct };
+      const unchanged =
+        prevMirror !== null &&
+        prevMirror.r === r &&
+        prevMirror.g === g &&
+        prevMirror.b === b &&
+        prevMirror.bri === bri &&
+        prevMirror.ct === ct;
+      entry.lastMirror = mirrorNow;
+      if (unchanged) continue;
 
       entry.desired = next;
       entry.zonePalette = null; // le miroir DMX est une ecriture de couleur uniforme
@@ -792,7 +841,8 @@ export class SmartLightService extends EventEmitter {
               on: diff.on,
               brightness: diff.brightness,
               hue: diff.hue,
-              sat: diff.sat
+              sat: diff.sat,
+              ct: diff.ct
             });
             entry.lastPushed = { ...target };
             if (!entry.desired.reachable) entry.desired = { ...entry.desired, reachable: true };

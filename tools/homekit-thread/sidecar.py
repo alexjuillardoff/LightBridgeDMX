@@ -44,7 +44,14 @@ CHAR_TYPES = {
     "brightness": "00000008-0000-1000-8000-0026BB765291",
     "hue": "00000013-0000-1000-8000-0026BB765291",
     "sat": "0000002F-0000-1000-8000-0026BB765291",
+    # Temperature de couleur, en MIRED (l'unite HAP) : 153 = blanc froid,
+    # 470 = blanc chaud sur un NL45. La conversion depuis les Kelvin se fait
+    # cote LightBridge ; le sidecar reste un relais fidele au protocole.
+    "ct": "000000CE-0000-1000-8000-0026BB765291",
 }
+
+# Bornes de repli si l'ampoule ne declare pas sa plage (valeurs du NL45).
+CT_FALLBACK_RANGE = (153, 470)
 
 
 class Light:
@@ -56,6 +63,10 @@ class Light:
         self.name = alias
         self.aid = 1
         self.iids: dict[str, int] = {}
+        # Plage declaree par l'ampoule pour chaque caracteristique bornee : on
+        # ecrete dessus plutot que sur des constantes, une autre reference
+        # Nanoleaf pouvant annoncer d'autres limites.
+        self.ranges: dict[str, tuple[float, float]] = {}
         self.state: dict[str, object] = {"reachable": False}
         # Une seule ecriture a la fois par ampoule : Thread est un medium partage
         # et lent, empiler les requetes ne fait qu'allonger la file.
@@ -78,6 +89,9 @@ class Light:
                         if ctype == full.upper():
                             self.aid = acc["aid"]
                             self.iids[key] = ch["iid"]
+                            lo, hi = ch.get("minValue"), ch.get("maxValue")
+                            if lo is not None and hi is not None:
+                                self.ranges[key] = (float(lo), float(hi))
                     if str(ch.get("type", "")).upper().startswith("00000023"):
                         if ch.get("value"):
                             self.name = str(ch["value"])
@@ -106,7 +120,7 @@ class Light:
     async def apply(self, patch: dict) -> dict:
         """Ecrit les caracteristiques fournies. Renvoie l'etat mis a jour."""
         writes = []
-        for key in ("on", "brightness", "hue", "sat"):
+        for key in ("on", "brightness", "hue", "sat", "ct"):
             if key not in patch or key not in self.iids:
                 continue
             value = patch[key]
@@ -118,6 +132,10 @@ class Light:
                 value = max(0.0, min(360.0, float(value)))
             elif key == "sat":
                 value = max(0.0, min(100.0, float(value)))
+            elif key == "ct":
+                # En mired, borne sur ce que l'ampoule declare elle-meme.
+                lo, hi = self.ranges.get("ct", CT_FALLBACK_RANGE)
+                value = int(round(max(lo, min(hi, float(value)))))
             writes.append((self.aid, self.iids[key], value))
             self.state[key] = value
         if not writes:
