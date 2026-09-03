@@ -35,6 +35,10 @@ export class StoreError extends Error {
 export type FixtureInput = Omit<Fixture, "id" | "createdAt"> & { id?: string };
 export type FixtureUpdate = Partial<FixtureInput>;
 
+// Deplacement d'un projecteur dans le patch : nouvelle adresse, et
+// eventuellement nouvel univers. Sert au repatch groupe (voir repatchFixtures).
+export type FixtureMove = { id: string; address: number; universe?: number };
+
 // Forme brute d'une ligne fixture telle que stockee en base : les champs
 // complexes (channels, profile, homekit) y sont du texte JSON, pas des objets.
 type DbFixture = {
@@ -517,11 +521,71 @@ export class Store {
     const ranges = this.computeRanges(fixture);
     for (const existing of all) {
       if (existing.id === ignoreId) continue;
+      // Un canal n'est partage qu'a l'interieur d'un meme univers : le canal 1
+      // de l'univers 0 et celui de l'univers 1 sont deux fils physiques distincts.
+      if (existing.universe !== fixture.universe) continue;
       const existingRanges = this.computeRanges(existing);
-      if (ranges.some((channel) => existingRanges.includes(channel))) {
-        throw new StoreError("DMX channel overlap detected", 409);
+      const clash = ranges.find((channel) => existingRanges.includes(channel));
+      if (clash !== undefined) {
+        // Le message remonte tel quel dans l'UI : il doit dire QUI bloque et OU.
+        throw new StoreError(
+          `Conflit d'adresse au canal ${fixture.universe}.${clash} avec « ${existing.name} »`,
+          409
+        );
       }
     }
+  }
+
+  // Repatche plusieurs projecteurs d'un coup.
+  //
+  // Les deplacer un par un ne marche pas : decaler A vers l'adresse encore
+  // occupee par B leve un 409 alors que la disposition FINALE, elle, est saine.
+  // On valide donc la disposition complete resultante avant d'ecrire quoi que ce
+  // soit, puis on ecrit dans une transaction : soit tout le patch bouge, soit rien.
+  async repatchFixtures(moves: FixtureMove[]): Promise<Fixture[]> {
+    const all = await this.listFixtures();
+    const known = new Set(all.map((fixture) => fixture.id));
+    for (const move of moves) {
+      if (!known.has(move.id)) throw new StoreError(`Fixture not found: ${move.id}`, 404);
+    }
+
+    const movesById = new Map(moves.map((move) => [move.id, move]));
+    // Disposition envisagee : tous les projecteurs, les deplaces a leur nouvelle place.
+    const next = all.map((fixture) => {
+      const move = movesById.get(fixture.id);
+      return move ? { ...fixture, address: move.address, universe: move.universe ?? fixture.universe } : fixture;
+    });
+
+    // Un slot DMX n'appartient qu'a un projecteur : on parcourt la disposition
+    // complete et on refuse au premier canal reclame deux fois.
+    const owners = new Map<string, string>();
+    for (const fixture of next) {
+      for (const channel of this.computeRanges(fixture)) {
+        if (channel < 1 || channel > 512) {
+          throw new StoreError(`« ${fixture.name} » sortirait de l'univers (canal ${channel})`, 400);
+        }
+        const key = `${fixture.universe}:${channel}`;
+        const owner = owners.get(key);
+        if (owner) {
+          throw new StoreError(
+            `Conflit d'adresse au canal ${fixture.universe}.${channel} entre « ${owner} » et « ${fixture.name} »`,
+            409
+          );
+        }
+        owners.set(key, fixture.name);
+      }
+    }
+
+    const moved = next.filter((fixture) => movesById.has(fixture.id));
+    await this.prisma.$transaction(
+      moved.map((fixture) =>
+        this.prisma.fixture.update({
+          where: { id: fixture.id },
+          data: { address: fixture.address, universe: fixture.universe }
+        })
+      )
+    );
+    return moved;
   }
 
   // Calcule la liste des canaux DMX absolus occupes par un projecteur.

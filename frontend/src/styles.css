@@ -2962,3 +2962,281 @@ input[type="range"]:focus-visible {
     min-height: 96px;
   }
 }
+
+/* ─── 20. Patch : fixture schedule et fiche d'edition ───────────────────── */
+
+.patch-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.patch-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.patch-search {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+/* Barre d'actions groupees : elle n'apparait qu'avec une selection, et se
+   distingue du reste par le liseré ambre du pupitre. */
+.patch-batch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--edge);
+}
+
+.patch-batch > strong {
+  color: var(--yellow);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.patch-batch-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.patch-batch-group input {
+  width: 130px;
+}
+
+.patch-batch-group input[type="number"] {
+  width: 70px;
+}
+
+.patch-batch-spacer {
+  flex: 1 1 auto;
+}
+
+/* En-tetes de colonnes cliquables : bouton nu qui herite du style du <th>. */
+.patch-sort {
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.patch-sort:hover {
+  color: var(--yellow);
+}
+
+.patch-col-check {
+  width: 26px;
+  text-align: center;
+}
+
+.patch-col-id {
+  width: 44px;
+  color: var(--yellow);
+  font-family: var(--font-mono);
+}
+
+.patch-col-patch {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.patch-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: text;
+}
+
+.patch-actions {
+  gap: 4px;
+}
+
+/* Conflit d'adresse : la ligne entiere vire au rouge, comme le patch MA2. */
+.patch-row-conflict,
+.patch-row-conflict:hover {
+  background: rgba(184, 50, 39, 0.18);
+}
+
+.patch-conflict-note {
+  display: block;
+  color: var(--red-bright);
+}
+
+.patch-alert {
+  margin: 0;
+  color: var(--red-bright);
+  font-size: 12px;
+}
+
+/* Recapitulatif de patch (adresse resultante, encombrement, plan de serie). */
+.patch-summary {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+  background: #000;
+  border: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.patch-summary strong {
+  color: var(--yellow);
+  font-weight: 700;
+}
+
+.patch-field-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.patch-field-row > label {
+  flex: 1 1 90px;
+}
+
+.patch-field-action {
+  flex: 0 0 auto;
+  padding-bottom: 1px;
+}
+
+/* ─── Fiche d'edition (boite de dialogue modale) ────────────────────────── */
+
+.patch-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  background: rgba(0, 0, 0, 0.72);
+  overflow-y: auto;
+}
+
+.patch-modal {
+  width: min(620px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.7);
+}
+
+.patch-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: linear-gradient(180deg, #1e1e1e 0%, #0c0c0c 100%);
+  border-bottom: 1px solid var(--edge);
+}
+
+.patch-modal-head strong {
+  color: var(--amber-text);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.patch-modal-close {
+  display: flex;
+  padding: 2px;
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.patch-modal-close:hover {
+  color: var(--red-bright);
+}
+
+.patch-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+.patch-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.patch-channels-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.patch-channels-head strong {
+  color: var(--amber-text);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.patch-channels-table td {
+  padding: 2px 4px;
+}
+
+.patch-channels-table input[type="number"] {
+  width: 58px;
+}
+
+.patch-channels-table .patch-abs {
+  font-family: var(--font-mono);
+  color: var(--yellow);
+}
+
+.patch-homekit {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.patch-homekit > label:last-child {
+  flex: 1 1 auto;
+}
+
+/* Case a cocher en ligne : le libelle ne doit pas passer au-dessus. */
+.patch-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  white-space: nowrap;
+  padding-bottom: 5px;
+}
+
+.patch-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .patch-batch-group input {
+    width: 100px;
+  }
+
+  .patch-homekit {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

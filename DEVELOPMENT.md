@@ -117,8 +117,9 @@ LightBridgeDMX/
 │   │   │   ├── UniverseMonitor.tsx    ← DMX sheet 512 canaux en lecture seule
 │   │   │   ├── ma/MaFader.tsx         ← fader maison (pointeur + clavier), vertical ou horizontal
 │   │   │   ├── ma/MaKnob.tsx          ← molette d'encodeur (drag relatif, arc de niveau)
-│   │   │   ├── FixtureForm.tsx        ← formulaire création manuelle de fixture
-│   │   │   ├── FixturesTable.tsx      ← liste fixtures + suppression + data-label pour mobile cards
+│   │   │   ├── FixtureForm.tsx        ← ajout d'une SÉRIE de fixtures (quantité, adresses auto, pièce)
+│   │   │   ├── patch/FixtureSchedule.tsx ← table du patch éditable (renommage, tri, conflits, actions groupées)
+│   │   │   ├── patch/FixtureEditor.tsx   ← fiche d'édition d'un projecteur (adresse, canaux, pièce, HomeKit)
 │   │   │   ├── ChannelGrid.tsx        ← fader view 32 canaux/page (16 → 12 → 8 → 4 colonnes)
 │   │   │   ├── DeviceInventory.tsx    ← inventaire réseau unifié (ex-DevicesPage)
 │   │   │   ├── QxfLibraryPanel.tsx    ← navigateur bibliothèque QXF + import
@@ -146,6 +147,7 @@ LightBridgeDMX/
 │   │       ├── programmer.ts          ← attributs ↔ canaux DMX (groupes, lecture/écriture sélection)
 │   │       ├── commandLine.ts         ← parser de la ligne de commande (texte → intention typée)
 │   │       ├── fixtureTemplates.ts    ← templates prédéfinis (rgb, rgbw, dimmer)
+│   │       ├── patch.ts               ← calculs du patch (encombrement, conflits, adresses libres, tri)
 │   │       └── math.ts                ← clamp(), addAlpha()
 └── packages/
     └── shared/
@@ -542,7 +544,15 @@ interface SmartLight {
 |---------|----------|-------|-------------|
 | `GET` | `/api/fixtures` | — | Liste tous les projecteurs |
 | `POST` | `/api/fixtures` | `FixtureInput` | Crée un projecteur (valide overlap) |
-| `PUT` | `/api/fixtures/:id` | `Partial<FixtureInput>` | Modifie un projecteur |
+| `PUT` | `/api/fixtures/:id` | `Partial<FixtureInput>` | Modifie un projecteur (`room: null` retire la pièce) |
+| `POST` | `/api/fixtures/repatch` | `{ moves: { id, address, universe? }[] }` | Repatch groupé : valide la disposition **finale** puis écrit en transaction |
+
+> **Repatch et lampes connectées.** Le miroir DMX uniforme d'une lampe (`rChannel`, `gChannel`…) mémorise
+> des canaux **absolus**, sans lien vers le projecteur qui les occupe : repatcher la façade DMX d'une
+> Nanoleaf la laissait muette, le miroir écoutant des canaux que plus personne ne pilote.
+> `realignSmartLightMirrors()` (`routes/helpers.ts`) décale du même delta les canaux du miroir tombant
+> dans l'ancienne empreinte du projecteur, sur `PUT /:id` comme sur `/repatch`. Le miroir par zone, lui,
+> porte déjà `fixtureId` : on suit ce lien plutôt que les canaux.
 | `DELETE` | `/api/fixtures/:id` | — | Supprime un projecteur |
 | `POST` | `/api/fixtures/import/qxf-library` | `{ path, mode?, address, universe, name? }` | Importe depuis la librairie QXF |
 
@@ -711,6 +721,33 @@ Utilise `hap-nodejs` pour créer un pont HomeKit. Gère deux types d'accessories
   - Priorité 2 : capabilities dans `fixture.channels`
 
 - Méthode `syncFixtures()` : synchronise lights ET moving heads à chaque changement de fixture
+- Le statut `GET /api/homekit` liste **les deux familles** (`kind: "channels" | "movingHead"`) — c'est
+  lui qui décide du badge « HomeKit » dans le patch. Les lyres en étaient absentes, donc jamais badgées.
+
+### Nommage des accessoires (renommer depuis le patch)
+
+Renommer un projecteur dans le patch doit le renommer dans l'app Maison. Trois pièces sont nécessaires,
+et il en manquait deux :
+
+| Pièce | Rôle |
+|-------|------|
+| `accessory.displayName` | interne à hap-nodejs — **ne part jamais sur le fil** |
+| `Characteristic.Name` | lu par iOS à la **découverte** seulement ; les services étaient ajoutés sans nom (chaîne vide) |
+| `Characteristic.ConfiguredName` | relu à **chaque changement de version de config** — c'est elle qui fait suivre un renommage |
+
+- `HomeKitBridge.nameService()` écrit les trois d'un coup. `ConfiguredName` ne figure pas dans les
+  caractéristiques optionnelles d'un `Lightbulb` : il faut la déclarer (`addOptionalCharacteristic`) avant.
+- Un renommage **recrée** les accessoires (retrait + ajout) : seul un ajout/retrait change la version de
+  config du pont, et sans ce changement l'app Maison ne relit pas les noms. L'UUID étant dérivé du
+  `deviceId`, l'app Maison retrouve le même accessoire (pièce et automatisations conservées).
+- `hapName()` (`homekit-utils.ts`) nettoie le nom : HAP n'accepte qu'alphanumérique, espace et
+  apostrophe, et exige de commencer/finir par une lettre ou un chiffre. Les noms QXF du genre
+  `Showtec LED Par 56 (6 Channel)` déclenchaient l'avertissement HAP « invalid Name characteristic ».
+  Le pupitre garde le nom tel quel : seul le miroir HomeKit est nettoyé.
+- Les lampes connectées suivent la même règle (`syncSmartLights` recrée l'accessoire au renommage).
+
+> **Limite Apple.** Si l'utilisateur a renommé l'accessoire *dans* l'app Maison, ce nom-là gagne :
+> aucun changement côté pont ne l'écrase. Il faut alors renommer dans Maison.
 
 ---
 

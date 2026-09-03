@@ -31,10 +31,18 @@ const CHANNEL_FLUSH_MS = 40;
 // Entree d'une mutation "regler un canal" : numero de canal DMX + valeur 0-255.
 type SetChannelInput = { channel: number; value: number };
 
+// Entree d'une mise a jour de projecteur : son id + le patch partiel a appliquer.
+type UpdateFixtureInput = { id: string; patch: Record<string, unknown> };
+
+// Un deplacement dans le patch (repatch groupe).
+export type FixtureMove = { id: string; address: number; universe?: number };
+
 // Regroupe les mutations React Query exposees aux composants (creation, import, etc.).
 type Mutations = {
   createFixture: UseMutationResult<Fixture, Error, unknown>;
   importFromLibrary: UseMutationResult<Fixture, Error, unknown>;
+  updateFixture: UseMutationResult<Fixture, Error, UpdateFixtureInput>;
+  repatchFixtures: UseMutationResult<Fixture[], Error, FixtureMove[]>;
   deleteFixture: UseMutationResult<unknown, Error, Fixture>;
   refreshLibrary: UseMutationResult<unknown, Error, void>;
   setChannel: UseMutationResult<unknown, Error, SetChannelInput>;
@@ -64,6 +72,8 @@ type AppData = {
   handleCreateFixture: (payload: unknown) => Promise<void>;
   handleImportFixture: (payload: unknown) => Promise<Fixture>;
   handleDeleteFixture: (fixture: Fixture) => Promise<void>;
+  handleUpdateFixture: (fixture: Fixture, patch: Record<string, unknown>) => Promise<Fixture>;
+  handleRepatchFixtures: (moves: FixtureMove[]) => Promise<Fixture[]>;
   handleRefreshLibrary: () => Promise<void>;
   handleUpdateChannel: (channel: number, value: number) => void;
   handleBlackout: () => Promise<void>;
@@ -156,6 +166,32 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     api.universe.setChannel(channel, value)
   );
 
+  // Mise a jour d'un projecteur (renommage, repatch, roles de canaux, HomeKit).
+  // On passe par PUT plutot que supprimer/recreer : l'id survit, donc les scenes
+  // et les presets qui referencent ce projecteur continuent de marcher.
+  const updateFixture = useMutation<Fixture, Error, UpdateFixtureInput>(
+    ({ id, patch }) => api.fixtures.update(id, patch),
+    {
+      onSuccess: (fixture) => {
+        upsertFixture(fixture);
+        // Le nom, l'activation ou les canaux HomeKit ont pu changer : le pont
+        // vient d'etre resynchronise cote backend, on relit son etat.
+        void queryClient.invalidateQueries({ queryKey: ["homekit", "status"] });
+      }
+    }
+  );
+
+  // Repatch groupe : le backend valide la disposition finale avant d'ecrire.
+  const repatchFixtures = useMutation<Fixture[], Error, FixtureMove[]>(
+    (moves: FixtureMove[]) => api.fixtures.repatch(moves),
+    {
+      onSuccess: (updated) => {
+        updated.forEach(upsertFixture);
+        void queryClient.invalidateQueries({ queryKey: ["homekit", "status"] });
+      }
+    }
+  );
+
   // Suppression d'un projecteur. Au succes, on nettoie tout : cache, etat local de l'univers
   // et canaux physiques (remis a 0) pour ne pas laisser le projecteur supprime allume.
   const deleteFixture = useMutation<unknown, Error, Fixture>(
@@ -244,6 +280,61 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       }
     },
     [deleteFixture, setLogMessage]
+  );
+
+  // Eteint les canaux qu'un projecteur vient de liberer.
+  //
+  // Un projecteur deplace de l'adresse 1 a l'adresse 20 laisse derriere lui des
+  // slots encore allumes que plus personne ne pilote : sur scene, c'est une
+  // lampe fantome qui reste au niveau ou on l'avait laissee. On les remet a 0,
+  // dans l'affichage puis sur le materiel.
+  const releaseChannels = useCallback(
+    (before: Fixture, after: Fixture) => {
+      const kept = new Set(after.channels.map((ch) => after.address + ch.channel - 1));
+      const freed = before.channels
+        .map((ch) => before.address + ch.channel - 1)
+        .filter((channel) => !kept.has(channel) && channel >= 1 && channel <= 512);
+      // Un changement d'univers ne libere rien dans l'univers courant tant qu'on
+      // n'en pilote qu'un : on ne traite que le cas du deplacement d'adresse.
+      if (!freed.length || before.universe !== after.universe) return;
+
+      setUniverseState((prev) => {
+        if (!prev) return prev;
+        const nextValues = [...prev.values];
+        freed.forEach((channel) => {
+          nextValues[channel - 1] = 0;
+        });
+        return { ...prev, values: nextValues };
+      });
+      freed.forEach((channel) => setChannel.mutate({ channel, value: 0 }));
+    },
+    [setChannel, setUniverseState]
+  );
+
+  // Applique un patch partiel a un projecteur et renvoie sa version a jour.
+  // Les erreurs remontent a l'appelant : la fiche d'edition les affiche a cote
+  // du champ fautif (conflit d'adresse, notamment), c'est plus utile qu'un log.
+  const handleUpdateFixture = useCallback(
+    async (fixture: Fixture, patch: Record<string, unknown>) => {
+      const updated = await updateFixture.mutateAsync({ id: fixture.id, patch });
+      releaseChannels(fixture, updated);
+      return updated;
+    },
+    [releaseChannels, updateFixture]
+  );
+
+  // Deplace un bloc de projecteurs d'un coup (repatch d'une serie).
+  const handleRepatchFixtures = useCallback(
+    async (moves: FixtureMove[]) => {
+      const before = new Map(fixturesQuery.data?.map((f) => [f.id, f]) ?? []);
+      const updated = await repatchFixtures.mutateAsync(moves);
+      updated.forEach((fixture) => {
+        const previous = before.get(fixture.id);
+        if (previous) releaseChannels(previous, fixture);
+      });
+      return updated;
+    },
+    [fixturesQuery.data, releaseChannels, repatchFixtures]
   );
 
   // Relance le rafraichissement de la bibliotheque QXF (action rapide du tableau de bord).
@@ -346,10 +437,20 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       logMessage,
       logHistory,
       setLogMessage,
-      mutations: { createFixture, importFromLibrary, deleteFixture, refreshLibrary, setChannel },
+      mutations: {
+        createFixture,
+        importFromLibrary,
+        updateFixture,
+        repatchFixtures,
+        deleteFixture,
+        refreshLibrary,
+        setChannel
+      },
       handleCreateFixture,
       handleImportFixture,
       handleDeleteFixture,
+      handleUpdateFixture,
+      handleRepatchFixtures,
       handleRefreshLibrary,
       handleUpdateChannel,
       handleBlackout
@@ -374,12 +475,16 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       setLogMessage,
       createFixture,
       importFromLibrary,
+      updateFixture,
+      repatchFixtures,
       deleteFixture,
       refreshLibrary,
       setChannel,
       handleCreateFixture,
       handleImportFixture,
       handleDeleteFixture,
+      handleUpdateFixture,
+      handleRepatchFixtures,
       handleRefreshLibrary,
       handleUpdateChannel,
       handleBlackout

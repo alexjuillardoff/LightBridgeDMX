@@ -4,7 +4,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FixtureSchema } from "@lightbridgedmx/shared";
-import { createFixtureAndSync } from "./helpers";
+import { createFixtureAndSync, realignSmartLightMirrors } from "./helpers";
 import { ErrorHandler, RouteContext } from "./types";
 
 // Enregistre les endpoints /api/fixtures sur l'instance Fastify.
@@ -15,7 +15,24 @@ export const registerFixtureRoutes = (app: FastifyInstance, ctx: RouteContext, h
     id: z.string().uuid().optional()
   });
   // En mise a jour, tous les champs sont optionnels (modification partielle).
-  const fixtureUpdateSchema = fixtureInputSchema.partial();
+  // `room` accepte en plus la valeur null : c'est le seul moyen de RETIRER un
+  // projecteur de sa piece, JSON ne sachant pas transporter `undefined`.
+  const fixtureUpdateSchema = fixtureInputSchema.partial().extend({
+    room: z.string().min(1).nullish()
+  });
+
+  // Repatch groupe : une liste de deplacements valides ensemble.
+  const repatchSchema = z.object({
+    moves: z
+      .array(
+        z.object({
+          id: z.string().uuid(),
+          address: z.number().int().min(1).max(512),
+          universe: z.number().int().min(0).optional()
+        })
+      )
+      .min(1)
+  });
 
   // GET : renvoie la liste de tous les projecteurs enregistres.
   app.get("/api/fixtures", async () => ctx.store.listFixtures());
@@ -36,7 +53,17 @@ export const registerFixtureRoutes = (app: FastifyInstance, ctx: RouteContext, h
   app.put("/api/fixtures/:id", async (request, reply) => {
     try {
       const parsed = fixtureUpdateSchema.parse(request.body);
-      const fixture = await ctx.store.updateFixture((request.params as { id: string }).id, parsed);
+      // room: null -> undefined, mais la CLE reste presente : c'est elle qui,
+      // fusionnee sur le projecteur existant, efface la piece. Une cle absente
+      // (room jamais envoye) laisse au contraire la piece intacte.
+      const { room, ...fields } = parsed;
+      const patch = "room" in parsed ? { ...fields, room: room ?? undefined } : fields;
+      const id = (request.params as { id: string }).id;
+      // Etat AVANT modification : c'est lui qui dit quels canaux le projecteur
+      // liberait, donc quels miroirs de lampes doivent suivre le deplacement.
+      const before = await ctx.store.getFixture(id);
+      const fixture = await ctx.store.updateFixture(id, patch);
+      if (before) await realignSmartLightMirrors(ctx, [{ before, after: fixture }]);
       // Resynchronise le pont HomeKit (et la prise Meross) avec la liste a jour, puis previent
       // les clients WebSocket par une diffusion (broadcast) du projecteur modifie.
       const fixtures = await ctx.store.listFixtures();
@@ -44,6 +71,30 @@ export const registerFixtureRoutes = (app: FastifyInstance, ctx: RouteContext, h
       ctx.meross.syncFixtures(fixtures);
       ctx.broadcast({ type: "fixture_updated", data: fixture });
       reply.send(fixture);
+    } catch (err) {
+      handleError(err, reply);
+    }
+  });
+
+  // POST /repatch : deplace plusieurs projecteurs en une seule operation validee.
+  // Indispensable pour decaler une serie : voir store.repatchFixtures.
+  app.post("/api/fixtures/repatch", async (request, reply) => {
+    try {
+      const { moves } = repatchSchema.parse(request.body);
+      const beforeAll = new Map((await ctx.store.listFixtures()).map((f) => [f.id, f]));
+      const updated = await ctx.store.repatchFixtures(moves);
+      await realignSmartLightMirrors(
+        ctx,
+        updated.flatMap((after) => {
+          const before = beforeAll.get(after.id);
+          return before ? [{ before, after }] : [];
+        })
+      );
+      const fixtures = await ctx.store.listFixtures();
+      await ctx.homekit.syncFixtures(fixtures);
+      ctx.meross.syncFixtures(fixtures);
+      updated.forEach((fixture) => ctx.broadcast({ type: "fixture_updated", data: fixture }));
+      reply.send(updated);
     } catch (err) {
       handleError(err, reply);
     }

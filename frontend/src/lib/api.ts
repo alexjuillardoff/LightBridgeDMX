@@ -29,13 +29,15 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 // Etat d'un projecteur (fixture) tel qu'expose dans le pont HomeKit.
-// source = origine du mapping RGB : "config" (canaux explicites) ou "capability"
-// (deduit des capabilities r/g/b). mapping = canaux et adresse DMX resolus.
+// kind = famille d'accessoire : "channels" (un Lightbulb par canal DMX) ou
+// "movingHead" (lyre exposee en accessoire multi-services). channels = les
+// canaux resolus, indexes par role.
 export type HomeKitFixtureStatus = {
   fixtureId: string;
   name: string;
-  source: "config" | "capability";
-  mapping: { r: number; g: number; b: number; universe: number; address: number };
+  universe: number;
+  kind: "channels" | "movingHead";
+  channels: Record<string, number>;
 };
 
 // Etat global du pont HomeKit renvoye par GET /api/homekit.
@@ -101,6 +103,11 @@ export const api = {
     update: (id: string, body: unknown) =>
       fetchJSON<Fixture>(`/api/fixtures/${id}`, { method: "PUT", body: JSON.stringify(body) }),
     delete: (id: string) => fetchJSON<void>(`/api/fixtures/${id}`, { method: "DELETE" }),
+    // Repatch groupe : le backend valide la disposition finale d'un bloc puis
+    // ecrit tout d'un coup. Un PUT par projecteur echouerait en 409 des que
+    // deux projecteurs se croisent en cours de deplacement.
+    repatch: (moves: { id: string; address: number; universe?: number }[]) =>
+      fetchJSON<Fixture[]>("/api/fixtures/repatch", { method: "POST", body: JSON.stringify({ moves }) }),
     importQxfLibrary: (body: unknown) =>
       fetchJSON<Fixture>("/api/fixtures/import/qxf-library", { method: "POST", body: JSON.stringify(body) })
   },

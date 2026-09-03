@@ -31,7 +31,8 @@ import {
   MovingHeadChannels,
   clamp,
   collectHomeKitChannelFixtures,
-  collectHomeKitMovingHeads
+  collectHomeKitMovingHeads,
+  hapName
 } from "./homekit-utils";
 
 // Options de configuration du pont HomeKit (lues depuis l'environnement / la config).
@@ -75,11 +76,16 @@ type ManagedMovingHead = {
 };
 
 // Etat d'un projecteur expose, renvoye par l'API de statut (pour l'UI).
+// `kind` distingue les deux familles d'accessoires : les projecteurs exposes
+// canal par canal (un Lightbulb par canal) et les lyres (accessoire
+// multi-services). Les deux doivent figurer ici : c'est cette liste qui dit a
+// l'UI quels projecteurs porter le badge « HomeKit ».
 export type HomeKitFixtureStatus = {
   fixtureId: string;
   name: string;
   universe: number;
-  channels: Partial<Record<keyof ChannelFixtureChannels, number>>;
+  kind: "channels" | "movingHead";
+  channels: Record<string, number>;
 };
 
 // Statut global du pont HomeKit, renvoye a l'UI (Reglages) : etat, PIN, QR d'appairage, projecteurs.
@@ -247,14 +253,24 @@ export class HomeKitBridge {
 
   // Construit le statut courant du pont pour l'UI (etat, PIN, URI d'appairage, projecteurs exposes).
   getStatus(): HomeKitStatus {
-    const fixtures: HomeKitFixtureStatus[] = Array.from(this.channelFixtures.values()).map(({ cf }) => ({
+    const channelFixtures: HomeKitFixtureStatus[] = Array.from(this.channelFixtures.values()).map(({ cf }) => ({
       fixtureId: cf.fixture.id,
       name: cf.name,
       universe: cf.universe,
-      channels: Object.fromEntries(
-        Object.entries(cf.channels).filter(([, v]) => v !== undefined)
-      ) as Partial<Record<keyof ChannelFixtureChannels, number>>
+      kind: "channels" as const,
+      channels: Object.fromEntries(Object.entries(cf.channels).filter(([, v]) => v !== undefined)) as Record<string, number>
     }));
+    // Les lyres manquaient a l'appel : exposees par un chemin distinct, elles
+    // n'apparaissaient dans aucun statut, donc l'UI les croyait absentes de
+    // HomeKit et ne leur mettait pas le badge — alors qu'elles y sont bien.
+    const movingHeads: HomeKitFixtureStatus[] = Array.from(this.movingHeads.values()).map(({ mh }) => ({
+      fixtureId: mh.fixture.id,
+      name: mh.name,
+      universe: mh.universe,
+      kind: "movingHead" as const,
+      channels: Object.fromEntries(Object.entries(mh.channels).filter(([, v]) => v !== undefined)) as Record<string, number>
+    }));
+    const fixtures: HomeKitFixtureStatus[] = [...channelFixtures, ...movingHeads];
     const started = this.started && Boolean(this.bridge);
     // setupURI : URI X-HM:// servant a generer le QR code d'appairage cote UI.
     const setupUri = started && typeof this.bridge?.setupURI === "function" ? this.bridge?.setupURI() : null;
@@ -327,6 +343,18 @@ export class HomeKitBridge {
       seen.add(light.id);
       const existing = this.smartLights.get(light.id);
       if (existing) {
+        // Renommer une lampe la renomme aussi dans l'app Maison. On recree
+        // l'accessoire plutot que de reecrire son nom : seul un ajout/retrait
+        // change la version de config du pont, et sans ce changement iOS ne
+        // relit pas les noms. L'UUID etant derive de l'id de la lampe, l'app
+        // Maison retrouve le meme accessoire (piece et automatisations gardees).
+        if (existing.accessory.displayName !== hapName(light.name)) {
+          this.bridge.removeBridgedAccessory(existing.accessory);
+          const renamed = this.buildSmartLightAccessory(light);
+          this.smartLights.set(light.id, renamed);
+          this.bridge.addBridgedAccessory(renamed.accessory);
+          this.logger.info({ id: light.id, name: light.name }, "Lampe connectee renommee dans HomeKit");
+        }
         this.pushSmartLightState(light);
         continue;
       }
@@ -344,17 +372,44 @@ export class HomeKitBridge {
     }
   }
 
+  /** Donne son nom a un service HomeKit — et le fait vraiment arriver dans l'app Maison.
+   *
+   *  Ecrire `accessory.displayName` ne suffit pas : ce champ est purement interne a
+   *  hap-nodejs, il ne part jamais sur le fil. iOS lit deux caracteristiques :
+   *
+   *    - `Name`, qu'il ne consulte qu'a la DECOUVERTE de l'accessoire — la changer
+   *      ensuite ne bouge rien pour un accessoire deja appaire ;
+   *    - `ConfiguredName`, qu'il relit a chaque changement de version de config.
+   *      C'est elle qui fait suivre un renommage.
+   *
+   *  Les services etaient jusqu'ici ajoutes sans nom du tout (`Name` = chaine vide) :
+   *  l'app Maison retombait sur le nom de l'accessoire, fige a l'appairage. D'ou des
+   *  renommages qui restaient cote pupitre sans jamais arriver dans Maison.
+   *
+   *  ConfiguredName n'est pas dans les caracteristiques optionnelles d'un Lightbulb :
+   *  il faut la declarer avant de pouvoir l'ecrire. */
+  private static nameService(service: Service, label: string): void {
+    service.displayName = label;
+    service.setCharacteristic(Characteristic.Name, label);
+    if (!service.testCharacteristic(Characteristic.ConfiguredName)) {
+      service.addOptionalCharacteristic(Characteristic.ConfiguredName);
+    }
+    service.setCharacteristic(Characteristic.ConfiguredName, label);
+  }
+
   /** Cree l'accessoire d'une lampe : un unique Service.Lightbulb portant les quatre
    *  caracteristiques natives. Les valeurs transitent en TSL de bout en bout. */
   private buildSmartLightAccessory(light: SmartLight): ManagedSmartLight {
-    const acc = new Accessory(light.name, uuid.generate(`lightbridgedmx:smartlight:${light.id}`));
+    const label = hapName(light.name);
+    const acc = new Accessory(label, uuid.generate(`lightbridgedmx:smartlight:${light.id}`));
     acc
       .getService(Service.AccessoryInformation)
       ?.setCharacteristic(Characteristic.Manufacturer, "LightBridgeDMX")
       .setCharacteristic(Characteristic.Model, light.config.type)
       .setCharacteristic(Characteristic.SerialNumber, light.id);
 
-    const svc = acc.addService(Service.Lightbulb);
+    const svc = acc.addService(Service.Lightbulb, label);
+    HomeKitBridge.nameService(svc, label);
     const managed: ManagedSmartLight = { accessory: acc, service: svc, id: light.id };
 
     // Etat courant lu a la demande : la source de verite reste le SmartLightService,
@@ -471,7 +526,8 @@ export class HomeKitBridge {
         .setCharacteristic(Characteristic.Model, "DMX Channel")
         .setCharacteristic(Characteristic.SerialNumber, `${cf.deviceId}-${key}`);
 
-      const svc = acc.addService(Service.Lightbulb);
+      const svc = acc.addService(Service.Lightbulb, label);
+      HomeKitBridge.nameService(svc, label);
       const value = readPct(ch);
       const slot: ManagedChannelSlot = { accessory: acc, service: svc, value };
 
@@ -547,6 +603,7 @@ export class HomeKitBridge {
     };
     for (const [key, slot] of existing.slots.entries()) {
       slot.accessory.displayName = labels[key];
+      HomeKitBridge.nameService(slot.service, labels[key]);
     }
   }
 
@@ -655,7 +712,8 @@ export class HomeKitBridge {
         .setCharacteristic(Characteristic.Model, "DMX Moving Head")
         .setCharacteristic(Characteristic.SerialNumber, `${mh.deviceId}-${key}`);
 
-      const svc = acc.addService(Service.Lightbulb);
+      const svc = acc.addService(Service.Lightbulb, label);
+      HomeKitBridge.nameService(svc, label);
       const defaultDmx = this.getDefaultDmx(mh, key);
       const value = readPct(ch);
       const slot: ManagedMovingHeadSlot = { accessory: acc, service: svc, value };
@@ -770,6 +828,7 @@ export class HomeKitBridge {
     };
     for (const [key, slot] of existing.slots.entries()) {
       slot.accessory.displayName = labels[key];
+      HomeKitBridge.nameService(slot.service, labels[key]);
     }
   }
 

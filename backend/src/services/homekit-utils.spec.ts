@@ -4,7 +4,7 @@
 // ainsi que le tri des projecteurs exposables en ampoules HomeKit.
 import { describe, expect, it } from "vitest";
 import { Fixture } from "@lightbridgedmx/shared";
-import { collectHomeKitLights, hsbToRgb, resolveRgbChannels, rgbToHsb } from "./homekit-utils";
+import { collectHomeKitLights, hapName, hsbToRgb, resolveRgbChannels, rgbToHsb } from "./homekit-utils";
 
 // Projecteur de reference reutilise dans plusieurs tests : un RGB simple a
 // l'adresse 1, avec ses trois canaux r/g/b sur les slots 1, 2 et 3.
@@ -80,5 +80,34 @@ describe("DMX channel resolution", () => {
     const { lights, skipped } = collectHomeKitLights(fixtures);
     expect(lights).toHaveLength(1);
     expect(skipped[0]).toMatchObject({ fixtureId: fixtures[1].id });
+  });
+});
+
+// HAP n'accepte qu'alphanumerique, espace et apostrophe, et exige de commencer
+// et finir par une lettre ou un chiffre. Un nom hors regles fait avertir
+// hap-nodejs et peut rendre l'accessoire muet dans l'app Maison.
+describe("hapName", () => {
+  it("laisse intact un nom deja valide", () => {
+    expect(hapName("Par 56 Lava")).toBe("Par 56 Lava");
+    expect(hapName("L'entree")).toBe("L'entree");
+  });
+
+  it("remplace la ponctuation par des espaces et normalise", () => {
+    // Cas reel de la bibliotheque QXF, qui declenchait l'avertissement HAP.
+    expect(hapName("Showtec LED Par 56 (6 Channel)")).toBe("Showtec LED Par 56 6 Channel");
+    expect(hapName("Stairville MH-X20 (11 Ch)")).toBe("Stairville MH X20 11 Ch");
+  });
+
+  it("retire les accents plutot que le caractere entier", () => {
+    expect(hapName("Par 56 Café")).toBe("Par 56 Cafe");
+    expect(hapName("Éclairage arrière")).toBe("Eclairage arriere");
+  });
+
+  it("force un debut et une fin alphanumeriques", () => {
+    expect(hapName("  #1 Salon !!")).toBe("1 Salon");
+  });
+
+  it("ne renvoie jamais un nom vide", () => {
+    expect(hapName("###")).toBe("Projecteur");
   });
 });

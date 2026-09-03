@@ -16,9 +16,10 @@
 //
 // Le volet actif vient du hash de l'URL (#patch, #patch/inventaire,
 // #patch/lampes) et non d'un etat local : un lien partage rouvre le bon volet.
+import { useCallback } from "react";
 import { DeviceInventory } from "../components/DeviceInventory";
-import { FixtureForm } from "../components/FixtureForm";
-import { FixturesTable } from "../components/FixturesTable";
+import { FixtureForm, NewFixturePayload } from "../components/FixtureForm";
+import { FixtureSchedule } from "../components/patch/FixtureSchedule";
 import { QxfLibraryPanel } from "../components/QxfLibraryPanel";
 import { useAppData } from "../contexts/AppDataContext";
 import { DEFAULT_PATCH_PANE, PATCH_PANES, PatchPaneId } from "../shell/tabs";
@@ -40,14 +41,24 @@ export const PatchPage = ({ pane = DEFAULT_PATCH_PANE, onPaneChange }: PatchPage
     library,
     libraryLoading,
     libraryError,
-    homekitFixtureIds,
-    homekitStatus,
-    mutations: { createFixture, importFromLibrary, deleteFixture, refreshLibrary },
+    mutations: { createFixture, importFromLibrary, refreshLibrary },
     handleCreateFixture,
     handleImportFixture,
-    handleDeleteFixture,
     handleRefreshLibrary
   } = useAppData();
+
+  // Ajout d'une serie : les adresses sont deja calculees par le formulaire, on
+  // se contente de creer les projecteurs dans l'ordre. En sequence et non en
+  // parallele : le backend valide chaque adresse contre l'etat courant du patch,
+  // et deux creations concurrentes se verraient mutuellement absentes.
+  const handleCreateSeries = useCallback(
+    async (payloads: NewFixturePayload[]) => {
+      for (const payload of payloads) {
+        await handleCreateFixture(payload);
+      }
+    },
+    [handleCreateFixture]
+  );
 
   // Sous-titre : le compte des projecteurs patches reste utile depuis n'importe
   // quel volet (c'est lui qu'on vient verifier), suivi de ce que fait le volet.
@@ -92,22 +103,15 @@ export const PatchPage = ({ pane = DEFAULT_PATCH_PANE, onPaneChange }: PatchPage
               vue pour vérifier une adresse, pas pour ajouter un projecteur. */}
           <div className="card grid-span-full">
             <h2>Projecteurs patchés</h2>
-            <FixturesTable
-              fixtures={fixtures}
-              onDelete={handleDeleteFixture}
-              isDeleting={deleteFixture.isLoading}
-              deletingId={deleteFixture.variables?.id}
-              error={deleteFixture.error as Error | null | undefined}
-              homekitFixtureIds={homekitFixtureIds}
-              homekitEnabled={homekitStatus?.enabled ?? false}
-            />
+            <FixtureSchedule />
           </div>
 
-          {/* Ajout manuel d'un projecteur (adresse, mode, canaux...). */}
+          {/* Ajout manuel d'une serie de projecteurs (quantite, adresse, modele...). */}
           <div className="card">
-            <h2>Ajouter un projecteur</h2>
+            <h2>Ajouter des projecteurs</h2>
             <FixtureForm
-              onSubmit={handleCreateFixture}
+              fixtures={fixtures}
+              onSubmit={handleCreateSeries}
               isLoading={createFixture.isLoading}
               error={createFixture.error as Error | null | undefined}
             />

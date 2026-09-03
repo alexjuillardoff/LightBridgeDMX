@@ -10,6 +10,31 @@
 
 import { Fixture, FixtureHomeKitMovingHeadChannels } from "@lightbridgedmx/shared";
 
+/** Nettoie un nom pour HomeKit.
+ *
+ *  HAP n'accepte dans un nom que lettres, chiffres, espaces et apostrophes, et
+ *  exige qu'il commence et finisse par une lettre ou un chiffre. Un nom hors
+ *  regles fait avertir hap-nodejs et peut rendre l'accessoire inajoutable ou
+ *  muet dans l'app Maison — ce qui arrive vite avec les noms de la bibliotheque
+ *  QXF, du genre « Showtec LED Par 56 (6 Channel) ».
+ *
+ *  Le pupitre, lui, garde le nom tel quel : seul le miroir HomeKit est nettoye. */
+export const hapName = (raw: string): string => {
+  const cleaned = raw
+    .normalize("NFD")
+    // Les accents partent avec leurs diacritiques : « Café » -> « Cafe ».
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9 ']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    // Un nom doit commencer ET finir par une lettre ou un chiffre.
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .replace(/[^A-Za-z0-9]+$/, "");
+  // Un nom entierement illisible vaut mieux remplace que vide.
+  return cleaned || "Projecteur";
+};
+
+
 // Couleur en HSB (Hue/Saturation/Brightness) telle qu'exposee par HomeKit.
 export type HsbColor = {
   hue: number;
@@ -160,7 +185,7 @@ export const resolveHomeKitLight = (fixture: Fixture): HomeKitLightResolution =>
 
   // On prefere les overrides HomeKit (deviceId/name) ; sinon on retombe sur l'id et le nom du projecteur.
   const deviceId = fixture.homekit?.deviceId?.trim() || fixture.id;
-  const name = fixture.homekit?.name?.trim() || fixture.name;
+  const name = hapName(fixture.homekit?.name?.trim() || fixture.name);
 
   return {
     light: {
@@ -297,7 +322,7 @@ const resolveChannelFixture = (fixture: Fixture): HomeKitChannelFixtureResolutio
 
   const channels: ChannelFixtureChannels = { r, g, b, w, intensity };
   const deviceId = fixture.homekit?.deviceId?.trim() || fixture.id;
-  const name = fixture.homekit?.name?.trim() || fixture.name;
+  const name = hapName(fixture.homekit?.name?.trim() || fixture.name);
 
   return { cf: { fixture, name, deviceId, channels, universe: fixture.universe } };
 };
@@ -411,7 +436,7 @@ const resolveMovingHead = (fixture: Fixture): HomeKitMovingHeadResolution => {
   };
 
   const deviceId = fixture.homekit?.deviceId?.trim() || fixture.id;
-  const name = fixture.homekit?.name?.trim() || fixture.name;
+  const name = hapName(fixture.homekit?.name?.trim() || fixture.name);
 
   return { mh: { fixture, name, deviceId, channels, defaults, universe: fixture.universe } };
 };
