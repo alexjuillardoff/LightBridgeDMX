@@ -29,12 +29,16 @@ import { Store } from "../../state/store";
 import { defaultLinearLayout, evaluateEffect } from "./effect-engine";
 import { NanoleafApiError, NanoleafClient, rgbToHsv } from "./nanoleaf-client";
 import { NanoleafStreamer } from "./nanoleaf-streamer";
+import { HomeKitThreadClient } from "./homekit-thread-client";
 
 // Etat de fonctionnement (runtime) garde en memoire pour chaque lampe.
 // Ce n'est PAS persiste tel quel ; seul `light` reflete la base SQLite.
 type RuntimeEntry = {
   light: SmartLight;
   client: NanoleafClient | null;
+  /** Client du sidecar HomeKit-sur-Thread, pour les ampoules NL45 & co. Exclusif
+   *  avec `client` : une lampe releve d'un backend ou de l'autre, jamais des deux. */
+  threadClient: HomeKitThreadClient | null;
   streamer: NanoleafStreamer | null;
   /** Dernier etat envoye avec succes via HTTP. */
   lastPushed: SmartLightState | null;
@@ -50,6 +54,9 @@ type RuntimeEntry = {
   /** Horodatage de la derniere ecriture locale — le refresh depuis l'appareil
    *  ne se declenche que si l'on est reste calme (quiescent) depuis ce moment. */
   lastLocalWriteAt: number;
+  /** Derniere combinaison de canaux DMX appliquee par le miroir, sous forme de cle.
+   *  Sert a n'agir que sur un VRAI changement du DMX (voir onDmxTick). */
+  lastMirrorKey: string | null;
   /** Chien de garde (watchdog) du streaming : un seul controle en vol a la fois. */
   streamCheckInflight: boolean;
   /** Horodatage avant lequel le watchdog ne retente pas (backoff exponentiel). */
@@ -71,6 +78,16 @@ type RuntimeEntry = {
 
 // Valeurs en dur de cadence reseau. Choisies pour ne pas saturer l'appareil.
 const MIN_PUSH_INTERVAL_MS = 70;     // throttle HTTP par appareil — ~14 ecritures/s
+// Thread est un medium radio partage a ~125 kbps utiles : une ampoule y encaisse
+// environ 5 ecritures/s avant que la file ne s'allonge plus vite qu'elle ne se vide.
+// On vise volontairement plus bas, et on compte sur le fondu interne de l'ampoule
+// pour lisser le mouvement entre deux ordres.
+const THREAD_PUSH_INTERVAL_MS = 250;
+// Tolerance de comparaison pour le chemin Thread, plus fine que le defaut de 1.
+// Un pas de canal DMX vaut (1 / 255) * 100 = 0,39 point de luminosite : en dessous
+// de ce seuil on ignorerait le plus petit mouvement de fader possible. On se cale
+// donc juste sous ce pas, pour qu'un cran de fader soit toujours pris en compte.
+const THREAD_DIFF_TOLERANCE = 0.3;
 const FLUSH_INTERVAL_MS = 30;        // tick de regroupement (coalesce) ~33 Hz (chemin HTTP)
 const STREAM_INTERVAL_MS = 33;       // cadence des trames de streaming ~30 Hz (chemin UDP)
 const REFRESH_INTERVAL_MS = 5000;    // refresh periodique depuis l'appareil
@@ -300,13 +317,16 @@ export class SmartLightService extends EventEmitter {
   async setStreaming(id: string, enabled: boolean, zoneCount?: number): Promise<SmartLight | undefined> {
     const entry = this.runtime.get(id);
     if (!entry?.client) return undefined;
+    // Le streaming UDP est propre au protocole Nanoleaf : une ampoule Thread n'en a pas.
+    const cfg = entry.light.config;
+    if (cfg.type !== "nanoleaf-http") return undefined;
 
     if (enabled) {
       // Nombre de zones : valeur fournie, sinon celle deja connue, sinon 50 (NL72K3).
       const zc = zoneCount ?? entry.light.streaming?.zoneCount ?? 50;
       if (!entry.streamer) {
         entry.streamer = new NanoleafStreamer({
-          host: entry.light.config.host,
+          host: cfg.host,
           port: 60222,
           zoneCount: zc,
           client: entry.client,
@@ -342,7 +362,11 @@ export class SmartLightService extends EventEmitter {
    */
   private async registerInternal(light: SmartLight): Promise<void> {
     const existing = this.runtime.get(light.id);
-    const isNanoleaf = light.backend === "nanoleaf-http" && light.config.type === "nanoleaf-http";
+    // Config restreinte au variant Nanoleaf : `isNanoleaf` seul ne restreint pas le
+    // type de `light.config` aux yeux de TypeScript (une union ne se discrimine pas
+    // via un booleen intermediaire). On garde donc la valeur narrowee sous la main.
+    const nl = light.config.type === "nanoleaf-http" ? light.config : null;
+    const isNanoleaf = light.backend === "nanoleaf-http" && nl !== null;
 
     // ── Client ─────────────────────────────────────────────────────────────
     // On reutilise le client existant sauf si l'host ou le token a change.
@@ -351,14 +375,14 @@ export class SmartLightService extends EventEmitter {
       const prevConfig = existing?.light.config.type === "nanoleaf-http" ? existing.light.config : null;
       const configChanged =
         !prevConfig ||
-        prevConfig.host !== light.config.host ||
-        prevConfig.port !== light.config.port ||
-        prevConfig.token !== light.config.token;
+        prevConfig.host !== nl!.host ||
+        prevConfig.port !== nl!.port ||
+        prevConfig.token !== nl!.token;
       if (configChanged || !client) {
         client = new NanoleafClient({
-          host: light.config.host,
-          port: light.config.port,
-          token: light.config.token,
+          host: nl!.host,
+          port: nl!.port,
+          token: nl!.token,
           logger: this.logger
         });
       }
@@ -366,23 +390,40 @@ export class SmartLightService extends EventEmitter {
       client = null;
     }
 
+    // ── Client Thread ───────────────────────────────────────────────────────
+    // On reutilise l'instance existante tant que l'alias et l'URL du sidecar n'ont
+    // pas bouge : la recreer ne servirait a rien, le client est sans etat.
+    let threadClient: HomeKitThreadClient | null = existing?.threadClient ?? null;
+    if (light.config.type === "homekit-thread") {
+      const prev = existing?.light.config.type === "homekit-thread" ? existing.light.config : null;
+      if (!prev || prev.alias !== light.config.alias || prev.sidecarUrl !== light.config.sidecarUrl) {
+        threadClient = new HomeKitThreadClient({
+          alias: light.config.alias,
+          sidecarUrl: light.config.sidecarUrl,
+          logger: this.logger
+        });
+      }
+    } else {
+      threadClient = null;
+    }
+
     // ── Streamer ────────────────────────────────────────────────────────────
     // On reutilise le streamer existant si l'host n'a pas change. On met a jour
     // son nombre de zones sur place. On n'appelle enable() que s'il ne l'est pas deja.
     let streamer: NanoleafStreamer | null = existing?.streamer ?? null;
-    const wantStreaming = isNanoleaf && light.streaming?.enabled === true && !!light.config.token;
+    const wantStreaming = isNanoleaf && light.streaming?.enabled === true && !!nl!.token;
     const zc = (isNanoleaf && light.streaming?.zoneCount) || 50;
 
     if (wantStreaming && client) {
       const prevHost = existing?.light.config.type === "nanoleaf-http" ? existing.light.config.host : null;
-      const hostChanged = prevHost && prevHost !== light.config.host;
+      const hostChanged = prevHost && prevHost !== nl!.host;
       if (hostChanged && streamer) {
         await streamer.disable().catch(() => {});
         streamer = null;
       }
       if (!streamer) {
         streamer = new NanoleafStreamer({
-          host: light.config.host,
+          host: nl!.host,
           port: 60222,
           zoneCount: zc,
           client,
@@ -418,6 +459,7 @@ export class SmartLightService extends EventEmitter {
     this.runtime.set(light.id, {
       light,
       client,
+      threadClient,
       streamer,
       lastPushed: existing?.lastPushed ?? null,
       desired:
@@ -435,6 +477,7 @@ export class SmartLightService extends EventEmitter {
       lastPushAt: existing?.lastPushAt ?? 0,
       inflight: false,
       lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0,
+      lastMirrorKey: existing?.lastMirrorKey ?? null,
       streamCheckInflight: false,
       // On repart d'un backoff neuf a chaque (re)enregistrement : un changement de
       // config est justement l'occasion de retenter tout de suite.
@@ -494,6 +537,7 @@ export class SmartLightService extends EventEmitter {
     const light = entry.light;
     if (light.streaming?.enabled !== true) return;
     if (light.config.type !== "nanoleaf-http" || !light.config.token || !entry.client) return;
+    if (entry.threadClient) return; // pas de streaming UDP sur une ampoule Thread
     // Un seul controle a la fois, et on respecte le backoff en cours.
     if (entry.streamCheckInflight || Date.now() < entry.streamRetryAt) return;
 
@@ -546,7 +590,31 @@ export class SmartLightService extends EventEmitter {
   // Lit l'etat reel de l'appareil et le recopie dans desired/lastPushed. En cas
   // d'echec reseau, marque la lampe comme non joignable (reachable = false).
   private async refreshFromDevice(entry: RuntimeEntry): Promise<void> {
-    if (!entry.client || !entry.light.config.token) return;
+    // Ampoule Thread : l'etat vient du sidecar, qui le relit periodiquement en CoAP.
+    if (entry.threadClient) {
+      try {
+        const s = await entry.threadClient.getState();
+        entry.desired = {
+          ...entry.desired,
+          on: s.on ?? entry.desired.on,
+          brightness: s.brightness ?? entry.desired.brightness,
+          hue: s.hue ?? entry.desired.hue,
+          sat: s.sat ?? entry.desired.sat,
+          colorMode: "hs",
+          reachable: s.reachable
+        };
+        entry.lastPushed = entry.desired;
+        this.emit("light_updated", { ...entry.light, state: entry.desired });
+      } catch (err) {
+        this.logger.warn({ err, id: entry.light.id }, "Refresh Thread impossible (sidecar arrete ?)");
+        entry.desired = { ...entry.desired, reachable: false };
+        this.emit("light_updated", { ...entry.light, state: entry.desired });
+      }
+      return;
+    }
+    // Chemin Nanoleaf HTTP : exige un client ET un jeton d'authentification.
+    if (!entry.client || entry.light.config.type !== "nanoleaf-http") return;
+    if (!entry.light.config.token) return;
     try {
       const info = await entry.client.getInfo();
       entry.desired = { ...info.state, reachable: true };
@@ -621,6 +689,20 @@ export class SmartLightService extends EventEmitter {
         next.on = bri > 0;
       }
 
+      // Le miroir ne s'applique QUE si les canaux DMX ont reellement bouge.
+      //
+      // Avant, `desired` etait reecrit a chaque tick, 30 fois par seconde : le DMX
+      // etait maitre absolu et ecrasait dans les 33 ms toute commande venue
+      // d'ailleurs — app Maison, onglet Lampes, scene. Impossible de piloter la
+      // lampe autrement qu'au fader, ce qui n'a aucun sens pour une ampoule
+      // egalement exposee dans HomeKit.
+      //
+      // Desormais c'est le dernier qui ecrit qui gagne : bouger un fader reprend la
+      // main, mais tant que le DMX ne bouge pas il laisse les autres sources agir.
+      const mirrorKey = `${r ?? ""}/${g ?? ""}/${b ?? ""}/${bri ?? ""}`;
+      if (entry.lastMirrorKey === mirrorKey) continue;
+      entry.lastMirrorKey = mirrorKey;
+
       entry.desired = next;
       entry.zonePalette = null; // le miroir DMX est une ecriture de couleur uniforme
       entry.lastLocalWriteAt = Date.now();
@@ -684,7 +766,51 @@ export class SmartLightService extends EventEmitter {
   private flushAll(): void {
     const now = Date.now();
     for (const entry of this.runtime.values()) {
-      if (!entry.client || !entry.light.config.token) continue;
+      // ── Ampoules Thread ───────────────────────────────────────────────────
+      // Meme mecanique de regroupement que le chemin HTTP (on ne pousse que la
+      // DERNIERE valeur voulue), mais a cadence bien plus basse : la radio 802.15.4
+      // ne suit pas au-dela de quelques ecritures par seconde. Sans ce frein, un
+      // glissement de curseur — ou un tick DMX a 30 Hz — noie le maillage et rend
+      // l'ampoule MOINS reactive, pas plus.
+      if (entry.threadClient) {
+        if (entry.inflight) continue;
+        if (now - entry.lastPushAt < THREAD_PUSH_INTERVAL_MS) continue;
+        const diff = computeStateDiff(entry.lastPushed, entry.desired, THREAD_DIFF_TOLERANCE);
+        if (!diff) continue;
+
+        entry.inflight = true;
+        // On date la fenetre au DEBUT de l'envoi, pas a la fin : sinon l'intervalle
+        // reel devient 250 ms + le temps d'aller-retour, et la cadence derive avec
+        // la latence du maillage. Le garde `inflight` empeche de toute facon deux
+        // ecritures simultanees, donc dater tot ne risque pas de les empiler.
+        entry.lastPushAt = Date.now();
+        const threadClient = entry.threadClient;
+        const target = entry.desired;
+        void (async () => {
+          try {
+            await threadClient.setState({
+              on: diff.on,
+              brightness: diff.brightness,
+              hue: diff.hue,
+              sat: diff.sat
+            });
+            entry.lastPushed = { ...target };
+            if (!entry.desired.reachable) entry.desired = { ...entry.desired, reachable: true };
+            this.emit("light_updated", { ...entry.light, state: entry.desired });
+          } catch (err) {
+            this.logger.warn({ err, id: entry.light.id }, "Ecriture Thread echouee");
+            entry.desired = { ...entry.desired, reachable: false };
+            this.emit("light_updated", { ...entry.light, state: entry.desired });
+            entry.lastPushAt = Date.now() + 1000;
+          } finally {
+            entry.inflight = false;
+          }
+        })();
+        continue;
+      }
+
+      if (!entry.client || entry.light.config.type !== "nanoleaf-http") continue;
+      if (!entry.light.config.token) continue;
       if (entry.streamer?.isEnabled()) continue; // le streaming possede l'appareil
       if (entry.inflight) continue;
       if (now - entry.lastPushAt < MIN_PUSH_INTERVAL_MS) continue;
@@ -786,14 +912,26 @@ function sameZoneMirror(
   return a.startChannel === b.startChannel && a.zoneCount === b.zoneCount;
 }
 
-/** Renvoie uniquement les champs qui ont change (avec une petite tolerance), ou
- *  null s'il n'y a rien a pousser. Sert a n'envoyer que le minimum a l'appareil.
+/** Renvoie uniquement les champs qui ont change (au-dela de `tolerance`), ou null
+ *  s'il n'y a rien a pousser. Sert a n'envoyer que le minimum a l'appareil.
  *  NB : on ne compare couleur/luminosite que si la lampe est allumee (next.on) :
- *  inutile d'envoyer une teinte a une lampe eteinte. La tolerance de 1 evite de
- *  spammer l'appareil pour des micro-variations dues aux arrondis HSB. */
+ *  inutile d'envoyer une teinte a une lampe eteinte.
+ *
+ *  `tolerance` vaut 1 par defaut (echelle 0-100) : cela evite de marteler un
+ *  Nanoleaf pour des micro-variations dues aux arrondis HSB. Mais cette valeur est
+ *  BEAUCOUP trop grossiere pour un miroir DMX : la luminosite y vaut
+ *  (canal / 255) * 100, donc un pas DMX ne pese que 0,39 point. Avec une tolerance
+ *  de 1, il faut bouger un fader de trois crans avant que quoi que ce soit parte —
+ *  l'utilisateur voit un curseur qui ne fait rien.
+ *
+ *  Baisser la tolerance n'augmente PAS le trafic : la cadence d'envoi est bornee
+ *  par ailleurs (MIN_PUSH_INTERVAL_MS / THREAD_PUSH_INTERVAL_MS) et seule la
+ *  DERNIERE valeur voulue part a chaque fenetre. La tolerance ne fait que decider
+ *  si un mouvement compte comme un changement. */
 function computeStateDiff(
   prev: SmartLightState | null,
-  next: SmartLightState
+  next: SmartLightState,
+  tolerance = 1
 ): { on?: boolean; hue?: number; sat?: number; brightness?: number; ct?: number } | null {
   const out: { on?: boolean; hue?: number; sat?: number; brightness?: number; ct?: number } = {};
   let any = false;
@@ -809,16 +947,16 @@ function computeStateDiff(
         any = true;
       }
     } else {
-      if (!prev || Math.abs(prev.hue - next.hue) > 1) {
+      if (!prev || Math.abs(prev.hue - next.hue) > tolerance) {
         out.hue = next.hue;
         any = true;
       }
-      if (!prev || Math.abs(prev.sat - next.sat) > 1) {
+      if (!prev || Math.abs(prev.sat - next.sat) > tolerance) {
         out.sat = next.sat;
         any = true;
       }
     }
-    if (!prev || Math.abs(prev.brightness - next.brightness) > 1) {
+    if (!prev || Math.abs(prev.brightness - next.brightness) > tolerance) {
       out.brightness = next.brightness;
       any = true;
     }

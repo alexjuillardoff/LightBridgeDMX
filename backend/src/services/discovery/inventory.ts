@@ -41,16 +41,32 @@ const fromFixture = (fixture: Fixture): DeviceInventoryEntry => ({
 /** Une lampe connectee appairee. Le detail annonce le chemin de sortie reellement
  *  utilise, puisque c'est ce qui determine la latence percue. */
 const fromSmartLight = (light: SmartLight): DeviceInventoryEntry => {
+  // Une ampoule Thread ne parle ni HTTP ni streaming UDP : elle passe par le
+  // sidecar HAP/CoAP. Decrire son chemin de sortie comme celui d'un Nanoleaf WiFi
+  // donnerait une idee fausse de sa latence et de son debit.
+  if (light.config.type === "homekit-thread") {
+    return {
+      id: light.id,
+      name: light.name,
+      category: "smart-light",
+      transport: "HomeKit sur Thread (HAP/CoAP)",
+      controllable: true,
+      address: light.config.alias,
+      detail: "~5 écritures/s · fondus lissés par l'ampoule",
+      reachable: light.state?.reachable ?? null,
+      room: light.room
+    };
+  }
+
   const streaming = light.streaming?.enabled === true;
   const zones = light.streaming?.zoneCount ?? 50;
-  const host = light.config.type === "nanoleaf-http" ? light.config.host : undefined;
   return {
     id: light.id,
     name: light.name,
     category: "smart-light",
     transport: streaming ? "Nanoleaf HTTP + streaming UDP" : "Nanoleaf HTTP",
     controllable: true,
-    address: host,
+    address: light.config.host,
     detail: streaming ? `UDP ~30 Hz · ${zones} zones` : "HTTP · ~14 écritures/s",
     reachable: light.state?.reachable ?? null,
     room: light.room

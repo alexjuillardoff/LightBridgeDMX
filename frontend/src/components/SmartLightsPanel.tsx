@@ -263,8 +263,10 @@ const SmartLightCard = ({
   );
   // Liste des effets builtin de la lampe. Charge seulement si le panneau avance
   // est ouvert ET que la lampe possede un token (sinon l'API n'est pas accessible).
+  // Les effets sont propres a l'API Nanoleaf : une ampoule HomeKit-sur-Thread n'en
+  // expose aucun, elle ne connait que teinte / saturation / luminosite.
   const effectsQuery = useQuery(["smart-lights", light.id, "effects"], () => api.smartLights.listEffects(light.id), {
-    enabled: showAdvanced && !!light.config.token
+    enabled: showAdvanced && light.config.type === "nanoleaf-http" && !!light.config.token
   });
   const selectEffect = useMutation(
     (name: string) => api.smartLights.selectEffect(light.id, name),

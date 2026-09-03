@@ -384,7 +384,7 @@ export type LogEvent = z.infer<typeof LogEventSchema>;
 // Tout ce qui concerne les lampes connectees (smart lights) : type de backend
 // (marque), config d'acces, miroir DMX (mirror), etat couleur et streaming UDP.
 
-export const SmartLightBackendTypeSchema = z.enum(["nanoleaf-http"]);
+export const SmartLightBackendTypeSchema = z.enum(["nanoleaf-http", "homekit-thread"]);
 export type SmartLightBackendType = z.infer<typeof SmartLightBackendTypeSchema>;
 
 // Config du backend : union discriminee sur `type`. Chaque backend decrit
@@ -398,10 +398,24 @@ export const NanoleafHttpConfigSchema = z.object({
 });
 export type NanoleafHttpConfig = z.infer<typeof NanoleafHttpConfigSchema>;
 
+// Ampoule HomeKit sur Thread (Nanoleaf Essentials NL45 et compatibles).
+// Elle ne parle ni HTTP ni Matter mais HAP sur CoAP, protocole qui n'a
+// d'implementation utilisable qu'en Python : le backend passe donc par le sidecar
+// `tools/homekit-thread/sidecar.py`, qui tient les connexions CoAP et expose une
+// API HTTP sur la boucle locale. `alias` designe l'entree du fichier d'appairage.
+export const HomeKitThreadConfigSchema = z.object({
+  type: z.literal("homekit-thread"),
+  alias: z.string().min(1),
+  /** Base du sidecar. Defaut : le port 5056 en local. */
+  sidecarUrl: z.string().min(1).default("http://127.0.0.1:5056").optional(),
+  deviceName: z.string().optional()
+});
+export type HomeKitThreadConfig = z.infer<typeof HomeKitThreadConfigSchema>;
+
 // Liste des configs de backend supportees (union discriminee).
-// Aujourd'hui un seul backend (Nanoleaf HTTP), mais le pattern reste extensible.
 export const SmartLightBackendConfigSchema = z.discriminatedUnion("type", [
-  NanoleafHttpConfigSchema
+  NanoleafHttpConfigSchema,
+  HomeKitThreadConfigSchema
 ]);
 export type SmartLightBackendConfig = z.infer<typeof SmartLightBackendConfigSchema>;
 

@@ -3,7 +3,7 @@
 // a ne pas confondre avec le serveur Fastify. Ce fichier centralise les
 // metadonnees d'affichage (libelle, description, icone) et fournit deux
 // helpers : retrouver les metadonnees d'un backend et filtrer les lampes.
-import { LucideIcon, Lightbulb } from "lucide-react";
+import { LucideIcon, Lightbulb, Radio } from "lucide-react";
 import { SmartLight } from "@lightbridgedmx/shared";
 
 // Identifiant d'un backend. "nanoleaf-http" est le seul connu pour l'instant ;
@@ -24,8 +24,16 @@ export const SMART_LIGHT_BACKENDS: SmartLightBackendMeta[] = [
   {
     id: "nanoleaf-http",
     label: "Nanoleaf",
-    description: "Strips, panels et ampoules Nanoleaf via HTTP + streaming UDP",
+    description: "Strips et panels Nanoleaf en WiFi, via HTTP + streaming UDP (30 Hz)",
     icon: Lightbulb
+  },
+  {
+    id: "homekit-thread",
+    label: "Thread",
+    description:
+      "Ampoules HomeKit sur Thread (Nanoleaf Essentials NL45) via HAP/CoAP. " +
+      "Passe par le sidecar Python ; ~5 écritures/s, fondus lissés par l'ampoule.",
+    icon: Radio
   }
 ];
 
