@@ -34,7 +34,8 @@ import {
   collectHomeKitMovingHeads,
   collectHomeKitSmartLights,
   findFacadeFixture,
-  hapName
+  hapName,
+  smartLightAccessorySeed
 } from "./homekit-utils";
 
 // Options de configuration du pont HomeKit (lues depuis l'environnement / la config).
@@ -385,7 +386,7 @@ export class HomeKitBridge {
     }
 
     const seen = new Set<string>();
-    for (const { light, name } of exposed) {
+    for (const { light, name, revision } of exposed) {
       seen.add(light.id);
       const existing = this.smartLights.get(light.id);
       if (existing) {
@@ -393,18 +394,26 @@ export class HomeKitBridge {
         // l'accessoire plutot que de reecrire son nom : seul un ajout/retrait
         // change la version de config du pont, et sans ce changement iOS ne
         // relit pas les noms. L'UUID etant derive de l'id de la lampe, l'app
-        // Maison retrouve le meme accessoire (piece et automatisations gardees).
-        if (existing.accessory.displayName !== name) {
+        // Maison retrouve le meme accessoire (piece et automatisations gardees)
+        // — et lui reapplique le nom qu'elle avait retenu, d'ou accessoryRevision.
+        const wantedUuid = uuid.generate(smartLightAccessorySeed(light, revision));
+        const uuidChanged = existing.accessory.UUID !== wantedUuid;
+        if (existing.accessory.displayName !== name || uuidChanged) {
           this.bridge.removeBridgedAccessory(existing.accessory);
-          const renamed = this.buildSmartLightAccessory(light, name);
+          const renamed = this.buildSmartLightAccessory(light, name, revision);
           this.smartLights.set(light.id, renamed);
           this.bridge.addBridgedAccessory(renamed.accessory);
-          this.logger.info({ id: light.id, name }, "Lampe connectee renommee dans HomeKit");
+          this.logger.info(
+            { id: light.id, name, revision },
+            uuidChanged
+              ? "Accessoire HomeKit recree en generation neuve (nouvel appareil pour l'app Maison)"
+              : "Lampe connectee renommee dans HomeKit"
+          );
         }
         this.pushSmartLightState(light);
         continue;
       }
-      const managed = this.buildSmartLightAccessory(light, name);
+      const managed = this.buildSmartLightAccessory(light, name, revision);
       this.smartLights.set(light.id, managed);
       this.bridge.addBridgedAccessory(managed.accessory);
       this.logger.info({ id: light.id, name }, "Lampe connectee exposee dans HomeKit");
@@ -446,14 +455,16 @@ export class HomeKitBridge {
 
   /** Cree l'accessoire d'une lampe : un unique Service.Lightbulb portant les quatre
    *  caracteristiques natives. Les valeurs transitent en TSL de bout en bout. */
-  private buildSmartLightAccessory(light: SmartLight, name?: string): ManagedSmartLight {
+  private buildSmartLightAccessory(light: SmartLight, name?: string, revision = 0): ManagedSmartLight {
     const label = name ?? hapName(light.name);
-    const acc = new Accessory(label, uuid.generate(`lightbridgedmx:smartlight:${light.id}`));
+    const acc = new Accessory(label, uuid.generate(smartLightAccessorySeed(light, revision)));
     acc
       .getService(Service.AccessoryInformation)
       ?.setCharacteristic(Characteristic.Manufacturer, "LightBridgeDMX")
       .setCharacteristic(Characteristic.Model, light.config.type)
-      .setCharacteristic(Characteristic.SerialNumber, light.id);
+      // Le numero de serie suit la generation : deux accessoires distincts ne
+      // doivent pas se presenter sous le meme, sinon Maison peut les confondre.
+      .setCharacteristic(Characteristic.SerialNumber, revision > 0 ? `${light.id}-r${revision}` : light.id);
 
     const svc = acc.addService(Service.Lightbulb, label);
     HomeKitBridge.nameService(svc, label);

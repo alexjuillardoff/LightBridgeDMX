@@ -366,8 +366,19 @@ export const findFacadeFixture = (light: SmartLight, fixtures: Fixture[]): Fixtu
   });
 };
 
-/** Ce qu'on expose dans HomeKit pour une lampe connectee, et sous quel nom. */
-export type HomeKitSmartLightExposure = { light: SmartLight; name: string };
+/** Ce qu'on expose dans HomeKit pour une lampe connectee, sous quel nom, et
+ *  dans quelle generation d'accessoire (voir accessoryRevision). */
+export type HomeKitSmartLightExposure = { light: SmartLight; name: string; revision: number };
+
+/** Graine de l'UUID de l'accessoire d'une lampe connectee.
+ *
+ *  La generation 0 garde la graine historique, sans suffixe : sans cela, TOUS
+ *  les accessoires deja appaires changeraient d'identite d'un coup et
+ *  perdraient leur piece dans l'app Maison. */
+export const smartLightAccessorySeed = (light: SmartLight, revision = 0): string =>
+  revision > 0
+    ? `lightbridgedmx:smartlight:${light.id}:r${revision}`
+    : `lightbridgedmx:smartlight:${light.id}`;
 
 /** Trie les lampes connectees exposables, et decide de leur nom.
  *
@@ -384,14 +395,20 @@ export const collectHomeKitSmartLights = (lights: SmartLight[], fixtures: Fixtur
   lights.forEach((light) => {
     const facade = findFacadeFixture(light, fixtures);
     if (!facade) {
-      exposed.push({ light, name: hapName(light.name) });
+      exposed.push({ light, name: hapName(light.name), revision: 0 });
       return;
     }
     if (facade.homekit?.enabled === false) {
       skipped.push({ id: light.id, reason: `Exposition HomeKit desactivee sur « ${facade.name} »` });
       return;
     }
-    exposed.push({ light, name: hapName(facade.homekit?.name?.trim() || facade.name) });
+    exposed.push({
+      light,
+      name: hapName(facade.homekit?.name?.trim() || facade.name),
+      // La generation est portee par la facade : c'est elle qui represente la
+      // lampe dans HomeKit, donc c'est elle qui decide de son identite.
+      revision: facade.homekit?.accessoryRevision ?? 0
+    });
   });
 
   return { exposed, skipped };

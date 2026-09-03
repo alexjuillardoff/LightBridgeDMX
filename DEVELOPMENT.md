@@ -746,8 +746,25 @@ et il en manquait deux :
   Le pupitre garde le nom tel quel : seul le miroir HomeKit est nettoyé.
 - Les lampes connectées suivent la même règle (`syncSmartLights` recrée l'accessoire au renommage).
 
-> **Limite Apple.** Si l'utilisateur a renommé l'accessoire *dans* l'app Maison, ce nom-là gagne :
-> aucun changement côté pont ne l'écrase. Il faut alors renommer dans Maison.
+> **Limite Apple.** Le nom d'un accessoire appartient à la maison de l'utilisateur, pas à l'accessoire :
+> iOS le retient au premier ajout, le synchronise entre appareils, et l'accessoire ne peut plus jamais
+> l'écraser. Renommer dans Maison est la voie normale.
+
+#### `accessoryRevision` — forcer un accessoire neuf
+
+Corollaire de la limite ci-dessus : tant que l'UUID ne bouge pas, Maison reconnaît le même appareil et
+lui réapplique le nom qu'il avait retenu. `fixture.homekit.accessoryRevision` (entier, défaut 0) entre
+dans la graine de l'UUID via `smartLightAccessorySeed()` :
+
+| Génération | Graine | Effet |
+|---|---|---|
+| `0` ou absent | `lightbridgedmx:smartlight:<id>` | identité d'origine — **ne jamais changer par défaut**, sinon tous les accessoires déjà appairés la perdent d'un coup |
+| `n > 0` | `lightbridgedmx:smartlight:<id>:r<n>` | Maison voit un **appareil neuf**, qui prend le nom courant ; il perd sa pièce et sort des automatisations |
+
+Le numéro de série suit (`<id>-r<n>`) pour que deux générations ne se présentent pas à l'identique.
+`reconcileSmartLights()` compare l'UUID attendu à celui de l'accessoire en place et recrée quand il
+diffère. Se règle à la main sur la façade :
+`PUT /api/fixtures/:id {"homekit":{"enabled":true,"accessoryRevision":1}}`.
 
 ### Façade DMX d'une lampe connectée
 

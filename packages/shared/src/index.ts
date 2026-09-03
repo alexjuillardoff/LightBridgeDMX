@@ -76,6 +76,18 @@ export const FixtureHomeKitSchema = z.object({
   enabled: z.boolean().default(true).optional(),
   name: z.string().min(1).optional(),
   deviceId: z.string().min(1).optional(),
+  /** Numero de generation de l'accessoire HomeKit.
+   *
+   *  Le nom d'un accessoire appartient a la maison de l'utilisateur, pas a
+   *  l'accessoire : iOS le retient au premier ajout et l'accessoire ne peut plus
+   *  jamais l'ecraser. Tant que l'UUID ne bouge pas, Maison reconnait le meme
+   *  appareil et lui reapplique le nom qu'il avait retenu.
+   *
+   *  Incrementer ce compteur change l'UUID, donc fait apparaitre un accessoire
+   *  NEUF qui prend le nom courant — au prix de sa piece et des automatisations
+   *  qui le referencaient. 0 (ou absent) = generation d'origine : c'est ce qui
+   *  garantit que tous les accessoires existants gardent leur identite. */
+  accessoryRevision: z.number().int().min(0).optional(),
   dmxChannels: FixtureHomeKitDmxSchema.optional(),
   movingHeadChannels: FixtureHomeKitMovingHeadChannelsSchema.optional()
 });

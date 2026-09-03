@@ -10,6 +10,7 @@ import {
   collectHomeKitSmartLights,
   findFacadeFixture,
   hapName,
+  smartLightAccessorySeed,
   hsbToRgb,
   resolveRgbChannels,
   rgbToHsb
@@ -174,6 +175,22 @@ describe("facade DMX d'une lampe connectee", () => {
     expect(channelFixtures).toHaveLength(0);
     // Sans la lampe, ce meme projecteur redevient un projecteur ordinaire.
     expect(collectHomeKitChannelFixtures([facade], []).channelFixtures).toHaveLength(1);
+  });
+
+  it("porte la generation d'accessoire de la facade", () => {
+    const neuf = { ...facade, homekit: { accessoryRevision: 2 } };
+    expect(collectHomeKitSmartLights([light], [neuf]).exposed[0].revision).toBe(2);
+    // Sans generation declaree, on reste sur l'identite d'origine.
+    expect(collectHomeKitSmartLights([light], [facade]).exposed[0].revision).toBe(0);
+  });
+
+  it("ne change l'UUID qu'a partir de la generation 1", () => {
+    // Indispensable : la generation 0 doit garder la graine historique, sinon
+    // TOUS les accessoires deja appaires perdraient leur identite d'un coup.
+    expect(smartLightAccessorySeed(light, 0)).toBe(`lightbridgedmx:smartlight:${light.id}`);
+    expect(smartLightAccessorySeed(light)).toBe(`lightbridgedmx:smartlight:${light.id}`);
+    expect(smartLightAccessorySeed(light, 1)).toBe(`lightbridgedmx:smartlight:${light.id}:r1`);
+    expect(smartLightAccessorySeed(light, 2)).not.toBe(smartLightAccessorySeed(light, 1));
   });
 
   it("une lampe sans facade se represente elle-meme", () => {
