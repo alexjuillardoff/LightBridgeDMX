@@ -100,9 +100,11 @@ Le **SmartLightService** est un registry de lampes WiFi avec deux paths de sorti
 
 ### Frontend (`frontend/`)
 
-L'interface est un **pupitre grandMA2** : 4 vues (Live, Patch, Réseau, Setup), routing par hash URL,
+L'interface est un **pupitre grandMA2** : 3 vues (Live, Patch, Setup), routing par hash URL,
 barre de vues desktop/tablet + bottom nav iOS mobile. La vue Live n'est pas une page qui défile mais un
-**plan de travail** de fenêtres déplaçables.
+**plan de travail** de fenêtres déplaçables. **Patch** regroupe tout ce qui définit le plateau — le patch
+DMX *et* le réseau — en trois volets adressables (`#patch`, `#patch/inventaire`, `#patch/lampes`) ;
+l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes`) ouvrant le bon volet.
 
 - `package.json` : scripts Vite (`dev`, `build`, `preview`), deps React 18 + React Query + qrcode.react + three / @react-three/fiber v8 / @react-three/drei v9 + **lucide-react** (icônes).
 - `vite.config.ts` : proxy API/WS vers `http://localhost:5000`, serveur dev `host: true`, port 5173.
@@ -115,9 +117,9 @@ barre de vues desktop/tablet + bottom nav iOS mobile. La vue Live n'est pas une 
   - `BottomNav.tsx` — bottom nav iOS-style mobile (cachée ≥640px), `safe-area-inset-bottom`
   - `KeypadRail.tsx` — rail de touches ≥1280px : Fixture/Group/All, Thru/+/At, pavé numérique, **Store/Go/Off**, Please, B.O., raccourcis de vues, compteurs des pools
   - `CommandLine.tsx` — ligne de commande turquoise (ligne de retour + saisie + touches rapides)
-  - `tabs.ts` — source unique des 4 `TabDef` + `resolveTabId()` qui traduit les anciens hashs (`#dashboard`, `#projecteurs`, `#lampes`, `#appareils`, `#reglages`) vers les vues actuelles
-  - `useHashTab.ts` — routing hash URL (`useState` + `hashchange` listener), fallback `#live`
-  - `navigate.ts` — `setActiveTabHash(id)` pour liens internes et commande `GOTO`
+  - `tabs.ts` — source unique des 3 `TabDef` + des 3 `PatchPaneDef` (volets de Patch) + `resolveRoute()` qui traduit un hash (`#patch`, `#patch/lampes`) ou un ancien hash (`#dashboard`, `#projecteurs`, `#reseau`, `#lampes`, `#appareils`, `#reglages`) vers une `Route` `{ tab, pane? }`, et `routeToHash()` / `routeLabel()` pour le chemin inverse
+  - `useHashTab.ts` — routing hash URL (`useState` + `hashchange` listener), rend une `Route` (vue **et** volet), fallback `#live`
+  - `navigate.ts` — `setActiveTabHash(route | mot)` pour liens internes et commande `GOTO` ; résout le mot tapé et renvoie la `Route` atteinte (ou `null`)
 - `src/contexts/` : state partagé entre vues
   - `AppDataContext.tsx` — provider central (queries, mutations, WS handlers, wsBadge, logMessage, logHistory, handleBlackout). Value mémoïzée pour absorber les ticks 30 Hz sans re-render des consommateurs.
   - `SelectionContext.tsx` — le *programmer* : sélection de projecteurs, conservée d'une vue à l'autre. **Refuse les projecteurs verrouillés** (`lib/fixtureGuard`), donc sheet / `ALL` / groupes / encodeurs / ligne de commande héritent du garde-fou sans le réimplémenter.
@@ -126,8 +128,8 @@ barre de vues desktop/tablet + bottom nav iOS mobile. La vue Live n'est pas une 
   - `UniverseStateContext.tsx` — expose **deux** accès : `useUniverseState()` (valeur qui change à chaque tick 30 Hz — pour les faders et cellules de sheet uniquement) et `useUniverseValuesRef()` (ref stable, **aucun** re-render — pour lire l'univers dans un handler, ex. STORE).
 - `src/pages/` : une page par vue
   - `LivePage.tsx` (lazy via React.lazy) — rend `Workspace`
-  - `PatchPage.tsx` — `FixturesTable` (en premier) + `FixtureForm` + `QxfLibraryPanel`
-  - `NetworkPage.tsx` — volets *Inventaire* (`DeviceInventory`) et *Lampes* (pastilles de backend + `SmartLightsPanel`)
+  - `PatchPage.tsx` — le plateau, câblé et sans fil, en trois volets pilotés par le hash : *Projecteurs* (`FixturesTable` en premier + `FixtureForm` + `QxfLibraryPanel`), *Inventaire réseau* (`DeviceInventory`), *Lampes connectées* (`patch/SmartLightsPane`)
+  - `patch/SmartLightsPane.tsx` — pastilles de backend + `SmartLightsPanel` ; isole l'état du filtre pour que changer de marque ne re-rende pas la table du patch
   - `SetupPage.tsx` — `HomeKitCard` + `MerossCard` + cartes Système / Variables backend / Maintenance
 - `src/components/console/` : le pupitre proprement dit
   - `Workspace.tsx` — gestionnaire de fenêtres : Views rappelables, ajout/fermeture, ordre d'empilement, Reset, persistance `localStorage`. Sous 1024 px, les fenêtres sont empilées en cartes.

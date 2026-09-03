@@ -1,14 +1,19 @@
-// Navigation entre les onglets de l'UI via le hash de l'URL (#dashboard, #live...).
+// Navigation entre les vues de l'UI via le hash de l'URL (#live, #patch, ...).
 // Le routing est base sur location.hash : changer le hash declenche l'affichage
-// de l'onglet correspondant, sans rechargement de page.
-import { TabId, isTabId } from "./tabs";
+// de la vue correspondante, sans rechargement de page.
+import { Route, resolveRoute, routeToHash } from "./tabs";
 
 /**
- * Active un onglet en ecrivant son identifiant dans le hash de l'URL.
- * On valide d'abord l'id avec isTabId : si l'onglet est inconnu, on ne fait
- * rien plutot que de poser un hash invalide qui casserait la navigation.
+ * Active une vue (et son volet) en ecrivant sa destination dans le hash de l'URL.
+ * On accepte soit une Route deja resolue, soit le mot brut tape par
+ * l'utilisateur ("patch", "reseau", "patch/lampes") que l'on resout ici.
+ * Une destination inconnue ne fait rien plutot que de poser un hash invalide
+ * qui casserait la navigation ; la fonction renvoie la Route reellement
+ * atteinte, ou null si rien n'a bouge.
  */
-export const setActiveTabHash = (id: TabId) => {
-  if (!isTabId(id)) return;
-  window.location.hash = id;
+export const setActiveTabHash = (target: Route | string): Route | null => {
+  const route = typeof target === "string" ? resolveRoute(target) : target;
+  if (!route) return null;
+  window.location.hash = routeToHash(route);
+  return route;
 };

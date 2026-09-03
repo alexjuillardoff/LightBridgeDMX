@@ -74,7 +74,10 @@ const ATTR_WORDS: Record<string, AttrKey> = {
   beam: "beam"
 };
 
-// Vues (onglets) atteignables par "goto <vue>".
+// Destinations atteignables par "goto <vue>". La valeur est un hash resolu par
+// resolveRoute() : une vue ("patch") ou une vue et son volet ("patch/lampes").
+// Les mots de l'ancienne vue "Réseau" (reseau, appareils, lampes...) restent
+// valables et ouvrent le volet de Patch qui a repris leur contenu.
 const VIEW_WORDS: Record<string, string> = {
   live: "live",
   console: "live",
@@ -83,12 +86,14 @@ const VIEW_WORDS: Record<string, string> = {
   patch: "patch",
   fixtures: "patch",
   projecteurs: "patch",
-  reseau: "reseau",
-  network: "reseau",
-  lampes: "reseau",
-  lights: "reseau",
-  appareils: "reseau",
-  devices: "reseau",
+  reseau: "patch/inventaire",
+  network: "patch/inventaire",
+  inventaire: "patch/inventaire",
+  inventory: "patch/inventaire",
+  appareils: "patch/inventaire",
+  devices: "patch/inventaire",
+  lampes: "patch/lampes",
+  lights: "patch/lampes",
   setup: "setup",
   reglages: "setup",
   settings: "setup"

@@ -132,17 +132,21 @@ LightBridgeDMX/
 ### Frontend (`frontend/`)
 
 Le tableau de bord React reprend l'apparence d'un **pupitre grandMA2** (fond noir, liserés ambre, barres
-de titre bleues, ligne de commande turquoise) et s'organise en **4 vues responsive** avec routing par hash URL :
+de titre bleues, ligne de commande turquoise) et s'organise en **3 vues responsive** avec routing par hash URL :
 
 | Onglet | Hash | Contenu |
 |--------|------|---------|
 | Live | `#live` | Le pupitre : plan de travail de fenêtres déplaçables (sheet, encodeurs, pools, playbacks) |
-| Patch | `#patch` | Liste des projecteurs patchés, ajout manuel, import QXF |
-| Réseau | `#reseau` | Inventaire du LAN + pilotage des lampes connectées (Nanoleaf, futurs Hue/Matter) |
+| Patch | `#patch` | Le plateau entier : projecteurs DMX, inventaire du LAN, lampes connectées |
 | Setup | `#setup` | QR code HomeKit, prise Meross (config + état), infos système, redémarrage |
 
-Les anciens liens (`#dashboard`, `#projecteurs`, `#lampes`, `#appareils`, `#reglages`) restent valides et
-redirigent vers la vue correspondante — un signet ou un raccourci d'écran d'accueil continue de marcher.
+**Patch** se subdivise en trois volets, eux aussi dans l'URL : *Projecteurs* (`#patch`), *Inventaire
+réseau* (`#patch/inventaire`) et *Lampes connectées* (`#patch/lampes`). Découvrir une Nanoleaf,
+l'appairer puis lui donner une adresse DMX se fait ainsi sans changer d'onglet.
+
+Les anciens liens (`#dashboard`, `#projecteurs`, `#reseau`, `#lampes`, `#appareils`, `#reglages`) restent
+valides et redirigent vers la vue — ou le volet — correspondant : un signet ou un raccourci d'écran
+d'accueil continue de marcher.
 
 Sur desktop/tablet : barre de vues numérotées en haut. Sur mobile (<640px) : navigation basse.
 En permanence : la **barre d'état** en haut (sortie DMX, canaux actifs, sélection, horloge, Blackout) et la
@@ -160,7 +164,7 @@ En permanence : la **barre d'état** en haut (sortie DMX, canaux actifs, sélect
 | `src/contexts/SelectionContext.tsx` | Le *programmer* — sélection, refus des projecteurs verrouillés |
 | `src/contexts/ConsoleContext.tsx` | Pools : groupes, executors, playbacks, presets (STORE / GO / OFF) |
 | `src/contexts/UniverseStateContext.tsx` | Universe DMX isolé pour absorber les ticks 30 Hz (+ ref stable sans abonnement) |
-| `src/pages/*.tsx` | 4 pages (LivePage, PatchPage, NetworkPage, SetupPage) |
+| `src/pages/*.tsx` | 3 pages (LivePage, PatchPage, SetupPage) + `pages/patch/SmartLightsPane.tsx` |
 | `src/components/console/Workspace.tsx` | Gestionnaire de fenêtres de la vue Live + Views rappelables |
 | `src/components/console/ConsoleWindow.tsx` | Cadre de fenêtre déplaçable / redimensionnable |
 | `src/lib/console/layout.ts` | Modèle de disposition (grille 24 colonnes) + Views d'origine |
@@ -352,16 +356,18 @@ L'accès est **restreint au réseau local** : le proxy ne répond qu'aux apparei
 ### Vue d'ensemble de l'interface
 
 L'interface imite un pupitre lumière **grandMA2** : fond noir, fenêtres cernées d'ambre avec barre de titre
-bleue, valeurs en jaune, ligne de commande turquoise en bas d'écran. Elle est organisée en **4 vues**
+bleue, valeurs en jaune, ligne de commande turquoise en bas d'écran. Elle est organisée en **3 vues**
 accessibles via la barre de navigation (barre de vues sur desktop/tablet, navigation basse sur mobile
 <640px). Chaque vue a une URL dédiée pour le bookmarking et le partage de lien :
 
 | Onglet | URL | Contenu |
 |--------|-----|---------|
 | **Live** | `/#live` | Le pupitre : fenêtres déplaçables — Fixture Sheet, encodeurs, groupes, presets, executors, playbacks |
-| **Patch** | `/#patch` | Liste des projecteurs patchés, création manuelle, import QXF |
-| **Réseau** | `/#reseau` | Inventaire du LAN + pairing et contrôle des Nanoleaf (et futurs Hue/Matter) |
+| **Patch** | `/#patch` | Projecteurs patchés (création manuelle, import QXF), inventaire du LAN, lampes connectées |
 | **Setup** | `/#setup` | QR code HomeKit, PIN, prise Meross, infos système, redémarrage |
+
+La vue **Patch** se parcourt par volets, chacun avec son URL : *Projecteurs* (`/#patch`), *Inventaire
+réseau* (`/#patch/inventaire`) et *Lampes connectées* (`/#patch/lampes`).
 
 L'application s'ouvre sur **Live**.
 
@@ -384,7 +390,7 @@ puis **Entrée** (ou la touche **Please** du rail de droite). Les valeurs sont e
 | `store group 2 Salon` · `group 2` | mémorise / rappelle un groupe de sélection |
 | `store preset 3 Bleu` · `preset 3` | mémorise / applique un preset |
 | `blackout` | remet les 512 canaux à zéro |
-| `goto patch` | change de vue (`live`, `patch`, `reseau`, `setup`) |
+| `goto patch` | change de vue (`live`, `patch`, `setup`) ; `goto reseau`, `goto appareils` et `goto lampes` ouvrent le volet correspondant de Patch |
 | `help` | rappelle la liste des commandes |
 
 Les mots-clés fonctionnent aussi en français (`projecteur`, `canal`, `rouge`, `couleur`…), les flèches
@@ -504,8 +510,17 @@ blanche** — verrouillage par pièce (`chambre`), par nom, ou par identifiant, 
 
 #### Vue Patch
 
-Tout ce qui définit le plateau avant de jouer. La **liste des projecteurs patchés** vient en premier :
-neuf fois sur dix, on ouvre cette vue pour vérifier une adresse, pas pour ajouter un projecteur.
+Tout ce qui définit le plateau avant de jouer, câblé comme sans fil, en trois volets sélectionnés par
+les pastilles en haut de la vue :
+
+| Volet | URL | Contenu |
+|-------|-----|---------|
+| **Projecteurs** | `/#patch` | Le patch DMX : liste des projecteurs, ajout manuel, import QXF |
+| **Inventaire réseau** | `/#patch/inventaire` | Ce que le LAN expose, pilotable ou non, avec la raison |
+| **Lampes connectées** | `/#patch/lampes` | Pilotage fin des lampes appairées (Nanoleaf, futurs Hue/Matter) |
+
+Dans le volet *Projecteurs*, la **liste des projecteurs patchés** vient en premier : neuf fois sur dix,
+on ouvre cette vue pour vérifier une adresse, pas pour ajouter un projecteur.
 
 ##### Liste des projecteurs
 
@@ -540,11 +555,12 @@ Pour importer un projecteur avec son profil officiel :
 
 > La première fois, la bibliothèque est téléchargée automatiquement depuis GitHub (~50 Mo, quelques secondes d'attente).
 
-#### Vue Réseau
+#### Volets réseau de la vue Patch
 
-Deux volets, parce que c'est un seul geste : on découvre un appareil, puis on le pilote.
+Le réseau vit dans la vue **Patch**, avec les projecteurs DMX : découvrir un appareil, l'appairer puis
+lui donner une adresse est un seul geste, et « de quoi est fait le plateau ? » une seule question.
 
-##### Volet Inventaire
+##### Volet Inventaire réseau (`/#patch/inventaire`)
 
 Tout ce que LightBridge voit sur le réseau, regroupé par famille (projecteurs DMX, lampes connectées,
 prises, ponts et passerelles, détectés non identifiables). Il affiche **aussi ce qui n'est pas
@@ -552,7 +568,7 @@ pilotable, avec la raison** : c'est le point de départ quand on se demande « p
 n'apparaît nulle part ? ». Le bouton **Rescanner** relance une écoute mDNS (~6 s), et un Nanoleaf en mode
 appairage se rattache directement depuis sa ligne.
 
-##### Volet Lampes connectées
+##### Volet Lampes connectées (`/#patch/lampes`)
 
 - **Pastilles de filtre** en haut pour afficher uniquement une marque (Nanoleaf, etc.)
 - **Carte de pairing** pour ajouter un Nanoleaf : scan mDNS automatique ou IP manuelle

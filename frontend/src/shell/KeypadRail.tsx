@@ -145,7 +145,7 @@ export const KeypadRail = () => {
       <div className="ma-keys-3">
         <KeyButton def={{ label: "Live", onPress: () => runLine("goto live") }} />
         <KeyButton def={{ label: "Patch", onPress: () => runLine("goto patch") }} />
-        <KeyButton def={{ label: "Réseau", onPress: () => runLine("goto reseau") }} />
+        <KeyButton def={{ label: "Réseau", onPress: () => runLine("goto inventaire") }} />
         <KeyButton def={{ label: "Setup", onPress: () => runLine("goto setup") }} />
         <KeyButton def={{ label: "Help", onPress: () => runLine("help") }} />
         <KeyButton def={{ label: "Update", onPress: () => void handleRefreshLibrary() }} />

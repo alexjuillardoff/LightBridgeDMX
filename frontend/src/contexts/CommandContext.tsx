@@ -19,7 +19,7 @@ import { ActionResult, FeedbackLevel, fail, info, ok, warn } from "../lib/feedba
 import { isLockedFixture } from "../lib/fixtureGuard";
 import { applyAttr, toPct } from "../lib/programmer";
 import { setActiveTabHash } from "../shell/navigate";
-import { isTabId } from "../shell/tabs";
+import { routeLabel } from "../shell/tabs";
 
 export type { FeedbackLevel };
 export type Feedback = ActionResult & { at: string };
@@ -94,10 +94,13 @@ export const CommandProvider = ({ children }: { children: ReactNode }) => {
           );
         }
 
-        case "view":
-          if (!isTabId(command.view)) return fail(`Vue inconnue : ${command.view}`);
-          setActiveTabHash(command.view);
-          return ok(`Vue ${command.view}`);
+        case "view": {
+          // setActiveTabHash resout le mot tape ("patch", "reseau",
+          // "patch/lampes") et renvoie la destination reellement atteinte.
+          const route = setActiveTabHash(command.view);
+          if (!route) return fail(`Vue inconnue : ${command.view}`);
+          return ok(`Vue ${routeLabel(route)}`);
+        }
 
         case "store":
           // Les numeros tapes sont ceux affiches sur les tuiles (1-indexes).

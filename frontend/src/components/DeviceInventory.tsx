@@ -1,6 +1,7 @@
-// Vue "Appareils" : inventaire unifie de tout ce que LightBridge voit sur le reseau.
+// Volet "Inventaire reseau" de la vue Patch : inventaire unifie de tout ce que
+// LightBridge voit sur le reseau.
 //
-// Contrairement aux autres vues, qui ne montrent qu'un backend a la fois, celle-ci
+// Contrairement aux autres volets, qui ne montrent qu'un backend a la fois, celui-ci
 // agrege tout — projecteurs DMX, lampes connectees, prises, ponts HomeKit, fabrics
 // Matter — et affiche AUSSI ce qui n'est pas pilotable, avec la raison. C'est le
 // point de depart quand on se demande "pourquoi ma lampe n'apparait nulle part ?".

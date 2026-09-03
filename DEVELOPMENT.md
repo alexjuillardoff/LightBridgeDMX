@@ -85,10 +85,10 @@ LightBridgeDMX/
 │   │   │   ├── StatusBar.tsx          ← barre d'état haute (univers, sortie DMX, LED, horloge, Blackout)
 │   │   │   ├── TabBar.tsx             ← barre de vues numérotées, cachée <640px
 │   │   │   ├── BottomNav.tsx          ← bottom nav iOS-style mobile, cachée ≥640px, safe-area-inset
-│   │   │   ├── tabs.ts                ← source unique des 4 vues + traduction des anciens hashs
+│   │   │   ├── tabs.ts                ← source unique des 3 vues + des volets de Patch + traduction des anciens hashs
 │   │   │   ├── CommandLine.tsx        ← ligne de commande turquoise (saisie + ligne de retour)
 │   │   │   ├── KeypadRail.tsx         ← rail droit : Fixture/Group/Thru/At, pavé, Store/Go/Off, Please, B.O.
-│   │   │   ├── useHashTab.ts          ← hook routing par hash URL (#live, #patch, #reseau, #setup)
+│   │   │   ├── useHashTab.ts          ← hook routing par hash URL (#live, #patch, #patch/lampes, #setup)
 │   │   │   └── navigate.ts            ← helper setActiveTabHash() pour liens internes
 │   │   ├── contexts/
 │   │   │   ├── AppDataContext.tsx     ← provider central — queries, mutations, WS handlers, log history
@@ -98,8 +98,8 @@ LightBridgeDMX/
 │   │   │   └── UniverseStateContext.tsx ← universeState 30 Hz + ref stable sans abonnement
 │   │   ├── pages/                     ← une page par vue (consomment les contextes)
 │   │   │   ├── LivePage.tsx           ← le plan de travail (Workspace), lazy
-│   │   │   ├── PatchPage.tsx          ← FixturesTable + FixtureForm + QxfLibraryPanel
-│   │   │   ├── NetworkPage.tsx        ← volets Inventaire (DeviceInventory) / Lampes (SmartLightsPanel)
+│   │   │   ├── PatchPage.tsx          ← volets Projecteurs / Inventaire réseau / Lampes connectées
+│   │   │   ├── patch/SmartLightsPane.tsx ← volet Lampes : pastilles de backend + SmartLightsPanel
 │   │   │   └── SetupPage.tsx          ← HomeKitCard + MerossCard + Système / Variables / Maintenance
 │   │   ├── components/
 │   │   │   ├── console/               ← le pupitre proprement dit
@@ -164,7 +164,7 @@ mobile <640px) et le routing se fait par hash URL, sans dépendance de routeur.
 
 ```
 ┌ StatusBar ── univers · sortie DMX · canaux · projecteurs · sélection · LED · horloge · Blackout ┐
-│ TabBar ──── Live / Patch / Réseau / Setup (masquée <640px)                                      │
+│ TabBar ──── Live / Patch / Setup (masquée <640px)                                               │
 │ ma-body ─── écran (la vue active)                    │ KeypadRail (≥1280px)                     │
 │ CommandLine ─ ligne de retour + saisie + touches rapides                                        │
 └ BottomNav ── navigation mobile (<640px uniquement)                                              ┘
@@ -173,23 +173,33 @@ mobile <640px) et le routing se fait par hash URL, sans dépendance de routeur.
 Le `body` est en `overflow: hidden` : c'est l'écran (`.ma-screen`) qui défile, pas la page — le châssis
 reste donc fixe comme sur un vrai pupitre.
 
-### 4 vues
+### 3 vues
 
 Le découpage suit l'usage d'un pupitre, pas l'organisation du code :
 
 | Vue | Hash | Composant page | Contenu |
 |-----|------|----------------|---------|
 | **Live** | `#live` | `pages/LivePage.tsx` (lazy) | Le plan de travail : fenêtres déplaçables + barre des Views |
-| **Patch** | `#patch` | `pages/PatchPage.tsx` | `FixturesTable` (en premier) + `FixtureForm` + `QxfLibraryPanel` |
-| **Réseau** | `#reseau` | `pages/NetworkPage.tsx` | Volet *Inventaire* (`DeviceInventory`) et volet *Lampes* (`SmartLightsPanel`) |
+| **Patch** | `#patch` | `pages/PatchPage.tsx` | Le plateau, câblé et sans fil, en trois volets (voir ci-dessous) |
 | **Setup** | `#setup` | `pages/SetupPage.tsx` | `HomeKitCard` + `MerossCard` + Système / Variables backend / Maintenance |
+
+Les volets de **Patch** sont adressables et gardés dans l'URL, donc un lien partagé rouvre le bon :
+
+| Volet | Hash | Contenu |
+|-------|------|---------|
+| *Projecteurs* | `#patch` | `FixturesTable` (en premier) + `FixtureForm` + `QxfLibraryPanel` |
+| *Inventaire réseau* | `#patch/inventaire` | `DeviceInventory` — ce que le LAN expose, pilotable ou non |
+| *Lampes connectées* | `#patch/lampes` | `patch/SmartLightsPane` — pastilles de backend + `SmartLightsPanel` |
 
 > **Historique.** Il y avait auparavant six onglets. « Tableau de bord » ne faisait que répéter la barre
 > d'état (fps, canaux actifs, nombre de projecteurs) et renvoyait ailleurs par des liens ; « Appareils »
 > et « Lampes connectées » coupaient en deux un même geste (découvrir puis piloter) ; le Mode Dance
-> apparaissait à la fois sur le tableau de bord et dans Live. Les anciens hashs (`#dashboard`,
-> `#projecteurs`, `#lampes`, `#appareils`, `#reglages`) restent valides et sont traduits par
-> `resolveTabId()` dans `shell/tabs.ts` : un signet ou un raccourci d'écran d'accueil continue de marcher.
+> apparaissait à la fois sur le tableau de bord et dans Live. Puis la vue « Réseau » a fondu dans
+> « Patch » : découvrir une Nanoleaf, l'appairer et lui donner une adresse DMX est un seul geste, et
+> « de quoi est fait le plateau ? » une seule question — elle survit comme deux volets. Les anciens
+> hashs (`#dashboard`, `#projecteurs`, `#reseau`, `#lampes`, `#appareils`, `#reglages`) restent valides
+> et sont traduits par `resolveRoute()` dans `shell/tabs.ts`, vers le volet qui a repris leur contenu :
+> un signet ou un raccourci d'écran d'accueil continue de marcher.
 
 ### Le plan de travail (`components/console/`)
 
@@ -297,7 +307,7 @@ Syntaxe supportée (valeurs en **pourcent** par défaut, suffixe `d`/`dmx` pour 
 | `STORE GROUP 2 Salon` · `GROUP 2` | mémorise / rappelle un groupe de sélection |
 | `STORE PRESET 3 Bleu` · `PRESET 3` | mémorise / applique un preset |
 | `BLACKOUT` | remet les 512 canaux à zéro |
-| `GOTO PATCH` | change de vue (`live`, `patch`, `reseau`, `setup`) |
+| `GOTO PATCH` | change de vue (`live`, `patch`, `setup`) ; `goto reseau` / `appareils` / `lampes` ouvrent le volet correspondant de Patch |
 
 Les mots-clés existent aussi en français (`projecteur`, `canal`, `rouge`, `couleur`, `groupe`…) et les
 accents sont ignorés. `OFF` seul reste le raccourci « dimmer à zéro » ; c'est la présence d'un numéro
@@ -331,8 +341,8 @@ export const SMART_LIGHT_BACKENDS = [
 ];
 ```
 
-`SmartLightsPanel` accepte une prop `backendFilter` ; la vue Réseau consomme `SMART_LIGHT_BACKENDS` pour
-rendre les pastilles de filtre. Ajouter une ampoule Hue / Matter = ajouter une entrée + un nouveau type
+`SmartLightsPanel` accepte une prop `backendFilter` ; le volet *Lampes connectées* de Patch
+(`pages/patch/SmartLightsPane.tsx`) consomme `SMART_LIGHT_BACKENDS` pour rendre les pastilles de filtre. Ajouter une ampoule Hue / Matter = ajouter une entrée + un nouveau type
 dans `SmartLight.config.type` (union discriminée dans `shared/`).
 
 ### CSS (`frontend/src/styles.css`)
