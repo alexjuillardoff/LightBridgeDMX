@@ -1111,12 +1111,63 @@ select {
   gap: 3px;
 }
 
+/* La page de canaux est une suite de blocs : un bloc = les canaux consecutifs
+   d'un meme projecteur, coiffes de son nom. Ecrit une seule fois au-dessus de
+   ses tranches, le nom reste lisible la ou il ne tenait pas dans une tranche
+   de 54 px. */
 .channels {
-  display: grid;
-  grid-template-columns: repeat(16, minmax(52px, 1fr));
-  gap: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
   overflow-x: auto;
   padding-bottom: 4px;
+}
+
+.channel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 100%;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  border-top: 2px solid var(--edge-grey);
+}
+
+.channel-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 2px 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* Le nom du projecteur est ce qu'on cherche en premier dans cette vue : il
+   passe donc avant le reste en taille et en graisse, et prend la couleur du
+   projecteur. Ellipse + title si le bloc est trop etroit (projecteur a 1 canal). */
+.channel-group-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+
+.channel-group-range {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.channel-group-strips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
 }
 
 .channel-column {
@@ -1124,13 +1175,10 @@ select {
   flex-direction: column;
   align-items: stretch;
   gap: 3px;
+  width: 54px;
   padding: 3px;
   background: #000;
   border: 1px solid var(--line-soft);
-}
-
-.channel-column-tagged {
-  border-top-width: 2px;
 }
 
 .channel-head {
@@ -1152,14 +1200,17 @@ select {
   font-weight: 700;
 }
 
+/* Etiquette de la tranche : seulement le role du canal ("rouge", "pan"...),
+   le nom du projecteur etant porte par le bandeau du bloc. */
 .channel-note {
-  height: 27px;
+  height: 25px;
   padding: 1px 3px;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.15;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
   color: var(--dim);
   background: #000;
   border: 1px solid var(--line-soft);
@@ -2297,14 +2348,14 @@ select {
 }
 
 @media (max-width: 1400px) {
-  .channels {
-    grid-template-columns: repeat(12, minmax(48px, 1fr));
+  .channel-column {
+    width: 48px;
   }
 }
 
 @media (max-width: 1023px) {
-  .channels {
-    grid-template-columns: repeat(8, minmax(46px, 1fr));
+  .channel-column {
+    width: 46px;
   }
   .ma-encoders {
     grid-template-columns: repeat(2, 1fr);
@@ -2374,8 +2425,8 @@ select {
     gap: 5px;
   }
 
-  .channels {
-    grid-template-columns: repeat(4, minmax(60px, 1fr));
+  .channel-column {
+    width: 60px;
   }
 
   /* Le moniteur d'univers passe à 16 canaux par ligne : à 32, les cases

@@ -13,12 +13,16 @@ export type FixtureColor = {
 };
 
 // Un canal affiche dans la grille de la console DMX.
-// "note" = etiquette "nom du projecteur · role du canal" si le canal appartient
-// a un projecteur connu ; "color" = couleur du projecteur pour le reperage visuel.
+// Si le canal appartient a un projecteur connu on garde son identite separee de
+// son role : la Fader View affiche le nom une seule fois, en entete du bloc de
+// canaux du projecteur, et ne laisse dans la tranche que le role ("rouge",
+// "pan"...). "color" = couleur du projecteur pour le reperage visuel.
 export type VisibleChannel = {
   channel: number;
   value: number;
-  note?: string;
+  fixtureId?: string;
+  fixtureName?: string;
+  channelLabel?: string;
   color?: FixtureColor;
 };
 
@@ -58,29 +62,32 @@ export const computeVisibleChannels = ({
   const end = Math.min(start + channelPageSize - 1, 512);
   // Valeurs live des 512 canaux ; tableau de zeros tant que rien n'est recu.
   const values = universeState?.values ?? Array(512).fill(0);
-  // Table d'aide : numero de canal absolu -> etiquette + couleur du projecteur.
-  const channelNotes: Record<number, { note: string; color?: FixtureColor }> = {};
+  // Table d'aide : numero de canal absolu -> projecteur proprietaire + role.
+  const owners: Record<number, Omit<VisibleChannel, "channel" | "value">> = {};
 
-  // On pre-calcule l'etiquette de chaque canal occupe par un projecteur.
+  // On pre-calcule le proprietaire de chaque canal occupe par un projecteur.
   fixtures.forEach((fixture) => {
     fixture.channels.forEach((ch) => {
       // Adresse absolue dans l'univers = adresse de depart + offset du canal - 1
       // (les canaux du projecteur sont numerotes a partir de 1).
       const abs = fixture.address + ch.channel - 1;
       if (abs >= 1 && abs <= 512) {
-        // On prefere le nom du canal s'il existe, sinon sa capability (r, g, pan...).
-        const label = ch.name ?? ch.capability;
-        channelNotes[abs] = { note: `${fixture.name} · ${label}`, color: fixtureColors[fixture.id] };
+        owners[abs] = {
+          fixtureId: fixture.id,
+          fixtureName: fixture.name,
+          // On prefere le nom du canal s'il existe, sinon sa capability (r, g, pan...).
+          channelLabel: ch.name ?? ch.capability,
+          color: fixtureColors[fixture.id]
+        };
       }
     });
   });
 
-  // On assemble la page : pour chaque canal, sa valeur live et son etiquette eventuelle.
+  // On assemble la page : pour chaque canal, sa valeur live et son proprietaire.
   // Note : values est indexe a partir de 0, d'ou le "channel - 1".
   return Array.from({ length: end - start + 1 }, (_, idx) => {
     const channel = start + idx;
-    const note = channelNotes[channel];
-    return { channel, value: values[channel - 1] ?? 0, note: note?.note, color: note?.color };
+    return { channel, value: values[channel - 1] ?? 0, ...owners[channel] };
   });
 };
 

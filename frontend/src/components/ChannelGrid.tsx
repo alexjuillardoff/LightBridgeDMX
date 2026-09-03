@@ -1,7 +1,12 @@
 // Console DMX : une page de 32 canaux de l'univers, en faders verticaux.
 // C'est la "Fader View" du pupitre : chaque tranche montre son numéro de canal,
-// son niveau en pourcent, le fader lui-même, la fixture à laquelle le canal
-// appartient et un champ de saisie directe en 0-255.
+// son niveau en pourcent, le fader lui-même, le rôle du canal et un champ de
+// saisie directe en 0-255.
+//
+// Les canaux consécutifs d'un même projecteur sont réunis dans un bloc coiffé
+// d'un bandeau qui porte son nom en entier : une tranche fait ~54 px de large,
+// un nom de projecteur n'y tient pas, alors qu'écrit une seule fois au-dessus
+// de ses canaux il reste lisible. Les canaux libres forment leurs propres blocs.
 //
 // Tous les projecteurs patchés y sont visibles, y compris ceux qui ne sont pas
 // du DMX physique (un strip Nanoleaf exposé en projecteur par zone, par exemple) :
@@ -42,6 +47,21 @@ export const ChannelGrid = () => {
 
   const first = visibleChannels[0]?.channel ?? 1;
   const last = visibleChannels[visibleChannels.length - 1]?.channel ?? 1;
+
+  // Découpe la page en blocs de canaux consécutifs appartenant au même
+  // projecteur (fixtureId absent = canaux libres, regroupés entre eux).
+  const channelGroups = useMemo(() => {
+    const groups: { key: string; fixture?: VisibleChannel; channels: VisibleChannel[] }[] = [];
+    visibleChannels.forEach((ch) => {
+      const previous = groups[groups.length - 1];
+      if (previous && previous.channels[0].fixtureId === ch.fixtureId) {
+        previous.channels.push(ch);
+        return;
+      }
+      groups.push({ key: `${ch.fixtureId ?? "free"}-${ch.channel}`, fixture: ch, channels: [ch] });
+    });
+    return groups;
+  }, [visibleChannels]);
 
   // Raccourci "aller au projecteur" : la vue ne montre que 32 canaux a la fois,
   // et un projecteur peut vivre loin dans l'univers (un strip a zones occupe des
@@ -125,46 +145,76 @@ export const ChannelGrid = () => {
         </div>
       </div>
 
-      {/* Une tranche par canal : entête, étiquette fixture, fader, saisie. */}
+      {/* Un bloc par projecteur : bandeau nommé, puis une tranche par canal
+          (entête, rôle du canal, fader, saisie). */}
       <div className="channels">
-        {visibleChannels.map((ch) => (
-          <div
-            className={`channel-column ${ch.color ? "channel-column-tagged" : ""}`}
-            key={ch.channel}
-            // Le liseré haut reprend la couleur de la fixture propriétaire.
-            style={ch.color ? { borderTopColor: ch.color.solid } : undefined}
-          >
-            <div className="channel-head">
-              <span className="channel-index">{String(ch.channel).padStart(3, "0")}</span>
-              <span className="channel-pct">{toPct(ch.value)}</span>
-            </div>
-
-            {/* Étiquette "fixture · rôle du canal", colorée si canal r/g/b. */}
-            <div
-              className="channel-note"
-              style={ch.color ? { borderColor: ch.color.solid, color: ch.color.solid } : undefined}
+        {channelGroups.map((group) => {
+          const color = group.fixture?.color;
+          const name = group.fixture?.fixtureName;
+          const groupFirst = group.channels[0].channel;
+          const groupLast = group.channels[group.channels.length - 1].channel;
+          return (
+            <section
+              className={`channel-group ${name ? "channel-group-tagged" : ""}`}
+              key={group.key}
+              // Le liseré haut du bloc reprend la couleur du projecteur.
+              style={color ? { borderTopColor: color.solid } : undefined}
             >
-              {ch.note ?? "—"}
-            </div>
+              <header className="channel-group-head">
+                {/* title : le nom complet reste accessible au survol quand le
+                    bloc est trop étroit pour l'afficher en entier. */}
+                <span
+                  className="channel-group-name"
+                  style={color ? { color: color.solid } : undefined}
+                  title={name ?? "Canaux libres"}
+                >
+                  {name ?? "Libre"}
+                </span>
+                <span className="channel-group-range">
+                  {groupFirst}
+                  {groupLast > groupFirst ? `–${groupLast}` : ""}
+                </span>
+              </header>
 
-            <MaFader
-              label={`Canal DMX ${ch.channel}`}
-              value={ch.value}
-              onChange={(next) => onUpdate(ch.channel, next)}
-              fill={ch.color ? `linear-gradient(180deg, ${ch.color.solid}, ${ch.color.tint})` : undefined}
-            />
+              <div className="channel-group-strips">
+                {group.channels.map((ch) => (
+                  <div className="channel-column" key={ch.channel}>
+                    <div className="channel-head">
+                      <span className="channel-index">{String(ch.channel).padStart(3, "0")}</span>
+                      <span className="channel-pct">{toPct(ch.value)}</span>
+                    </div>
 
-            <input
-              className="channel-number"
-              type="number"
-              min={0}
-              max={255}
-              value={ch.value}
-              onChange={(e) => onUpdate(ch.channel, clamp(Number(e.target.value), 0, 255))}
-              aria-label={`Valeur du canal ${ch.channel}`}
-            />
-          </div>
-        ))}
+                    {/* Rôle du canal seul : le nom du projecteur est au-dessus. */}
+                    <div
+                      className="channel-note"
+                      style={color ? { borderColor: color.solid, color: color.solid } : undefined}
+                      title={ch.channelLabel ? `${name} · ${ch.channelLabel}` : undefined}
+                    >
+                      {ch.channelLabel ?? "—"}
+                    </div>
+
+                    <MaFader
+                      label={ch.channelLabel ? `${name} · ${ch.channelLabel}` : `Canal DMX ${ch.channel}`}
+                      value={ch.value}
+                      onChange={(next) => onUpdate(ch.channel, next)}
+                      fill={color ? `linear-gradient(180deg, ${color.solid}, ${color.tint})` : undefined}
+                    />
+
+                    <input
+                      className="channel-number"
+                      type="number"
+                      min={0}
+                      max={255}
+                      value={ch.value}
+                      onChange={(e) => onUpdate(ch.channel, clamp(Number(e.target.value), 0, 255))}
+                      aria-label={`Valeur du canal ${ch.channel}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       {error ? <small>Écriture DMX impossible : {error.message}</small> : null}
