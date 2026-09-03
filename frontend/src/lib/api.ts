@@ -129,6 +129,14 @@ export const api = {
       fetchJSON<{ ok: true }>(`/api/universe/${channel}`, {
         method: "POST",
         body: JSON.stringify({ value })
+      }),
+    // Ecriture groupee : une seule requete pour tous les canaux qui ont bouge.
+    // C'est ce que la console utilise pendant un glissement de fader ; envoyer un
+    // POST par evenement de mouvement saturait les ~6 connexions du navigateur.
+    setMany: (values: Record<number, number>) =>
+      fetchJSON<{ ok: true; count: number }>("/api/universe", {
+        method: "POST",
+        body: JSON.stringify({ values })
       })
   },
   // Bibliotheque de profils QXF (QLC+) : lecture du cache local et rafraichissement

@@ -10,7 +10,9 @@ import {
   createContext,
   useCallback,
   useContext,
-  useMemo
+  useEffect,
+  useMemo,
+  useRef
 } from "react";
 import { UseMutationResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fixture, QxfLibraryFixture, Scene, SmartLight } from "@lightbridgedmx/shared";
@@ -20,6 +22,11 @@ import { withoutHiddenFixtures } from "../lib/hiddenFixtures";
 import { clamp } from "../lib/math";
 import { LogEntry, useDmxWebsocket } from "../hooks/useDmxWebsocket";
 import { UniverseStateProvider } from "./UniverseStateContext";
+
+// Cadence de vidage du tampon de canaux DMX, en millisecondes. 40 ms = 25 envois
+// par seconde : bien au-dela de ce que l'oeil distingue sur un fondu, et tres en
+// dessous du debit qui saturait les connexions du navigateur.
+const CHANNEL_FLUSH_MS = 40;
 
 // Entree d'une mutation "regler un canal" : numero de canal DMX + valeur 0-255.
 type SetChannelInput = { channel: number; value: number };
@@ -248,6 +255,35 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
   // Regle un canal depuis un curseur (slider) de la console.
   // On borne (clamp) la valeur a 0-255, on met a jour l'affichage tout de suite,
   // puis on pousse la valeur au backend (mise a jour optimiste pour un retour instantane).
+  // ── Regroupement des ecritures de canaux ────────────────────────────────
+  // Un glissement de fader emet ~60 evenements par seconde. Envoyer un POST par
+  // evenement saturait les ~6 connexions HTTP que le navigateur accorde par
+  // origine : la position FINALE du curseur partait en dernier, coincee derriere
+  // des dizaines de requetes deja perimees. D'ou une console qui repond mal,
+  // surtout en bougeant plusieurs curseurs a la fois.
+  //
+  // On accumule donc les changements dans une table { canal -> derniere valeur } et
+  // on la vide a cadence fixe en UNE requete groupee. L'etat local, lui, est mis a
+  // jour immediatement : le curseur reste parfaitement fluide a l'ecran.
+  const pendingChannels = useRef<Map<number, number>>(new Map());
+  const flushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const flushChannels = useCallback(() => {
+    if (pendingChannels.current.size === 0) {
+      // Plus rien a envoyer : on arrete le minuteur plutot que de tourner a vide.
+      if (flushTimer.current) {
+        clearInterval(flushTimer.current);
+        flushTimer.current = null;
+      }
+      return;
+    }
+    const batch = Object.fromEntries(pendingChannels.current);
+    pendingChannels.current.clear();
+    void api.universe.setMany(batch).catch((err) => {
+      setLogMessage(`Écriture DMX échouée : ${(err as Error).message}`);
+    });
+  }, [setLogMessage]);
+
   const handleUpdateChannel = useCallback(
     (channel: number, value: number) => {
       const clamped = clamp(value, 0, 255);
@@ -255,12 +291,23 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
         if (!prev) return prev;
         const nextValues = [...prev.values];
         nextValues[channel - 1] = clamped;
-        return { ...prev, values: nextValues };
+        return { ...prev, values: clamped === prev.values[channel - 1] ? prev.values : nextValues };
       });
-      setChannel.mutate({ channel, value: clamped });
+      // Seule la derniere valeur d'un canal survit dans le lot : les positions
+      // intermediaires d'un glissement n'ont aucun interet une fois depassees.
+      pendingChannels.current.set(channel, clamped);
+      if (flushTimer.current === null) {
+        flushChannels(); // premiere valeur envoyee tout de suite : pas de latence percue
+        flushTimer.current = setInterval(flushChannels, CHANNEL_FLUSH_MS);
+      }
     },
-    [setChannel, setUniverseState]
+    [flushChannels, setUniverseState]
   );
+
+  // Arret du minuteur au demontage, pour ne pas laisser d'intervalle orphelin.
+  useEffect(() => () => {
+    if (flushTimer.current) clearInterval(flushTimer.current);
+  }, []);
 
   // Blackout (extinction totale) : remet a 0 les 512 canaux de l'univers DMX.
   // On vide d'abord l'etat local, puis on pousse 512 mises a 0 en parallele.
