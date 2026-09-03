@@ -1,0 +1,2 @@
+aiohomekit==4.0.1
+bleak>=3.0
