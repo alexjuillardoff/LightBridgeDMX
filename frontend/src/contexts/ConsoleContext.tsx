@@ -68,6 +68,8 @@ type ConsoleValue = {
   setLevel: (slot: number, level: number) => void;
   // Détache une scène de son emplacement (la scène reste enregistrée).
   releaseSlot: (slot: number) => void;
+  // Supprime définitivement la scène occupant l'emplacement.
+  deleteExecutor: (slot: number) => Promise<ActionResult>;
   // Affecte une scène existante à un emplacement.
   assignSlot: (slot: number, sceneId: string) => void;
 
@@ -150,13 +152,20 @@ export const ConsoleProvider = ({ children }: { children: ReactNode }) => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scenes"] })
   });
   const activateScene = useMutation((id: string) => api.scenes.activate(id));
+  const removeScene = useMutation((id: string) => api.scenes.delete(id), {
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scenes"] })
+  });
   const createPreset = useMutation(api.presets.create, {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["presets"] })
   });
   const runPreset = useMutation((id: string) => api.presets.apply(id));
 
   const busy =
-    createScene.isLoading || activateScene.isLoading || createPreset.isLoading || runPreset.isLoading;
+    createScene.isLoading ||
+    activateScene.isLoading ||
+    removeScene.isLoading ||
+    createPreset.isLoading ||
+    runPreset.isLoading;
 
   // ─── Groupes ─────────────────────────────────────────────────────────────
 
@@ -315,6 +324,36 @@ export const ConsoleProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
+  // Suppression réelle : détacher l'emplacement ne suffit pas, car une scène
+  // sans emplacement est aussitôt reposée sur le premier libre par le memo
+  // `executors` — la tuile semblait alors « revenir ». On efface donc la scène
+  // en base, puis l'affectation locale devenue caduque.
+  const deleteExecutor = useCallback(
+    async (slot: number): Promise<ActionResult> => {
+      const scene = executors[slot];
+      if (!scene) return warn(`Exec ${slot + 1} déjà vide`);
+      try {
+        await removeScene.mutateAsync(scene.id);
+      } catch (err) {
+        return fail(`Suppression impossible : ${(err as Error).message}`);
+      }
+      setSlotMap((prev) => {
+        const next: Record<string, string> = {};
+        Object.entries(prev).forEach(([k, v]) => {
+          if (v !== scene.id) next[k] = v;
+        });
+        return next;
+      });
+      setLevels((prev) => {
+        const next = [...prev];
+        next[slot] = 0;
+        return next;
+      });
+      return ok(`Exec ${slot + 1} « ${scene.name} » supprimé`);
+    },
+    [executors, removeScene]
+  );
+
   const assignSlot = useCallback((slot: number, sceneId: string) => {
     setSlotMap((prev) => {
       // Une scène n'occupe qu'un emplacement : on la retire de l'ancien.
@@ -387,6 +426,7 @@ export const ConsoleProvider = ({ children }: { children: ReactNode }) => {
       offExecutor,
       setLevel,
       releaseSlot,
+      deleteExecutor,
       assignSlot,
       presets,
       storePreset,
@@ -397,6 +437,7 @@ export const ConsoleProvider = ({ children }: { children: ReactNode }) => {
       applyPreset,
       assignSlot,
       busy,
+      deleteExecutor,
       deleteGroup,
       executors,
       goExecutor,

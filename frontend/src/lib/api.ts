@@ -122,7 +122,9 @@ export const api = {
     // Rejoue la scene cote backend : chaque pas est reecrit sur le DMX, puis un
     // evenement scene_activated est diffuse a toutes les UI connectees.
     activate: (id: string) =>
-      fetchJSON<{ ok: true }>(`/api/scenes/${id}/activate`, { method: "POST" })
+      fetchJSON<{ ok: true }>(`/api/scenes/${id}/activate`, { method: "POST" }),
+    // Supprime definitivement la scene (et donc l'executor qui la porte).
+    delete: (id: string) => fetchJSON<void>(`/api/scenes/${id}`, { method: "DELETE" })
   },
   // Presets : jeux de valeurs de canaux reutilisables (le "pool" du pupitre).
   presets: {

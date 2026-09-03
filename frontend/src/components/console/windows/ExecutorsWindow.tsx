@@ -14,7 +14,7 @@ import { useCommand } from "../../../contexts/CommandContext";
 import { useSelection } from "../../../contexts/SelectionContext";
 
 export const ExecutorsWindow = () => {
-  const { executors, storeExecutor, goExecutor, offExecutor, releaseSlot, busy } = useConsole();
+  const { executors, storeExecutor, goExecutor, offExecutor, deleteExecutor, busy } = useConsole();
   const { report } = useCommand();
   const { selectedIds } = useSelection();
 
@@ -30,6 +30,13 @@ export const ExecutorsWindow = () => {
     );
     if (name === null) return;
     void storeExecutor(slot, name).then(report);
+  };
+
+  // Supprimer efface la scène en base : c'est irréversible, on demande donc
+  // confirmation avant, comme pour la suppression d'un projecteur.
+  const onDelete = (slot: number, name: string) => {
+    if (!window.confirm(`Supprimer définitivement l'executor ${slot + 1} « ${name} » ?`)) return;
+    void deleteExecutor(slot).then(report);
   };
 
   const slots = Math.max(EXEC_SLOTS, executors.length);
@@ -99,8 +106,9 @@ export const ExecutorsWindow = () => {
                 </button>
                 <button
                   type="button"
-                  title="Libérer l'emplacement (la scène reste enregistrée)"
-                  onClick={() => releaseSlot(slot)}
+                  title="Supprimer définitivement cet executor"
+                  disabled={busy}
+                  onClick={() => onDelete(slot, scene.name)}
                 >
                   <Trash2 size={11} strokeWidth={2.6} aria-hidden="true" />
                 </button>

@@ -1,5 +1,5 @@
 // Routes REST des scenes (etats enregistres rappelables).
-// Expose la liste, la creation et l'activation d'une scene.
+// Expose la liste, la creation, la suppression et l'activation d'une scene.
 // Activer une scene rejoue ses pas sur le DMX puis previent les clients via WebSocket.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -23,6 +23,19 @@ export const registerSceneRoutes = (app: FastifyInstance, ctx: RouteContext, han
       const parsed = sceneInputSchema.parse(request.body);
       const scene = await ctx.store.createScene(parsed);
       reply.code(201).send(scene);
+    } catch (err) {
+      handleError(err, reply);
+    }
+  });
+
+  // DELETE : supprime definitivement une scene. Reponse 204 (sans corps).
+  // Sans cette route, la corbeille du pool d'executors ne pouvait que detacher
+  // l'emplacement cote navigateur : la scene restait en base et l'UI la
+  // repositionnait aussitot sur le premier emplacement libre.
+  app.delete("/api/scenes/:id", async (request, reply) => {
+    try {
+      await ctx.store.deleteScene((request.params as { id: string }).id);
+      reply.code(204).send();
     } catch (err) {
       handleError(err, reply);
     }
