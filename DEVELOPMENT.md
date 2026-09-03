@@ -1268,6 +1268,16 @@ haut niveau… Chacun coûte un reset matériel si on le découvre trop tard.
 ### Smart Lights : streaming + Apple Home conflict
 Quand notre `NanoleafStreamer` est actif (extControl mode), Apple Home perd temporairement la possibilité de modifier le strip — le streaming "owns" l'output. C'est attendu. Pour rendre la main à HomeKit/Nanoleaf app, désactiver le streaming via UI ou `POST /streaming` avec `enabled: false` — le service revient à HTTP coalescé.
 
+**La bonne réponse n'est pas d'arbitrer ce conflit, mais de le supprimer** : retirer la lampe
+de l'app Maison et la ré-exposer **par le pont LightBridge**. Une commande venue de Maison
+traverse alors `applyState()` et ressort en trame UDP, jamais en `PUT /state` — or c'est ce
+`PUT` qui met fin à l'extControl. Le conflit disparaît par construction, et le chien de garde
+(`ensureStreaming`, 10 s) ne sert plus que si une app tierce force un `PUT` depuis l'extérieur.
+
+Corollaire pour le choix de la façade DMX : sur un strip en streaming, préférer le **miroir par
+zone** (3 canaux RVB × N zones) au miroir uniforme. Il parle le même langage que la trame UDP,
+sans conversion intermédiaire, et c'est lui qui rend les 30 Hz exploitables depuis la console.
+
 ### WebSocket derrière un reverse proxy HTTPS — Mixed Content
 Si `wsUrl()` produit une URL `ws://` en dur (ou vise le port 5000 directement), une page servie en HTTPS échoue avec `SecurityError: Failed to construct 'WebSocket'` + `Mixed Content: ... attempted to connect to the insecure WebSocket endpoint`. L'exception remonte jusqu'à `AppDataProvider` et l'interface reste vide. `wsUrl()` doit **suivre l'origine de la page** : `wss` si `location.protocol === "https:"`, et `location.host` (avec son port) — jamais `location.hostname` seul. Voir [WebSocket](#websocket).
 

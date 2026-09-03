@@ -710,7 +710,42 @@ Par défaut, les canaux sont déduits automatiquement du profil QXF. Tu peux les
 LightBridgeDMX pilote des lampes WiFi (V1 : Nanoleaf, autres backends extensibles) avec **basse latence**, **mirror DMX bidirectionnel** et **effets dynamiques en 3D**.
 
 Modèles testés :
-- **Nanoleaf Lightstrip Essentials NL72K3** (50 zones LED addressables)
+- **Nanoleaf Lightstrip Essentials NL72K3** (50 zones LED addressables) — WiFi, streaming UDP 30 Hz
+- **Nanoleaf Essentials A19 NL45** (ampoule) — HomeKit sur Thread, voir [`tools/homekit-thread/`](tools/homekit-thread/README.md)
+
+### Contrôleur unique : pourquoi sortir la lampe de l'app Maison
+
+Le montage recommandé est que **LightBridge soit le seul contrôleur** de la lampe, et que
+HomeKit ne l'atteigne plus que par notre pont. Ça n'est pas une préférence esthétique :
+c'est ce qui supprime le risque de déconnexion.
+
+Côté Nanoleaf, **tout `PUT /state` ou `PUT /effects` met fin au mode extControl**. Une app
+tierce — l'app Nanoleaf, une scène Maison, un automatisme — qui écrit directement fait donc
+sortir le strip du streaming UDP, et le pilotage rapide s'arrête.
+
+Quand LightBridge est seul contrôleur, le problème disparaît **par construction** :
+
+- `flushAll()` saute les lampes en streaming — aucune écriture HTTP n'est émise ;
+- `streamAll()` pousse l'état voulu en UDP, y compris celui venu de HomeKit ou de l'UI ;
+- une commande depuis l'app Maison traverse notre pont, atterrit dans `applyState()` et
+  ressort en **trame UDP**, jamais en `PUT /state`.
+
+Le chien de garde du streaming ne sert plus que de second rideau, si quelque chose force
+malgré tout un `PUT` depuis l'extérieur : il rétablit l'extControl dans les 10 s.
+
+### Configuration en place (salon)
+
+| | Nanoleaf IML 735 (NL72K3) | Lampe Salon (NL45) |
+|---|---|---|
+| Transport | HTTP + **streaming UDP**, 50 zones, ~30 Hz | HAP/CoAP sur Thread, ~5 écritures/s |
+| Façade DMX | **ch. 108-257** — 3 canaux RVB par zone | ch. 33-37 — dimmer, RVB, température |
+| HomeKit | via le pont, une ampoule | via le pont, une ampoule |
+| Dans l'app Maison en direct | non | non |
+
+La façade **par zone** est ce qui rend l'UDP rapide réellement exploitable : elle parle le
+même langage que le streaming — des couleurs RVB par zone, sans conversion intermédiaire.
+Une façade uniforme à 5 canaux aurait gâché la capacité du strip. À l'inverse, l'ampoule
+Thread plafonne à quelques écritures par seconde : une façade simple lui suffit largement.
 
 ### Vue d'ensemble du flux
 
