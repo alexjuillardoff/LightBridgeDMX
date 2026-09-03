@@ -4,8 +4,13 @@
 // C'est de la math pure, sans effet de bord : le SmartLightService l'appelle a
 // ~30 Hz puis envoie le resultat a la lampe. Les helpers vectoriels en bas du
 // fichier servent aux effets sensibles a la position (position-aware).
+// L'effet "ma" est le moteur parametrique facon grandMA2 (forme + phase repartie
+// + MAtricks) : voir les helpers de la section "effets facon grandMA2" en bas.
 
 import type {
+  EffectMa,
+  EffectMatricks,
+  EffectSpatial,
   Point3D,
   RgbColor,
   SmartLightEffectConfig,
@@ -157,7 +162,230 @@ export function evaluateEffect(
       }
       return finalize();
     }
+
+    // ma : effet parametrique facon grandMA2. Une forme d'onde periodique est
+    // evaluee par zone, decalee dans le temps par la phase repartie le long du
+    // bandeau (c'est la phase, pas la forme, qui fait le chenillard ou la vague),
+    // remise a l'echelle entre low et high, puis appliquee a la cible choisie
+    // (intensite, fondu de couleurs, ou teinte).
+    case "ma": {
+      const bri = (effect.brightness ?? 100) / 100;
+
+      // Rang de chaque zone parmi les zones ACTIVES (les spare ne comptent pas).
+      // Sans cela, un bandeau de 38 LED declare sur 50 zones tasserait tout le
+      // motif sur ses trois quarts avant, avec un trou fixe au bout.
+      const rank = new Array<number>(zoneCount).fill(0);
+      let activeCount = 0;
+      for (let i = 0; i < zoneCount; i++) {
+        if (spare.has(i)) continue;
+        rank[i] = activeCount;
+        activeCount++;
+      }
+      const n = Math.max(1, activeCount);
+
+      // Avance temporelle en cycles : la vitesse est en BPM (60 BPM = 1 cycle/s).
+      const dir = effect.direction === "backward" ? -1 : 1;
+      const advance = (effect.speed / 60) * timeSeconds * dir;
+      const phaseSpan = effect.phaseTo - effect.phaseFrom;
+
+      // Distribution spatiale : la phase suit la position 3D des zones dans la piece
+      // au lieu de leur rang sur le ruban. Calculee une fois pour toute la trame,
+      // car elle demande de connaitre l'etendue (min/max) de toutes les zones actives.
+      const spatialU = effect.spatial
+        ? spatialPositions(layout, effect.spatial, spare, effect.matricks?.groups ?? 1)
+        : null;
+
+      for (let i = 0; i < zoneCount; i++) {
+        // Position 0..1 de la zone dans la distribution de phase.
+        const u = spatialU ? spatialU[i] : matricksPosition(rank[i], n, effect.matricks);
+        const phaseDeg = effect.phaseFrom + phaseSpan * u;
+        // La phase est un RETARD (comme sur le pupitre) : on la soustrait, ce qui
+        // fait progresser l'effet de la premiere zone vers la derniere.
+        const pos = advance - phaseDeg / 360;
+        const v = formValue(effect, pos, rank[i]);
+        // Remise a l'echelle low..high (low > high est permis : la forme s'inverse).
+        const k = (effect.low + (effect.high - effect.low) * v) / 100;
+        out[i] = scale(colorForTarget(effect, k), bri);
+      }
+      return finalize();
+    }
   }
+}
+
+// ----- effets facon grandMA2 -----
+
+/**
+ * Valeur 0..1 de la forme d'onde a la position `pos` (en cycles, partie entiere =
+ * numero de cycle, partie fractionnaire = avancement dans le cycle).
+ * `zoneRank` ne sert qu'aux formes aleatoires, pour que chaque zone ait son
+ * propre tirage tout en restant reproductible d'une trame a l'autre.
+ */
+function formValue(effect: EffectMa, pos: number, zoneRank: number): number {
+  const cycle = Math.floor(pos);
+  const x = pos - cycle; // avancement dans le cycle, toujours dans [0,1[
+
+  switch (effect.form) {
+    case "sin":
+      return (Math.sin(2 * Math.PI * x) + 1) / 2;
+    case "cos":
+      return (Math.cos(2 * Math.PI * x) + 1) / 2;
+    case "rampUp":
+      return x;
+    case "rampDown":
+      return 1 - x;
+    case "triangle":
+      return 1 - Math.abs(2 * x - 1);
+    case "pwm": {
+      // Creneau : haut pendant `width` % du cycle. Attack/Decay adoucissent les fronts.
+      const duty = Math.max(0.01, effect.width / 100);
+      return x < duty ? envelope(x / duty, effect) : 0;
+    }
+    case "random": {
+      // Un niveau tire par zone ET par cycle : il tient tout le cycle, puis change.
+      // Le tirage depend du numero de cycle, donc il est identique sur deux trames
+      // du meme cycle — indispensable, le moteur etant sans etat.
+      const level = hash01(zoneRank, cycle, effect.seed ?? 1);
+      const duty = Math.max(0.01, effect.width / 100);
+      return x < duty ? level * envelope(x / duty, effect) : 0;
+    }
+  }
+}
+
+/** Enveloppe Attack/Decay appliquee a la portion haute d'une forme a fronts durs.
+ *  `u` est l'avancement 0..1 DANS cette portion. attack/decay valent 0..100 % de
+ *  cette portion : 0 = front franc, 100 = fondu sur toute la duree. */
+function envelope(u: number, effect: EffectMa): number {
+  const attack = (effect.attack ?? 0) / 100;
+  const decay = (effect.decay ?? 0) / 100;
+  let e = 1;
+  if (attack > 0) e = Math.min(e, u / attack);
+  if (decay > 0) e = Math.min(e, (1 - u) / decay);
+  return Math.max(0, Math.min(1, e));
+}
+
+/**
+ * Position 0..1 de CHAQUE zone d'apres sa place reelle dans la piece (layout 3D).
+ * On mesure un scalaire par zone — projection sur un axe, ou distance a un point —
+ * puis on ramene l'ensemble dans 0..1 par rapport a l'etendue mesuree. Deux zones
+ * eloignees sur le ruban mais voisines dans la piece obtiennent donc la meme phase.
+ *
+ * Les zones spare sont exclues de la mesure de l'etendue (elles sont rangees dans un
+ * coin fictif du layout et fausseraient min/max), et recoivent 0 : elles sont de toute
+ * facon forcees en noir a la fin de l'evaluation.
+ *
+ * `groups` repete le motif N fois sur l'etendue, comme en distribution par rang.
+ */
+function spatialPositions(
+  layout: SmartLightZoneLayout,
+  spatial: EffectSpatial,
+  spare: Set<number>,
+  groups: number
+): number[] {
+  const zoneCount = layout.segments.length;
+  const scalars = new Array<number>(zoneCount).fill(0);
+  let min = Infinity;
+  let max = -Infinity;
+
+  const axis = normalize(spatial.direction ?? { x: 1, y: 0, z: 0 });
+  const origin = spatial.origin ?? { x: 0, y: 0, z: 0 };
+
+  for (let i = 0; i < zoneCount; i++) {
+    if (spare.has(i)) continue;
+    const m = midpoint(layout.segments[i]);
+    const value =
+      spatial.mode === "radial"
+        ? Math.hypot(m.x - origin.x, m.y - origin.y, m.z - origin.z)
+        : dot(m, axis);
+    scalars[i] = value;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+
+  // Garde-fou : layout degenere (toutes les zones au meme endroit, ou que des spare).
+  const span = Math.max(max - min, 1e-6);
+  const reps = Math.max(1, Math.floor(groups));
+  const out = new Array<number>(zoneCount).fill(0);
+  for (let i = 0; i < zoneCount; i++) {
+    if (spare.has(i)) continue;
+    const u = ((scalars[i] - min) / span) * reps;
+    // Sans repetition, on garde la valeur telle quelle : la zone la plus eloignee
+    // doit atteindre 1 (et donc phaseTo), pas repartir a 0. Avec repetition, le
+    // modulo est justement ce qui recree le motif a chaque tour.
+    out[i] = reps === 1 ? u : u - Math.floor(u);
+  }
+  return out;
+}
+
+/** Position 0..1 d'une zone dans la distribution de phase, MAtricks appliques.
+ *  Ordre : wings (pliage miroir) -> blocks (zones solidaires) -> groups (repetitions).
+ *  `rank` est le rang de la zone parmi les zones actives, `n` leur nombre. */
+function matricksPosition(rank: number, n: number, m: EffectMatricks | undefined): number {
+  const wings = Math.max(1, Math.floor(m?.wings ?? 1));
+  const blocks = Math.max(1, Math.floor(m?.blocks ?? 1));
+  const groups = Math.max(1, Math.floor(m?.groups ?? 1));
+
+  // Wings : on plie le bandeau en N ailes, une sur deux etant lue a l'envers.
+  const wingLen = Math.max(1, Math.ceil(n / wings));
+  const wingIndex = Math.floor(rank / wingLen);
+  let k = rank % wingLen;
+  if (wingIndex % 2 === 1) k = wingLen - 1 - k;
+
+  // Blocks : N zones consecutives partagent la meme phase.
+  const blockIndex = Math.floor(k / blocks);
+  const blockCount = Math.max(1, Math.ceil(wingLen / blocks));
+
+  // Groups : le motif complet se repete N fois sur la longueur de l'aile.
+  const u = (blockIndex * groups) / blockCount;
+  return u - Math.floor(u);
+}
+
+/** Traduit la valeur 0..1 de la forme en couleur, selon la cible de l'effet. */
+function colorForTarget(effect: EffectMa, k: number): RgbColor {
+  const t = Math.max(0, Math.min(1, k));
+  switch (effect.target) {
+    case "dimmer":
+      return lerpRgb(effect.bgColor ?? { r: 0, g: 0, b: 0 }, effect.color ?? { r: 255, g: 255, b: 255 }, t);
+    case "color":
+      return lerpRgb(effect.color ?? { r: 0, g: 0, b: 0 }, effect.colorTo ?? { r: 255, g: 255, b: 255 }, t);
+    case "hue": {
+      const from = effect.hueFrom ?? 0;
+      const to = effect.hueTo ?? 360;
+      return hsvToRgb(from + (to - from) * t, effect.saturation ?? 100, 100);
+    }
+  }
+}
+
+/** Generateur pseudo-aleatoire deterministe : memes entrees -> meme sortie 0..1.
+ *  Le moteur etant appele a 30 Hz sans etat, un Math.random() ferait clignoter
+ *  n'importe quoi a chaque trame ; ici le tirage ne change qu'au cycle suivant. */
+function hash01(a: number, b: number, seed: number): number {
+  let h = (Math.imul(a, 374761393) + Math.imul(b, 668265263) + Math.imul(seed, 2246822519)) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  h = Math.imul(h, 1274126177) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
+}
+
+/** HSV -> RGB. h en degres (non borne : on ramene dans 0..360), s et v en %. */
+function hsvToRgb(h: number, s: number, v: number): RgbColor {
+  const hh = ((h % 360) + 360) % 360;
+  const sat = Math.max(0, Math.min(1, s / 100));
+  const val = Math.max(0, Math.min(1, v / 100));
+  const c = val * sat;
+  const xx = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = val - c;
+  let r = 0, g = 0, b = 0;
+  if (hh < 60) { r = c; g = xx; }
+  else if (hh < 120) { r = xx; g = c; }
+  else if (hh < 180) { g = c; b = xx; }
+  else if (hh < 240) { g = xx; b = c; }
+  else if (hh < 300) { r = xx; b = c; }
+  else { r = c; b = xx; }
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255)
+  };
 }
 
 

@@ -6,7 +6,7 @@
 // presets...) et fournir un type partage cote client et serveur.
 //
 // On y trouve : projecteurs (fixtures) DMX, scenes, presets, etat de l'univers
-// DMX, Mode Dance (chenillard), lampes connectees (smart lights, Nanoleaf),
+// DMX, lampes connectees (smart lights, Nanoleaf),
 // effets position-aware, disposition (layout) 3D des zones, evenements
 // WebSocket, et le parsing des fichiers QXF (bibliotheque de projecteurs).
 // Il contient aussi quelques helpers purs pour construire des layouts 3D,
@@ -151,105 +151,6 @@ export function buildZoneRgbChannels(zoneCount: number): FixtureChannel[] {
   return channels;
 }
 
-// ─── Mode Dance (chenillard) ─────────────────────────────────────────────────
-
-// Identifiants des motifs (patterns) de chenillard (chase).
-// On garde les ids en anglais car ils sont utilises tels quels dans le code.
-// Chaque motif decrit comment la lumiere se deplace de groupe en groupe.
-export const DancePatternIds = [
-  "chase",
-  "reverseChase",
-  "pingPong",
-  "waveLR",
-  "waveRL",
-  "alternate",
-  "pairs",
-  "randomSubset",
-  "allHit",
-  "strobeSync",
-  "bookendIn",
-  "bookendOut"
-] as const;
-
-export const DancePatternIdSchema = z.enum(DancePatternIds);
-export type DancePatternId = z.infer<typeof DancePatternIdSchema>;
-
-// Position memorisee d'une lyre (pan/tilt) pour un projecteur donne.
-// Sert d'ancre (point d'ancrage) connue pour l'interpolation des mouvements.
-export const DanceLyrePositionSchema = z.object({
-  fixtureId: z.string().uuid(),
-  pan: z.number().int().min(0).max(255),
-  tilt: z.number().int().min(0).max(255)
-});
-
-export type DanceLyrePosition = z.infer<typeof DanceLyrePositionSchema>;
-
-// Ancre libre (pan/tilt seuls, sans projecteur associe).
-// Utilisee comme point de reference supplementaire aux extremites de la chaine.
-export const DanceFreeAnchorSchema = z.object({
-  pan: z.number().int().min(0).max(255),
-  tilt: z.number().int().min(0).max(255)
-});
-
-export type DanceFreeAnchor = z.infer<typeof DanceFreeAnchorSchema>;
-
-// Reglages du Mode Dance pour une lyre (moving head).
-// La lyre peut suivre le chenillard en se deplacant entre des positions ancrees ;
-// les valeurs ci-dessous controlent son ouverture, son intensite et sa vitesse.
-export const DanceLyreModeSchema = z.object({
-  enabled: z.boolean(),
-  shutterOpenValue: z.number().int().min(0).max(255),
-  dimmerOnValue: z.number().int().min(0).max(255),
-  followChase: z.boolean(),
-  positions: z.array(DanceLyrePositionSchema),
-  // Bord du mur a droite du projecteur le plus a droite dans la chaine visuelle.
-  // Sert d'ancre supplementaire pour interpoler/extrapoler au-dela du dernier projecteur.
-  wallEdgeRight: DanceFreeAnchorSchema.nullable(),
-  // Valeur DMX ecrite sur le canal "speed" de la lyre (vitesse de reponse).
-  // Pour la Stairville MH-X20 : 0 = mouvement le plus rapide, 251 = le plus lent
-  // (255 = modes vectoriels).
-  speedValue: z.number().int().min(0).max(255),
-  // Temps que met la lyre pour parcourir 1 unite DMX de pan ou tilt, en ms.
-  // Sert a calculer la duree de chaque mouvement selon la distance — et a faire un
-  // blackout du dimmer + fermer le shutter pendant le deplacement (une lyre qui clignote
-  // en plein vol, ca fait moche : effet de spot volant).
-  // Pour la Stairville MH-X20 a speed=0 : ~40 ms/unite (Lava→Café = 10 unites ≈ 400 ms).
-  msPerPanUnit: z.number().int().min(1).max(500)
-});
-
-export type DanceLyreMode = z.infer<typeof DanceLyreModeSchema>;
-
-// Reglages du Mode Dance pour les lampes connectees (smart lights).
-export const DanceSmartLightsModeSchema = z.object({
-  enabled: z.boolean(),
-  // IDs des lampes connectees qui rejoignent la dance. Chaque lampe fournit un groupe
-  // par "side" (cote) defini dans son zoneLayout (voir SmartLightZoneLayout.sides).
-  // Ces groupes participent aux motifs de chenillard a cote des projecteurs DMX et
-  // flashent dans la couleur ambiante actuelle de la lampe
-  // (desired.hue/sat → RGB a 100% de luminosite).
-  lightIds: z.array(z.string().uuid())
-});
-
-export type DanceSmartLightsMode = z.infer<typeof DanceSmartLightsModeSchema>;
-
-// Configuration complete du Mode Dance.
-// Pieces concernees, plage d'intervalle entre etapes, motifs autorises, et
-// sous-configs pour les lyres et les lampes connectees.
-export const DanceConfigSchema = z.object({
-  enabled: z.boolean(),
-  rooms: z.array(z.string().min(1)),
-  intervalMinMs: z.number().int().min(1).max(2000),
-  intervalMaxMs: z.number().int().min(1).max(2000),
-  patterns: z.array(DancePatternIdSchema),
-  excludePanTilt: z.boolean(),
-  excludeCapabilities: z.array(CapabilitySchema),
-  lyre: DanceLyreModeSchema,
-  smartLights: DanceSmartLightsModeSchema,
-  updatedAt: z.string().datetime()
-});
-
-export type DanceConfig = z.infer<typeof DanceConfigSchema>;
-
 // ─── Prise connectee Meross (pilotee en local sur le LAN) ────────────────────
 
 // Configuration persistee de la prise Meross. Source de verite cote backend
@@ -324,19 +225,6 @@ export const MerossStatusSchema = z.object({
 });
 
 export type MerossStatus = z.infer<typeof MerossStatusSchema>;
-
-// Etat courant du Mode Dance, diffuse aux clients (broadcast WebSocket).
-// Indique si le chenillard tourne, quels projecteurs sont actifs, le motif en
-// cours et le nombre de phases deja envoyees.
-export const DanceStateSchema = z.object({
-  config: DanceConfigSchema,
-  running: z.boolean(),
-  activeFixtureIds: z.array(z.string().uuid()),
-  currentPattern: z.string().nullable(),
-  phasesSent: z.number().int().nonnegative()
-});
-
-export type DanceState = z.infer<typeof DanceStateSchema>;
 
 // ─── Scenes et presets ───────────────────────────────────────────────────────
 
@@ -456,7 +344,7 @@ export const SmartLightDmxZoneMirrorSchema = z
 export type SmartLightDmxZoneMirror = z.infer<typeof SmartLightDmxZoneMirrorSchema>;
 
 // Miroir DMX (mirror) optionnel : lie la lampe connectee a des canaux DMX de
-// l'univers. Ainsi les scenes, le Mode Dance et les curseurs de canaux la
+// l'univers. Ainsi les scenes et les curseurs de canaux la
 // pilotent de maniere transparente, comme un projecteur classique.
 // Deux modes cohabitent : le miroir uniforme (une seule couleur pour tout le
 // bandeau, via rChannel/gChannel/bChannel/briChannel) et le miroir par zone
@@ -604,6 +492,7 @@ export type RgbColor = z.infer<typeof RgbColorSchema>;
  *   • "gradient" — degrade entre deux couleurs le long d'une direction en 3D
  *   • "chase"    — une "tete" lumineuse de N zones qui se deplace le long du bandeau
  *   • "wave"     — onde sinusoidale coloree de from→to se propageant dans une direction
+ *   • "ma"       — effet parametrique facon grandMA2 (forme + phase repartie + MAtricks)
  */
 export const EffectStaticSchema = z.object({
   kind: z.literal("static"),
@@ -642,6 +531,120 @@ export const EffectWaveSchema = z.object({
   brightness: z.number().min(0).max(100).default(100).optional()
 });
 
+// ─── Effets parametriques facon grandMA2 ────────────────────────────────────
+// Modele repris du moteur d'effets (effect engine) d'un pupitre grandMA2, ramene
+// a un bandeau LED ou chaque ZONE joue le role d'un projecteur de la selection :
+//
+//   1. une FORME (form) periodique (sin, cos, rampe, triangle, PWM, random) ;
+//   2. une VITESSE (speed) en BPM — 60 BPM = un cycle par seconde, comme sur MA ;
+//   3. un DECALAGE DE PHASE (phase) reparti le long du bandeau : phaseFrom -> phaseTo
+//      en degres. C'est lui qui transforme une simple oscillation en chenillard, en
+//      vague ou en arc-en-ciel, sans forme dediee ;
+//   4. une plage LOW / HIGH (comme les valeurs basse et haute du pupitre) ;
+//   5. une CIBLE (target) : ce que la forme pilote — intensite, melange de deux
+//      couleurs, ou teinte (hue) ;
+//   6. les MAtricks (blocks / groups / wings) qui rearrangent la distribution de
+//      phase le long du bandeau, exactement comme sur le pupitre ;
+//   7. optionnellement une distribution SPATIALE (spatial) : la phase suit alors la
+//      position 3D reelle des zones dans la piece, pas leur ordre de cablage.
+
+/** Formes d'onde disponibles (equivalent des "forms" du pool d'effets grandMA2).
+ *  Les ids restent en anglais : ce sont des cles de schema Zod, comme les autres effets. */
+export const EffectFormSchema = z.enum([
+  "sin",       // sinus : part du milieu et monte
+  "cos",       // cosinus : part du haut et descend (sin decale de 90°)
+  "rampUp",    // rampe montante (dent de scie) : 0 -> 1 puis saut
+  "rampDown",  // rampe descendante : 1 -> 0 puis saut
+  "triangle",  // triangle : monte puis descend symetriquement
+  "pwm",       // creneau : high pendant `width` % du cycle, low ensuite
+  "random"     // niveau aleatoire tire a chaque cycle, propre a chaque zone
+]);
+export type EffectForm = z.infer<typeof EffectFormSchema>;
+
+/** MAtricks : rearrangement de la distribution de phase le long du bandeau.
+ *  - blocks : N zones consecutives partagent la meme phase (elles bougent ensemble) ;
+ *  - groups : le motif complet se repete N fois sur la longueur ;
+ *  - wings  : le bandeau est plie en N ailes, une aile sur deux etant miroir
+ *             (un effet qui part du centre vers les deux extremites). */
+export const EffectMatricksSchema = z.object({
+  blocks: z.number().int().min(1).max(100).default(1).optional(),
+  groups: z.number().int().min(1).max(50).default(1).optional(),
+  wings: z.number().int().min(1).max(8).default(1).optional()
+});
+export type EffectMatricks = z.infer<typeof EffectMatricksSchema>;
+
+/** Cible de la forme d'onde — l'equivalent de l'attribut vise par un effet MA :
+ *  - "dimmer" : la forme fait varier l'intensite entre bgColor et color ;
+ *  - "color"  : la forme fait un fondu entre color et colorTo ;
+ *  - "hue"    : la forme balaie la teinte de hueFrom a hueTo (arc-en-ciel). */
+export const EffectTargetSchema = z.enum(["dimmer", "color", "hue"]);
+export type EffectTarget = z.infer<typeof EffectTargetSchema>;
+
+/** Distribution SPATIALE de la phase : au lieu de repartir l'effet sur le RANG des
+ *  zones (l'ordre de cablage du bandeau), on la repartit sur leur POSITION REELLE
+ *  dans la piece, lue dans le layout 3D.
+ *  C'est ce qui distingue « la 12e LED du ruban » de « la LED qui est a 1,80 m du sol ».
+ *  - "axis"   : projection sur une direction 3D. Toutes les zones a la meme hauteur
+ *               (ou au meme X, selon l'axe) jouent ensemble, meme si elles sont a
+ *               l'oppose l'une de l'autre sur le ruban.
+ *  - "radial" : distance a un point de la piece. L'effet part de ce point et s'en
+ *               eloigne (ou l'inverse, en inversant les phases).
+ *  Sans `spatial`, la distribution reste celle du rang de zone (et les MAtricks
+ *  blocks/wings s'appliquent) : c'est le comportement d'un pupitre sur une selection. */
+export const EffectSpatialSchema = z.object({
+  mode: z.enum(["axis", "radial"]),
+  /** Axe de projection (mode "axis"). Normalise automatiquement. Ex. (0,1,0) = vertical. */
+  direction: Point3DSchema.optional(),
+  /** Point d'origine (mode "radial"), en metres dans le repere du layout. */
+  origin: Point3DSchema.optional()
+});
+export type EffectSpatial = z.infer<typeof EffectSpatialSchema>;
+
+export const EffectMaSchema = z.object({
+  kind: z.literal("ma"),
+  form: EffectFormSchema.default("sin"),
+  target: EffectTargetSchema.default("dimmer"),
+  /** Vitesse en BPM (battements par minute) : 60 BPM = 1 cycle/s. 0 fige l'effet. */
+  speed: z.number().min(0).max(1200).default(60),
+  /** Sens de defilement de la phase le long du bandeau. */
+  direction: z.enum(["forward", "backward"]).default("forward").optional(),
+  /** Valeurs basse et haute (%), comme Low value / High value sur le pupitre.
+   *  low > high est autorise : cela inverse simplement la forme. */
+  low: z.number().min(0).max(100).default(0),
+  high: z.number().min(0).max(100).default(100),
+  /** Phase (degres) de la premiere et de la derniere zone. 0 -> 360 = un cycle
+   *  complet reparti sur le bandeau ; 0 -> 0 = toutes les zones a l'unisson. */
+  phaseFrom: z.number().min(-1440).max(1440).default(0),
+  phaseTo: z.number().min(-1440).max(1440).default(360),
+  /** Largeur (%) de la portion haute du cycle. Utile surtout pour pwm et random. */
+  width: z.number().min(1).max(100).default(50),
+  /** Attack / Decay (% de la portion haute) : adoucissent la montee et la descente
+   *  des formes a fronts durs (pwm, random). 0 = front franc. */
+  attack: z.number().min(0).max(100).default(0).optional(),
+  decay: z.number().min(0).max(100).default(0).optional(),
+  matricks: EffectMatricksSchema.optional(),
+  /** Distribution de la phase par la geometrie 3D plutot que par le rang de zone.
+   *  Quand elle est definie, les MAtricks blocks/wings sont ignores (ils raisonnent
+   *  en rang de zone) ; groups continue de repeter le motif sur l'etendue mesuree. */
+  spatial: EffectSpatialSchema.optional(),
+  /** Couleur principale (targets "dimmer" et "color"). */
+  color: RgbColorSchema.optional(),
+  /** Couleur de la valeur basse (target "dimmer"), noir par defaut. */
+  bgColor: RgbColorSchema.optional(),
+  /** Couleur d'arrivee (target "color"). */
+  colorTo: RgbColorSchema.optional(),
+  /** Bornes de teinte en degres (target "hue"). */
+  hueFrom: z.number().min(-720).max(720).default(0).optional(),
+  hueTo: z.number().min(-720).max(720).default(360).optional(),
+  /** Saturation (%) de la teinte generee (target "hue"). */
+  saturation: z.number().min(0).max(100).default(100).optional(),
+  /** Graine du generateur pseudo-aleatoire (forme "random") : deux effets de
+   *  graines differentes scintillent differemment, mais chacun reste reproductible. */
+  seed: z.number().int().min(0).max(65535).default(1).optional(),
+  brightness: z.number().min(0).max(100).default(100).optional()
+});
+export type EffectMa = z.infer<typeof EffectMaSchema>;
+
 // Union discriminee de toutes les configs d'effet possibles (le champ "kind"
 // indique de quel effet il s'agit).
 export const SmartLightEffectConfigSchema = z.discriminatedUnion("kind", [
@@ -649,9 +652,240 @@ export const SmartLightEffectConfigSchema = z.discriminatedUnion("kind", [
   EffectSolidSchema,
   EffectGradientSchema,
   EffectChaseSchema,
-  EffectWaveSchema
+  EffectWaveSchema,
+  EffectMaSchema
 ]);
 export type SmartLightEffectConfig = z.infer<typeof SmartLightEffectConfigSchema>;
+
+// ─── Pool d'effets predefinis ───────────────────────────────────────────────
+// Equivalent du pool d'effets d'un grandMA2 : des points de depart nommes, prets
+// a jouer, que l'on retouche ensuite avec les reglages. Ils vivent ici (package
+// partage) pour que l'UI les propose et que le backend puisse les rejouer sans
+// que la liste soit dupliquee des deux cotes.
+// Regles de reglage utilisees ci-dessous, valables pour tout le pool :
+//   • phaseFrom 0 -> phaseTo 360  = un cycle complet reparti sur le bandeau
+//     (l'effet DEFILE) ; phaseFrom = phaseTo = toutes les zones a l'unisson.
+//   • speed est en BPM : 60 BPM = un cycle par seconde.
+
+export interface SmartLightEffectPreset {
+  /** Identifiant stable (anglais), utilisable dans une URL ou une commande. */
+  id: string;
+  /** Nom affiche dans le pool. */
+  label: string;
+  /** Une ligne d'explication : ce que l'on voit sur le bandeau. */
+  hint: string;
+  config: SmartLightEffectConfig;
+}
+
+const WARM = { r: 255, g: 170, b: 80 };
+const CYAN = { r: 0, g: 200, b: 255 };
+const WHITE = { r: 255, g: 255, b: 255 };
+const BLACK = { r: 0, g: 0, b: 0 };
+
+export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
+  {
+    id: "dimmer-soft",
+    label: "Dimmer soft",
+    hint: "Sinus doux qui remonte le bandeau — l'effet de base d'un pupitre.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 30,
+      low: 5, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      color: WARM, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "chaser",
+    label: "Chaser",
+    hint: "Creneau etroit + phase repartie : une tete qui court le long du bandeau.",
+    config: {
+      kind: "ma", form: "pwm", target: "dimmer", speed: 90,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 12,
+      color: CYAN, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "sweep",
+    label: "Balayage",
+    hint: "Rampe montante : une lueur qui glisse sans coupure, plus douce que le chaser.",
+    config: {
+      kind: "ma", form: "rampUp", target: "dimmer", speed: 45,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      color: { r: 120, g: 60, b: 255 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "rainbow",
+    label: "Arc-en-ciel",
+    hint: "La forme balaie la teinte : tout le spectre etale sur le bandeau, qui tourne.",
+    config: {
+      kind: "ma", form: "rampUp", target: "hue", speed: 20,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      hueFrom: 0, hueTo: 360, saturation: 100, brightness: 100
+    }
+  },
+  {
+    id: "pulse",
+    label: "Pulse",
+    hint: "Toutes les zones a l'unisson (phase 0 -> 0) : le bandeau respire d'un bloc.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 40,
+      low: 12, high: 100, phaseFrom: 0, phaseTo: 0, width: 50,
+      color: WARM, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "strobe",
+    label: "Strobe",
+    hint: "Creneau tres court a l'unisson. Prudence : flashs a 6 Hz.",
+    config: {
+      kind: "ma", form: "pwm", target: "dimmer", speed: 360,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 0, width: 8,
+      color: WHITE, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "sparkle",
+    label: "Scintillement",
+    hint: "Forme random : chaque zone s'allume a son propre rythme, en pointille.",
+    config: {
+      kind: "ma", form: "random", target: "dimmer", speed: 150,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 30,
+      attack: 25, decay: 75, seed: 7,
+      color: WHITE, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "embers",
+    label: "Braises",
+    hint: "Random lent par blocs de 3 zones, du rouge sombre a l'orange : un feu qui couve.",
+    config: {
+      kind: "ma", form: "random", target: "color", speed: 55,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 100,
+      attack: 50, decay: 50, seed: 3, matricks: { blocks: 3 },
+      color: { r: 90, g: 12, b: 0 }, colorTo: { r: 255, g: 130, b: 20 },
+      brightness: 100
+    }
+  },
+  {
+    id: "color-wave",
+    label: "Vague couleur",
+    hint: "Deux cycles de couleur sur la longueur (phase 0 -> 720), a intensite constante.",
+    config: {
+      kind: "ma", form: "sin", target: "color", speed: 25,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 720, width: 50,
+      color: { r: 20, g: 40, b: 255 }, colorTo: { r: 255, g: 0, b: 160 },
+      brightness: 100
+    }
+  },
+  {
+    id: "theatre",
+    label: "Théâtre",
+    hint: "Creneau au tiers, motif repete 8 fois (groups) : le chenillard des marquises.",
+    config: {
+      kind: "ma", form: "pwm", target: "dimmer", speed: 100,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 33,
+      matricks: { groups: 8 },
+      color: { r: 255, g: 210, b: 140 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "wings",
+    label: "Ailes",
+    hint: "Bandeau plie en deux (wings) : l'effet part du centre vers les extremites.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 40,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      matricks: { wings: 2 },
+      color: { r: 0, g: 255, b: 180 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  // ── Effets 3D : la phase suit la position reelle des zones dans la piece ────
+  // Ils n'ont de sens que si la lampe a un layout 3D (Room loop / U / editeur 3D).
+  // Sans layout, le moteur retombe sur une ligne droite et ils ressemblent aux autres.
+  {
+    id: "vertical-wave",
+    label: "Vague verticale",
+    hint: "3D — monte du sol au plafond : les montées de coin et le plafond s'allument à leur vraie hauteur.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 24,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
+      color: { r: 120, g: 180, b: 255 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "sweep-x",
+    label: "Traversée G→D",
+    hint: "3D — balaie la pièce de gauche à droite : les murs opposés s'allument ensemble au même X.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 20,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      spatial: { mode: "axis", direction: { x: 1, y: 0, z: 0 } },
+      color: WARM, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "sweep-z",
+    label: "Traversée F→A",
+    hint: "3D — voyage du fond vers l'avant : les murs gauche et droit défilent en parallèle.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 20,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      spatial: { mode: "axis", direction: { x: 0, y: 0, z: 1 } },
+      color: CYAN, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "ripple",
+    label: "Onde radiale",
+    hint: "3D — une onde partant du centre de la pièce (1,25 m de haut) et gagnant les murs.",
+    config: {
+      kind: "ma", form: "sin", target: "dimmer", speed: 30,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 540, width: 50,
+      spatial: { mode: "radial", origin: { x: 0, y: 1.25, z: 0 } },
+      color: { r: 0, g: 220, b: 200 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "rainbow-3d",
+    label: "Arc-en-ciel 3D",
+    hint: "3D — le spectre est plaqué sur la hauteur de la pièce et non sur l'ordre du ruban.",
+    config: {
+      kind: "ma", form: "rampUp", target: "hue", speed: 12,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
+      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
+      hueFrom: 0, hueTo: 360, saturation: 100, brightness: 100
+    }
+  },
+  {
+    id: "rain",
+    label: "Pluie",
+    hint: "3D — créneau court distribué en hauteur : des gouttes qui tombent du plafond.",
+    config: {
+      kind: "ma", form: "pwm", target: "dimmer", speed: 45,
+      low: 0, high: 100, phaseFrom: 360, phaseTo: 0, width: 15,
+      attack: 10, decay: 60,
+      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
+      color: { r: 180, g: 220, b: 255 }, bgColor: BLACK, brightness: 100
+    }
+  },
+  {
+    id: "breathe-color",
+    label: "Respiration",
+    hint: "Triangle tres lent a l'unisson, du bleu nuit au blanc chaud : veilleuse.",
+    config: {
+      kind: "ma", form: "triangle", target: "color", speed: 8,
+      low: 0, high: 100, phaseFrom: 0, phaseTo: 0, width: 50,
+      color: { r: 10, g: 20, b: 60 }, colorTo: WARM,
+      brightness: 100
+    }
+  }
+];
+
+/** Retrouve un preset du pool par son id. */
+export function findSmartLightEffectPreset(id: string): SmartLightEffectPreset | undefined {
+  return SMART_LIGHT_EFFECT_PRESETS.find((p) => p.id === id);
+}
 
 // ─── Constructeurs de layout (helpers purs, partages backend & frontend) ─────
 // Fonctions sans effet de bord qui generent une disposition (layout) 3D de zones.
@@ -1011,7 +1245,6 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("fixture_updated"), data: FixtureSchema }),
   z.object({ type: z.literal("scene_activated"), data: SceneSchema }),
   z.object({ type: z.literal("log"), data: LogEventSchema }),
-  z.object({ type: z.literal("dance_state"), data: DanceStateSchema }),
   z.object({ type: z.literal("smart_light_updated"), data: SmartLightSchema })
 ]);
 
