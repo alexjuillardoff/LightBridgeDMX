@@ -20,16 +20,23 @@ import { Store } from "./state/store";
 // ----- Configuration depuis l'environnement -----
 // ATTENTION : port verrouille, ne pas modifier (voir avertissement plus bas si PORT differe).
 const PORT = 5000;
-// Monter la cadence est le seul levier cote logiciel contre l'escalier d'un fondu :
-// en 8 bits, un sinus pleine echelle en 2 s franchit 255 valeurs en 1 s, soit 13 pas
-// par trame a 30 Hz, 9 a 44 et 7 a 60.
+// Cadence de la boucle de sortie. 40 Hz, et ce n'est pas un chiffre rond arbitraire :
 //
-// A savoir : une ligne DMX512 PHYSIQUE plafonne vers 44 trames/s pour un univers
-// plein (512 canaux a 250 kbit/s, plus les temps de trame). Au-dela, on emet
-// simplement plus d'Art-Net que la ligne n'en transporte — sans danger, les trames
-// en trop sont absorbees en aval, mais le gain reel s'arrete a ce que QLC+ et
-// l'interface savent ecouler. Le service borne de toute facon a 60 (clampFps).
-const DMX_FPS = parseInt(process.env.DMX_FPS ?? "60", 10);
+//   250 kbit/s en 8N2 -> 11 bits par octet -> 44 us par octet
+//   513 octets (start code + 512 canaux) x 44 us = 22,6 ms
+//   + BREAK (88 us) + MAB (8 us)                 ~  0,1 ms
+//                                        total   ~ 22,7 ms  ->  PLAFOND ~44 Hz
+//
+// Une ligne DMX512 pleine ne peut donc pas depasser ~44 trames/s. Regler l'interface
+// au-dela ne l'accelere pas : sur une sortie bit-bangee (Open DMX / FT232R via
+// libFTDI), elle cesse purement et simplement d'emettre. Constate en production le
+// 2026-09-04 — plus aucun projecteur ne repondait apres un passage a 60 Hz.
+//
+// Cette valeur doit rester ALIGNEE sur la frequence de trame reglee dans QLC+. Le
+// moteur d'effets trame ses valeurs (dithering) : emettre a 60 ce qu'un maillon aval
+// consomme a 40 revient a echantillonner le motif au lieu de l'integrer, ce qui
+// annule le tramage et peut faire battre le rendu.
+const DMX_FPS = parseInt(process.env.DMX_FPS ?? "40", 10);
 const DMX_PORT = process.env.DMX_PORT;
 const DMX_OUTPUT = (process.env.DMX_OUTPUT ?? "enttec") as "enttec" | "artnet";
 const ARTNET_HOST = process.env.ARTNET_HOST;

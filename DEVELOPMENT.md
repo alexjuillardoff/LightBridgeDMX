@@ -946,9 +946,30 @@ Le runner n'a **pas** de minuteur à lui : il s'abonne à `dmx.onBeforeFrame()` 
 
 Un `setInterval(33 ms)` à côté d'une sortie à 30 Hz dérive contre elle. Les deux cadences battent l'une contre l'autre et il sort régulièrement une trame où l'effet n'a pas encore recalculé — donc une valeur répétée. Mesuré sur un fondu sinus : **4 trames répétées sur 90**, soit un à-coup toutes les 0,75 s, parfaitement visible sur un PAR. En se calant sur la boucle de sortie, chaque trame porte une valeur fraîche, calculée une seule fois.
 
-`DMX_FPS` vaut **60** (borné à 60 par `clampFps`). C'est le seul levier logiciel contre l'escalier d'un fondu : en 8 bits, un sinus pleine échelle en 2 s franchit 255 valeurs en 1 s, soit 13 pas DMX par trame à 30 Hz contre 5-6 à 60 Hz (mesuré). À savoir : une ligne DMX512 **physique** plafonne vers 44 trames/s pour un univers plein — au-delà on émet plus d'Art-Net que la ligne n'en transporte, sans danger mais sans gain garanti.
+`DMX_FPS` vaut **40**, et le service borne à **44** (`DMX_MAX_FPS`). C'est le seul levier logiciel contre l'escalier d'un fondu : en 8 bits, un sinus pleine échelle en 2 s franchit 255 valeurs en 1 s, soit 13 pas DMX par trame à 30 Hz contre 5-6 à 60 Hz (mesuré). À savoir : une ligne DMX512 **physique** plafonne vers 44 trames/s pour un univers plein — au-delà on émet plus d'Art-Net que la ligne n'en transporte, sans danger mais sans gain garanti.
 
-⚠️ Modifier `DMX_FPS` dans le plist launchd demande un `bootout` + `bootstrap`. Un `kickstart -k` relance le processus avec la configuration **déjà chargée** : la nouvelle valeur est ignorée sans le moindre message.
+#### Le plafond de 44 Hz n'est pas négociable
+
+```
+250 kbit/s en 8N2 → 11 bits/octet → 44 µs par octet
+513 octets (start code + 512 canaux) × 44 µs = 22,6 ms
++ BREAK (88 µs) + MAB (8 µs)                 ≈  0,1 ms
+                                     total   ≈ 22,7 ms  →  ~44 trames/s
+```
+
+Régler une interface au-delà ne l'accélère pas : sur une sortie bit-bangée (Open DMX / FT232R), **elle cesse d'émettre**. Constaté en production le 2026-09-04 — plus aucun projecteur ne répondait après un passage à 60 Hz, et QLC+ est resté coincé dans cet état jusqu'à un redémarrage complet du processus.
+
+`DMX_FPS` doit rester **aligné sur la fréquence de trame réglée dans QLC+**. Le moteur d'effets trame ses valeurs : émettre à 60 ce qu'un maillon aval consomme à 40 revient à échantillonner le motif au lieu de l'intégrer, ce qui annule le tramage.
+
+#### QLC+ n'est pas une couche inutile
+
+Il ne pilote rien — mais il produit le **timing temps réel** de la trame DMX (BREAK, MAB, 44 µs/octet) dans un thread dédié, via libFTDI. C'est ce que le backend ne peut pas faire : en sortie directe (`DMX_OUTPUT=enttec`), ce timing vit dans la boucle d'événements de Node, partagée avec HomeKit, le WebSocket, les effets et le GC. Chaque pause décale le BREAK et corrompt une trame.
+
+Testé le 2026-09-04 : la sortie directe fonctionne mais produit des **artefacts visibles** (pertes de signal intermittentes). Garder QLC+.
+
+À savoir aussi : QLC+ accède au FT232R par libFTDI, en détachant le pilote noyau. Il n'apparaît donc **jamais** dans `lsof /dev/cu.usbserial-*` — son absence n'est pas un symptôme.
+
+⚠️ Modifier une variable d'environnement dans un plist launchd demande un `bootout` + `bootstrap`. Un `kickstart -k` relance le processus avec la configuration **déjà chargée** : la nouvelle valeur est ignorée sans le moindre message.
 
 ### La cellule, pièce centrale
 

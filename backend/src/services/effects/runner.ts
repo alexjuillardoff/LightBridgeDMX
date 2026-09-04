@@ -38,6 +38,8 @@ type Run = {
   /** Valeur de chaque canal possede AVANT le lancement. Sert deux fois : de
    *  reference au mode relatif, et de valeur a restaurer a l'arret. */
   base: Map<number, number>;
+  /** Report d'erreur du tramage temporel, par canal (voir ditherTo8bit). */
+  carry: Map<number, number>;
 };
 
 export class EffectRunner {
@@ -113,7 +115,8 @@ export class EffectRunner {
       positions: spatialPositions(cells, effect.spatial, effect.sides, effect.matricks?.groups ?? 1),
       t0: Date.now() / 1000,
       startedAt: new Date().toISOString(),
-      base
+      base,
+      carry: new Map()
     };
     this.runs.set(run.id, run);
     this.logger.info(
@@ -167,9 +170,9 @@ export class EffectRunner {
         run.positions ?? undefined
       );
 
-      // On accumule canal -> valeur pour toute la trame, puis on ecrit en blocs
-      // contigus. Ecrire canal par canal ferait 150 appels par trame sur le seul
-      // bandeau, soit 4500 par seconde.
+      // On accumule canal -> valeur REELLE (non arrondie) pour toute la trame, puis
+      // on trame et on ecrit en blocs contigus. Ecrire canal par canal ferait 150
+      // appels par trame sur le seul bandeau, soit 9000 par seconde a 60 Hz.
       const out = new Map<number, number>();
       for (let li = 0; li < run.effect.lines.length; li++) {
         const line = run.effect.lines[li];
@@ -179,7 +182,7 @@ export class EffectRunner {
           this.writeCell(out, run, run.cells[ci], line, frame.values[ci]);
         }
       }
-      flushBlocks(this.dmx, out, `effect:${run.id}`);
+      flushBlocks(this.dmx, ditherTo8bit(out, run.carry), `effect:${run.id}`);
     }
   }
 
@@ -191,6 +194,9 @@ export class EffectRunner {
     line: EffectLine,
     value: number
   ): void {
+    // La courbe ne s'applique qu'aux intensites : deplacer une lyre ou balayer une
+    // teinte n'a rien de photometrique, les courber deformerait le mouvement.
+    const v = line.attribute === "dimmer" ? applyCurve(value, run.effect.curve) : value;
     const channel = cell.channels[line.attribute];
 
     if (channel !== undefined) {
@@ -200,9 +206,9 @@ export class EffectRunner {
         // low 40 / high 60 fait vibrer la lyre autour de sa position.
         const centre = (line.low + line.high) / 200;
         const base = run.base.get(channel) ?? 0;
-        out.set(channel, clamp255(base + (value - centre) * 255));
+        out.set(channel, clampF(base + (v - centre) * 255));
       } else {
-        out.set(channel, clamp255(value * 255));
+        out.set(channel, clampF(v * 255));
       }
       return;
     }
@@ -218,7 +224,7 @@ export class EffectRunner {
       // ruban) : l'intensite devient un fondu bgColor -> color, seule facon de
       // faire varier la luminosite d'une LED qui n'a que trois canaux.
       case "dimmer":
-        rgb = lerpRgb(e.bgColor ?? { r: 0, g: 0, b: 0 }, e.color ?? { r: 255, g: 255, b: 255 }, value);
+        rgb = lerpRgb(e.bgColor ?? { r: 0, g: 0, b: 0 }, e.color ?? { r: 255, g: 255, b: 255 }, v);
         break;
       case "color":
         rgb = lerpRgb(e.color ?? { r: 0, g: 0, b: 0 }, e.colorTo ?? { r: 255, g: 255, b: 255 }, value);
@@ -236,6 +242,20 @@ export class EffectRunner {
     out.set(cell.channels.red, rgb.r);
     if (cell.channels.green !== undefined) out.set(cell.channels.green, rgb.g);
     if (cell.channels.blue !== undefined) out.set(cell.channels.blue, rgb.b);
+  }
+}
+
+/** Courbe de gradation : convertit une intensite VOULUE (0..1, perceptuelle) en
+ *  valeur DMX relative (0..1, photometrique). Voir DmxEffectSchema.curve. */
+function applyCurve(v: number, curve: DmxEffect["curve"]): number {
+  const k = v < 0 ? 0 : v > 1 ? 1 : v;
+  switch (curve) {
+    case "square":
+      return k * k;
+    case "cube":
+      return k * k * k;
+    case "linear":
+      return k;
   }
 }
 
@@ -360,23 +380,63 @@ function hsvToRgb(hueDeg: number, satPct: number, valPct: number): RgbColor {
   else if (h < 240) [r, g, b] = [0, x, c];
   else if (h < 300) [r, g, b] = [x, 0, c];
   else [r, g, b] = [c, 0, x];
-  return {
-    r: Math.round((r + m) * 255),
-    g: Math.round((g + m) * 255),
-    b: Math.round((b + m) * 255)
-  };
+  return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
 }
 
+/** Interpolation lineaire entre deux couleurs. Le resultat n'est PAS arrondi :
+ *  la partie fractionnaire est precisement ce que le tramage exploite ensuite. */
 function lerpRgb(a: RgbColor, b: RgbColor, t: number): RgbColor {
   const k = t < 0 ? 0 : t > 1 ? 1 : t;
   return {
-    r: Math.round(a.r + (b.r - a.r) * k),
-    g: Math.round(a.g + (b.g - a.g) * k),
-    b: Math.round(a.b + (b.b - a.b) * k)
+    r: a.r + (b.r - a.r) * k,
+    g: a.g + (b.g - a.g) * k,
+    b: a.b + (b.b - a.b) * k
   };
 }
 
-const clamp255 = (n: number): number => {
+/**
+ * Tramage temporel (dithering) : convertit des valeurs REELLES en octets DMX en
+ * repartissant l'erreur d'arrondi sur les trames suivantes.
+ *
+ * Pourquoi : un canal DMX n'a que 256 niveaux, et sur un fondu lent ces marches se
+ * voient — constate sur le bandeau avec une rampe qui n'avancait pourtant que d'un
+ * pas par trame. On ne peut pas ajouter de niveaux dans UNE trame ; on peut les
+ * creer dans le TEMPS. Pour rendre 189,25 on envoie trois trames a 189 et une a 190 :
+ * a 60 Hz l'oeil integre et percoit 189,25. C'est l'equivalent d'environ 10 bits.
+ *
+ * Methode : diffusion d'erreur. On arrondit `valeur + report`, puis on garde la
+ * difference comme report pour la trame suivante. Le report reste borne a ±0,5, donc
+ * pas de derive possible, et le motif s'adapte tout seul a la fraction — pas de
+ * cycle fixe qui produirait un battement visible.
+ *
+ * CONDITION : la cadence doit tenir jusqu'au projecteur. Si un maillon en aval
+ * decime le flux, il echantillonne le motif au lieu de l'integrer et le tramage se
+ * voit alors comme un scintillement. Ici la chaine est a 60 Hz de bout en bout
+ * (backend, Art-Net, QLC+, Open DMX USB).
+ */
+function ditherTo8bit(values: Map<number, number>, carry: Map<number, number>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const [channel, exact] of values) {
+    const target = exact + (carry.get(channel) ?? 0);
+    const rounded = target < 0 ? 0 : target > 255 ? 255 : Math.round(target);
+    // Report calcule sur la valeur AVANT bornage : sinon un canal colle a 0 ou 255
+    // accumulerait une dette qu'il ne pourrait jamais rendre, et le premier
+    // mouvement en sens inverse partirait avec plusieurs crans de retard.
+    carry.set(channel, clampCarry(target - rounded));
+    out.set(channel, rounded);
+  }
+  return out;
+}
+
+/** Borne le report a un demi-cran de part et d'autre. Sans cette borne, une valeur
+ *  hors plage prolongee ferait diverger l'accumulateur. */
+const clampCarry = (n: number): number => {
   if (!Number.isFinite(n)) return 0;
-  return n < 0 ? 0 : n > 255 ? 255 : Math.round(n);
+  return n < -0.5 ? -0.5 : n > 0.5 ? 0.5 : n;
+};
+
+/** Borne une valeur reelle dans la plage DMX, SANS arrondir. */
+const clampF = (n: number): number => {
+  if (!Number.isFinite(n)) return 0;
+  return n < 0 ? 0 : n > 255 ? 255 : n;
 };

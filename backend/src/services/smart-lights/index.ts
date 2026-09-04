@@ -91,7 +91,6 @@ const THREAD_PUSH_INTERVAL_MS = 250;
 // donc juste sous ce pas, pour qu'un cran de fader soit toujours pris en compte.
 const THREAD_DIFF_TOLERANCE = 0.3;
 const FLUSH_INTERVAL_MS = 30;        // tick de regroupement (coalesce) ~33 Hz (chemin HTTP)
-const STREAM_INTERVAL_MS = 33;       // cadence des trames de streaming ~30 Hz (chemin UDP)
 const REFRESH_INTERVAL_MS = 5000;    // refresh periodique depuis l'appareil
 const REFRESH_QUIESCENT_MS = 2000;   // ne pas refresh si l'utilisateur a ecrit dans cette fenetre
 const STREAM_WATCHDOG_INTERVAL_MS = 10000; // tick du chien de garde (watchdog) du streaming UDP
@@ -132,7 +131,6 @@ export class SmartLightService extends EventEmitter {
   private readonly logger: FastifyBaseLogger;
   private readonly runtime = new Map<string, RuntimeEntry>();
   private flushTimer: NodeJS.Timeout | null = null;
-  private streamTimer: NodeJS.Timeout | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
   private streamWatchdogTimer: NodeJS.Timeout | null = null;
   private readonly store: Store;
@@ -155,7 +153,6 @@ export class SmartLightService extends EventEmitter {
 
     this.dmx.on("tick", this.tickHandler);
     this.flushTimer = setInterval(() => this.flushAll(), FLUSH_INTERVAL_MS);
-    this.streamTimer = setInterval(() => this.streamAll(), STREAM_INTERVAL_MS);
     this.refreshTimer = setInterval(() => this.refreshAllIfQuiescent(), REFRESH_INTERVAL_MS);
     this.streamWatchdogTimer = setInterval(() => this.watchStreamingAll(), STREAM_WATCHDOG_INTERVAL_MS);
     this.logger.info({ count: lights.length }, "SmartLightService started");
@@ -174,10 +171,9 @@ export class SmartLightService extends EventEmitter {
   // les streamers UDP encore actifs avant de vider le registre.
   async stop(): Promise<void> {
     if (this.flushTimer) clearInterval(this.flushTimer);
-    if (this.streamTimer) clearInterval(this.streamTimer);
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.streamWatchdogTimer) clearInterval(this.streamWatchdogTimer);
-    this.flushTimer = this.streamTimer = this.refreshTimer = this.streamWatchdogTimer = null;
+    this.flushTimer = this.refreshTimer = this.streamWatchdogTimer = null;
     this.dmx.off("tick", this.tickHandler);
     for (const entry of this.runtime.values()) {
       if (entry.streamer) await entry.streamer.disable().catch(() => {});
@@ -688,7 +684,27 @@ export class SmartLightService extends EventEmitter {
    *  C'est le sens DMX -> lampe : les canaux DMX configures pilotent la smart light.
    *  Deux miroirs peuvent coexister : le miroir par zone (bloc R/G/B par zone, chemin
    *  streaming UDP) et le miroir uniforme historique (une couleur pour tout le bandeau). */
+  /** Appele a chaque trame DMX. Lit les miroirs, PUIS emet les trames UDP.
+   *
+   *  Le streaming n'a plus d'horloge a lui (c'etait un setInterval de 33 ms). Deux
+   *  raisons de l'avoir supprime :
+   *
+   *  1. Meme defaut que pour la sortie DMX : deux cadences independantes derivent
+   *     l'une contre l'autre et produisent des trames repetees.
+   *  2. Surtout, le moteur d'effets TRAME desormais ses valeurs (dithering) : il
+   *     alterne 189 et 190 pour rendre 189,5. Emettre a 30 Hz ce qui est trame a
+   *     60 Hz revient a echantillonner le motif au lieu de l'integrer — on
+   *     recupererait systematiquement l'une des deux valeurs, ce qui annule le
+   *     tramage et peut faire battre le rendu.
+   *
+   *  L'ordre compte : on lit les miroirs d'abord, on emet ensuite, pour que la trame
+   *  envoyee porte les valeurs de CETTE trame DMX et non de la precedente. */
   private onDmxTick(state: UniverseState): void {
+    this.readMirrors(state);
+    this.streamAll();
+  }
+
+  private readMirrors(state: UniverseState): void {
     for (const entry of this.runtime.values()) {
       const mirror = entry.light.dmxMirror;
       if (!mirror) continue;

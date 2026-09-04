@@ -80,7 +80,15 @@ export class DmxService extends EventEmitter {
   constructor(logger: FastifyBaseLogger, options?: DmxServiceOptions) {
     super();
     this.logger = logger.child({ service: "dmx" });
-    this.fps = clampFps(options?.fps ?? 30);
+    const requestedFps = options?.fps ?? 30;
+    this.fps = clampFps(requestedFps);
+    if (requestedFps > DMX_MAX_FPS) {
+      // Silencieux, ce bornage ferait croire a une cadence qu'on n'a jamais eue.
+      this.logger.warn(
+        { requested: requestedFps, applied: this.fps },
+        `Cadence demandee au-dela du plafond DMX512 (~${DMX_MAX_FPS} Hz) — ramenee au maximum`
+      );
+    }
     this.universeId = options?.universe ?? 0;
     this.configuredPort = options?.port;
     this.output = options?.output ?? "enttec";
@@ -511,4 +519,20 @@ const clampValue = (value: number) => {
 };
 
 // Borne le FPS demande dans une plage raisonnable (1 a 60 trames/seconde).
-const clampFps = (fps: number) => Math.max(1, Math.min(fps, 60));
+/**
+ * Plafond physique du DMX512, et non un chiffre de confort :
+ *
+ *   250 kbit/s en 8N2 -> 11 bits par octet -> 44 us par octet
+ *   513 octets (start code + 512 canaux) x 44 us = 22,6 ms
+ *   + BREAK (88 us) + MAB (8 us)                 ~  0,1 ms
+ *                                        total   ~ 22,7 ms  ->  ~44 trames/s
+ *
+ * Regler une interface au-dela ne l'accelere pas. Sur une sortie bit-bangee (Open
+ * DMX / FT232R), elle cesse purement et simplement d'emettre : constate en
+ * production le 2026-09-04, plus aucun projecteur ne repondait apres un passage a
+ * 60 Hz. La borne etait auparavant a 60, c'est-a-dire AU-DESSUS du possible — elle
+ * autorisait donc precisement le reglage qui casse la sortie.
+ */
+const DMX_MAX_FPS = 44;
+
+const clampFps = (fps: number) => Math.max(1, Math.min(fps, DMX_MAX_FPS));

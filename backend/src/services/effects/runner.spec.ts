@@ -53,6 +53,9 @@ const dimmerEffect = (over = {}) => ({
   speed: 60,
   rate: 1,
   direction: "forward" as const,
+  // Courbe neutre : ces tests verifient l'ecriture des canaux et le tramage, pas la
+  // photometrie. Une loi carree y rendrait chaque valeur attendue illisible.
+  curve: "linear" as const,
   lines: [
     {
       attribute: "dimmer" as const,
@@ -159,6 +162,51 @@ describe("EffectRunner", () => {
 
     // Une zone n'a pas de canal d'intensite : l'effet doit sortir en couleur pleine.
     expect([universe[107], universe[108], universe[109]]).toEqual([200, 100, 50]);
+    runner.stop();
+  });
+});
+
+describe("tramage temporel", () => {
+  it("alterne entre les deux entiers encadrants pour rendre une valeur fractionnaire", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [par], () => []);
+
+    // high = 50 % -> 127,5 exactement : la fraction vaut un demi-cran, le cas le
+    // plus defavorable, et celui ou le tramage se voit le mieux.
+    await runner.run(
+      dimmerEffect({ lines: [{ ...dimmerEffect().lines[0], low: 50, high: 50 }] }),
+      ["par-1"]
+    );
+
+    const seen: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      frame();
+      seen.push(universe[9]);
+    }
+    // Sans tramage, on lirait vingt fois la meme valeur arrondie.
+    expect(new Set(seen).size).toBeGreaterThan(1);
+    for (const v of seen) expect([127, 128]).toContain(v);
+    // Et la moyenne doit retomber sur la valeur reelle demandee.
+    const moyenne = seen.reduce((a, b) => a + b, 0) / seen.length;
+    expect(moyenne).toBeGreaterThan(127.3);
+    expect(moyenne).toBeLessThan(127.7);
+    runner.stop();
+  });
+
+  it("ne derive pas sur une valeur entiere : pas de scintillement inutile", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [par], () => []);
+
+    // high = 100 % -> 255 pile : aucune fraction a repartir, la sortie doit etre stable.
+    await runner.run(dimmerEffect(), ["par-1"]);
+    const seen: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      frame();
+      seen.push(universe[9]);
+    }
+    expect(new Set(seen)).toEqual(new Set([255]));
     runner.stop();
   });
 });

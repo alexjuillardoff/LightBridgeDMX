@@ -784,6 +784,24 @@ export const DmxEffectSchema = z.object({
    *  Rate 1 = 60 BPM. Permet de doubler un effet sans retoucher sa vitesse. */
   rate: z.number().min(0.05).max(20).default(1),
   direction: z.enum(["forward", "backward"]).default("forward"),
+  /** Courbe de gradation appliquee aux lignes d'INTENSITE (attribut "dimmer", et le
+   *  fondu de couleur qui en tient lieu sur une cellule RGB). Pas aux attributs de
+   *  position ni de teinte, qui n'ont rien de photometrique.
+   *
+   *  Pourquoi : la luminosite percue suit a peu pres une racine cubique de la valeur
+   *  DMX. Un fondu lineaire consacre donc pres de la moitie de sa variation VISIBLE
+   *  aux vingt premieres valeurs, franchies en une fraction de seconde — ce qui se
+   *  voit comme un escalier en bas de course, quelle que soit la cadence de sortie.
+   *
+   *  - "square" (defaut) : v², la loi carree des gradateurs de theatre. Bon compromis.
+   *  - "cube"   : v³, perception quasi lineaire, mais ecrase fortement le bas.
+   *  - "linear" : aucune correction, pour un canal qui n'est pas une intensite ou un
+   *               appareil qui applique deja sa propre courbe.
+   *
+   *  La courbe se combine au tramage temporel : en etalant le bas de course sur
+   *  beaucoup plus de trames, elle fait passer le signal sous un cran par trame, et
+   *  c'est seulement la que le tramage peut creer les niveaux intermediaires. */
+  curve: z.enum(["linear", "square", "cube"]).default("square"),
   matricks: EffectMatricksSchema.optional(),
   /** Distribution de la phase par la GEOMETRIE plutot que par le rang de cellule.
    *  N'a de sens que sur des cellules dont on connait la position 3D — aujourd'hui
@@ -1706,6 +1724,10 @@ export function maToDmxEffect(ma: EffectMa): DmxEffect {
     speed: ma.speed,
     rate: 1,
     direction: ma.direction ?? "forward",
+    // Les presets ont ete regles a l'oreille sur un chemin LINEAIRE. On les convertit
+    // malgre tout en loi carree : c'est elle qui rend un fondu regulier a l'oeil, et
+    // un preset qui « escaliere » n'est pas fidele a son reglage, il est juste ancien.
+    curve: "square",
     matricks: ma.matricks,
     spatial: ma.spatial,
     sides: ma.sides,
