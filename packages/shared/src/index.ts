@@ -418,6 +418,35 @@ export const dmxToKelvin = (value: number): number =>
 export const kelvinToDmx = (kelvin: number): number =>
   Math.round(((clampKelvin(kelvin) - COLOR_TEMP_MIN_K) / (COLOR_TEMP_MAX_K - COLOR_TEMP_MIN_K)) * 255);
 
+/** Kelvin -> RGB 0-255, approximation du corps noir (Tanner Helland).
+ *
+ *  Necessaire des qu'une lampe recoit sa couleur en RGB et non en consigne de
+ *  blanc : c'est le cas du streaming extControl d'un bandeau Nanoleaf, dont la
+ *  trame ne transporte que du R/G/B. Sans cette conversion, une temperature de
+ *  couleur demandee (HomeKit, onglet Lampes, canal DMX de blanc) ne trouve aucun
+ *  chemin jusqu'a l'appareil : elle change l'etat sans changer une seule LED.
+ *
+ *  La luminosite n'est PAS appliquee ici — on renvoie la teinte du blanc a pleine
+ *  echelle, a l'appelant de l'attenuer, exactement comme pour une couleur. */
+export const kelvinToRgb = (kelvin: number): { r: number; g: number; b: number } => {
+  const t = clampKelvin(kelvin) / 100;
+  const clamp255 = (value: number) => Math.round(Math.min(255, Math.max(0, value)));
+
+  if (t <= 66) {
+    return {
+      r: 255,
+      g: clamp255(99.4708025861 * Math.log(t) - 161.1195681661),
+      // En dessous de ~1900 K le bleu est eteint : le logarithme n'y est plus defini.
+      b: t <= 19 ? 0 : clamp255(138.5177312231 * Math.log(t - 10) - 305.0447927307)
+    };
+  }
+  return {
+    r: clamp255(329.698727446 * (t - 60) ** -0.1332047592),
+    g: clamp255(288.1221695283 * (t - 60) ** -0.0755148492),
+    b: 255
+  };
+};
+
 // Mode couleur courant d'une lampe : teinte/saturation (hs), temperature (ct)
 // ou effet (effect).
 export const SmartLightColorModeSchema = z.enum(["hs", "ct", "effect"]);
@@ -1790,6 +1819,15 @@ export const DMX_EFFECT_PRESETS: DmxEffectPreset[] = SMART_LIGHT_EFFECT_PRESETS.
   group: p.group,
   label: p.label,
   hint: p.hint,
-  effect: maToDmxEffect(p.config),
+  // Le nom voyage avec l'effet : c'est lui qui s'affiche dans la liste des effets
+  // en cours, ou l'on ne sait plus de quelle tuile du pool ils sont partis.
+  effect: { ...maToDmxEffect(p.config), name: p.label },
   needsGeometry: p.config.spatial !== undefined || p.config.sides !== undefined
 }));
+
+// ─── Moteur d'effets ────────────────────────────────────────────────────────
+// La math des effets et la resolution des cellules vivent dans ce package, pas
+// cote backend : le runner DMX et l'apercu de la fenetre Effets doivent calculer
+// EXACTEMENT la meme chose, sinon l'apercu ment sur ce que le plateau va faire.
+export * from "./effect-cells";
+export * from "./effect-engine";

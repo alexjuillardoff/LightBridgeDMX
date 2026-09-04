@@ -10,7 +10,7 @@ import { ChannelGrid } from "../../ChannelGrid";
 import { EncoderBar } from "../../EncoderBar";
 import { FixtureSheet } from "../../FixtureSheet";
 import { UniverseMonitor } from "../../UniverseMonitor";
-import { EffectsWindow } from "./EffectsWindow";
+import { EffectsWindow } from "./effects/EffectsWindow";
 import { ExecutorsWindow } from "./ExecutorsWindow";
 import { GroupsWindow } from "./GroupsWindow";
 import { LogWindow } from "./LogWindow";

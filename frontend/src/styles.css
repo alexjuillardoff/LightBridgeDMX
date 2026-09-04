@@ -2267,6 +2267,566 @@ select {
   color: #ffb4ab;
 }
 
+/* ─── 8c. Fenêtre Effets ─────────────────────────────────────────────────── */
+
+/* La fenêtre suit le geste, de haut en bas : cible, pool, aperçu, lignes,
+   réglages, barre d'action. Le vocabulaire visuel reste celui du pupitre —
+   liseré ambre sur les titres, valeurs en jaune monospace, tuiles de pool. */
+
+.fx {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Bandeau de cible : la sélection sur laquelle le prochain Go va tomber. */
+.fx-target {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px;
+  background: #000;
+  border: 1px solid var(--edge);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.fx-target strong {
+  font-family: var(--font-mono);
+  color: var(--yellow);
+}
+
+.fx-target-empty {
+  border-color: var(--amber-text);
+  color: var(--amber-text);
+}
+
+.fx-target-names {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+
+/* --- Pool d'effets --- */
+
+.fx-pool {
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+}
+
+.pool-tile-effect {
+  background: linear-gradient(180deg, #123021 0%, #05130c 100%);
+  border-color: #3d8f5f;
+}
+
+/* Effet chargé dans l'éditeur : même surlignage que la sélection du programmer. */
+.pool-tile-active {
+  border-color: var(--yellow);
+  box-shadow: inset 0 0 0 1px rgba(242, 197, 61, 0.35);
+}
+
+/* Effet qui suppose une géométrie 3D absente de la sélection : on le laisse
+   visible mais éteint, comme un emplacement de pool hors contexte. */
+.pool-tile-blocked {
+  opacity: 0.42;
+}
+
+/* Corps cliquable de la tuile : charge l'effet dans l'éditeur sans le lancer. */
+.fx-tile-load {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.fx-tile-load:hover .pool-name {
+  color: var(--yellow);
+}
+
+/* --- Éditeur : en-tête --- */
+
+.fx-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+  border-top: 1px solid var(--edge);
+}
+
+.fx-name {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 5px;
+  border-color: transparent;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.fx-name:hover {
+  border-color: var(--edge-grey);
+}
+
+.fx-editor-note {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* Voyant « Suivi » : l'effet en cours obéit aux réglages, sans relance. */
+.fx-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+/* --- Aperçu --- */
+
+.fx-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px;
+  background: #000;
+  border: 1px solid var(--line-soft);
+}
+
+.fx-preview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--amber-text);
+}
+
+.fx-preview-note {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--faint);
+}
+
+/* La rangée de cellules : une case par cellule que le moteur pilotera. */
+.fx-cells {
+  display: flex;
+  gap: 1px;
+  height: 34px;
+}
+
+.fx-cell {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 2px;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Point de visée : la position pan/tilt de la cellule dans son cadre. */
+.fx-cell-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--attr-position);
+  box-shadow: 0 0 3px var(--attr-position);
+}
+
+/* Forme d'onde de la ligne éditée, avec son curseur de lecture. */
+.fx-wave {
+  width: 100%;
+  height: 34px;
+  background: #050505;
+  border: 1px solid var(--line-soft);
+}
+
+.fx-wave-mid {
+  stroke: #1e1e1e;
+  stroke-width: 0.5;
+}
+
+.fx-wave-path {
+  fill: none;
+  stroke: var(--yellow);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.fx-wave-cursor {
+  stroke: var(--red-bright);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* --- Blocs de réglage --- */
+
+.fx-block {
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+}
+
+.fx-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--amber-text);
+}
+
+.fx-block-note,
+.fx-quicklabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--faint);
+}
+
+.fx-block-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.fx-warn {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--amber-text);
+}
+
+/* Bouton compact : ajouter une ligne, poser une phase, incrémenter un MAtrick. */
+.fx-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: linear-gradient(180deg, #1a1a1a 0%, #050505 100%);
+  border: 1px solid var(--edge-grey);
+  color: var(--dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.fx-mini:hover:not(:disabled) {
+  border-color: var(--edge);
+  color: var(--amber-text);
+}
+
+.fx-mini:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.fx-mini-danger:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red-bright);
+}
+
+/* --- Tableau des lignes --- */
+
+.fx-table-wrap {
+  overflow-x: auto;
+}
+
+.fx-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #000;
+  border: 1px solid var(--line-soft);
+}
+
+.fx-table th {
+  padding: 2px 4px;
+  background: linear-gradient(180deg, #1e1e1e 0%, #0c0c0c 100%);
+  border-bottom: 1px solid var(--edge);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--amber-text);
+  white-space: nowrap;
+}
+
+.fx-table td {
+  padding: 1px 2px;
+  border-bottom: 1px solid #111;
+}
+
+.fx-table tr {
+  cursor: pointer;
+}
+
+/* Ligne sélectionnée : c'est elle que trace l'aperçu et que visent les
+   raccourcis de phase. */
+.fx-row-active td {
+  background: #14263a;
+}
+
+.fx-table select,
+.fx-table input {
+  padding: 1px 3px;
+  font-size: 11px;
+  border-color: #242424;
+}
+
+.fx-table select {
+  background-position: calc(100% - 10px) 8px, calc(100% - 7px) 8px;
+  padding-right: 16px;
+  min-width: 62px;
+}
+
+.fx-num {
+  width: 46px;
+  text-align: right;
+}
+
+.fx-table input:disabled {
+  opacity: 0.3;
+}
+
+/* Numéro de ligne, coloré par famille d'attribut — le code couleur des groupes
+   d'encodeurs du pupitre (intensité blanche, position bleue, couleur magenta). */
+.fx-col-num {
+  width: 18px;
+  padding-left: 4px !important;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+}
+
+.fx-attr-dimmer {
+  color: var(--attr-dimmer);
+}
+
+.fx-attr-position {
+  color: var(--attr-position);
+}
+
+.fx-attr-color {
+  color: var(--attr-color);
+}
+
+.fx-quickrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+/* --- Vitesse, MAtricks, couleurs, rendu --- */
+
+.fx-masters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 5px;
+}
+
+.fx-master {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fx-master input {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--yellow);
+  text-align: right;
+}
+
+.fx-master-unit {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.fx-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+}
+
+.fx-toggle button {
+  padding: 4px 2px;
+  background: linear-gradient(180deg, #1a1a1a 0%, #050505 100%);
+  border: 1px solid var(--edge-grey);
+  color: var(--dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.fx-toggle-on,
+.fx-toggle button.fx-toggle-on {
+  background: linear-gradient(180deg, #1d5da0 0%, #0d3a66 100%);
+  border-color: var(--yellow);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.fx-matricks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 5px;
+}
+
+.fx-stepper-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--amber-text);
+}
+
+.fx-stepper-row {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.fx-stepper-row input {
+  width: 100%;
+  padding: 1px 3px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.fx-stepper-row .fx-mini {
+  padding: 1px 7px;
+  justify-content: center;
+}
+
+.fx-colors,
+.fx-render {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.fx-field {
+  width: auto;
+  min-width: 78px;
+  gap: 2px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.fx-swatch input {
+  width: 46px;
+}
+
+.fx-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  padding-bottom: 4px;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+/* --- Barre d'action : elle reste sous la main quand la fenêtre défile --- */
+
+.fx-actions {
+  position: sticky;
+  bottom: -6px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  padding: 4px 0;
+  background: var(--desk);
+  border-top: 1px solid var(--edge);
+}
+
+.fx-actions .ma-key {
+  flex: 1;
+  gap: 5px;
+  min-height: 30px;
+}
+
+.fx-go {
+  border-color: var(--green);
+  color: #b6f0c4;
+}
+
+.fx-go:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ma-key:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* --- Effets en cours --- */
+
+.fx-run {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border-bottom: 1px solid #111;
+  font-size: 12px;
+}
+
+.fx-run:last-child {
+  border-bottom: none;
+}
+
+.fx-run-live {
+  border-left: 2px solid var(--green);
+  padding-left: 4px;
+}
+
+.fx-run-name {
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.fx-run-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
 /* ─── 9. Blocs spécifiques ──────────────────────────────────────────────── */
 
 .activity-list {

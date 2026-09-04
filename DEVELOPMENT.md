@@ -109,7 +109,14 @@ LightBridgeDMX/
 │   │   │   │       ├── PlaybacksWindow.tsx ← rangée de faders master
 │   │   │   │       ├── GroupsWindow.tsx    ← pool de groupes de sélection
 │   │   │   │       ├── PresetsWindow.tsx   ← pool de presets (canal → valeur)
-│   │   │   │       └── LogWindow.tsx       ← journal des événements backend
+│   │   │   │       ├── LogWindow.tsx       ← journal des événements backend
+│   │   │   │       └── effects/            ← fenêtre Effets (éditeur type grandMA2)
+│   │   │   │           ├── EffectsWindow.tsx  ← orchestration : sélection, brouillon, effet suivi
+│   │   │   │           ├── EffectPool.tsx     ← les 23 départs en tuiles numérotées
+│   │   │   │           ├── EffectPreview.tsx  ← aperçu animé (mêmes fonctions que le runner DMX)
+│   │   │   │           ├── EffectLines.tsx    ← tableau des lignes (un attribut par ligne)
+│   │   │   │           ├── EffectMasters.tsx  ← vitesse, MAtricks, couleurs, rendu
+│   │   │   │           └── labels.ts          ← libellés FR des clés de schéma + conversions
 │   │   │   ├── FixtureSheet.tsx       ← cellules fixtures groupées par pièce + sélection + cadenas
 │   │   │   ├── EncoderBar.tsx         ← onglets de groupe + molettes + valeurs rapides (0/25/50/75/FL)
 │   │   │   ├── UniverseMonitor.tsx    ← DMX sheet 512 canaux en lecture seule
@@ -936,9 +943,15 @@ Un effet s'applique à la **sélection courante de projecteurs**, pas à une lam
 
 | Fichier | Rôle |
 |---------|------|
-| `engine.ts` | Math pure : `evaluateDmxEffect(effect, cellCount, t, positions?)` → une valeur 0..1 par cellule et par ligne. Sans état, sans I/O, testé. |
-| `cells.ts` | `resolveCells(fixtureIds, fixtures, smartLights)` — développe une sélection en **cellules** portant leurs canaux DMX absolus. |
-| `runner.ts` | `EffectRunner` — évalue à chaque trame de sortie DMX, traduit en écritures et restaure à l'arrêt. |
+| `packages/shared/src/effect-engine.ts` | Math pure : `evaluateDmxEffect(effect, cellCount, t, positions?)` → une valeur 0..1 par cellule et par ligne, plus `spatialPositions()`, `applyCurve()` et `effectLineColor()`. Sans état, sans I/O, testé. |
+| `packages/shared/src/effect-cells.ts` | `resolveCells(fixtureIds, fixtures, smartLights)` — développe une sélection en **cellules** portant leurs canaux DMX absolus. |
+| `backend/.../effects/runner.ts` | `EffectRunner` — évalue à chaque trame de sortie DMX, traduit en écritures, tramage, et restaure à l'arrêt. |
+
+La math et la résolution des cellules vivent dans le **package partagé**, pas côté backend : l'aperçu
+de la fenêtre Effets appelle exactement les mêmes fonctions que le runner. C'est ce qui rend l'aperçu
+non-négociablement honnête — il ne peut pas montrer un chenillard sur 3 pas là où le bandeau en jouera
+50, ni une couleur que le plateau ne prendra pas. Les tests de ces deux modules restent dans la suite
+Vitest du backend (`backend/src/services/effects/`), seul paquet du dépôt équipé pour les exécuter.
 
 ### Une seule horloge
 
@@ -1016,10 +1029,52 @@ Un effet porte **plusieurs lignes**, une par attribut — c'est ce qui permet un
 |---------|-----------|------|
 | `GET /api/effects` | — | Effets en cours |
 | `POST /api/effects/run` | `{ effect, fixtureIds }` | Lance sur une sélection |
+| `PUT /api/effects/:id` | `{ effect }` | **Retouche un effet en cours** sans le relancer |
 | `DELETE /api/effects/:id` | — | Arrête et restaure |
 | `POST /api/effects/stop-all` | — | Arrête tout |
 
+`PUT` existe pour une raison précise : relancer aurait remis `t0` à maintenant, donc rendu la phase à
+son point de départ — un à-coup visible sur le plateau à chaque cran d'encodeur, alors qu'on cherche
+justement à régler l'effet en le regardant. Il conserve `t0`, les cellules et la photo des canaux
+d'avant lancement ; il recalcule la distribution spatiale et vide le report de tramage. La **cible**,
+elle, ne change pas : modifier la sélection, c'est un nouvel effet, pas un réglage.
+
 Le pool de départs vit dans le package partagé (`DMX_EFFECT_PRESETS`), dérivé du pool historique via `maToDmxEffect()` : les 23 presets ont été réglés à l'oreille sur le bandeau du salon, leurs phases et origines spatiales valent mieux qu'une réécriture.
+
+### La fenêtre Effets (`frontend/src/components/console/windows/effects/`)
+
+Reprise de la grammaire de l'Effect Editor d'un grandMA2, dans l'ordre du geste : **cible → pool →
+aperçu → lignes → réglages → GO**.
+
+| Fichier | Rôle |
+|---------|------|
+| `EffectsWindow.tsx` | Orchestration : sélection, brouillon, effet suivi, mutations |
+| `EffectPool.tsx` | Les 23 départs en tuiles numérotées, par onglet de groupe |
+| `EffectPreview.tsx` | Rangée de cellules animée + forme d'onde de la ligne éditée |
+| `EffectLines.tsx` | Le tableau des lignes — un attribut par ligne |
+| `EffectMasters.tsx` | Vitesse, MAtricks, couleurs, rendu |
+| `labels.ts` | Traduction des clés de schéma, conversions hex ↔ RGB |
+
+Quatre décisions qui font l'ergonomie :
+
+- **L'aperçu ne peut pas mentir.** Il développe la sélection avec `resolveCells()` et l'anime avec
+  `evaluateDmxEffect()` — les fonctions du runner, pas une imitation. Sélection vide : il tourne sur
+  12 cellules fictives et le dit, parce qu'explorer le pool avant d'avoir sélectionné est un usage
+  légitime.
+- **Toutes les lignes sont éditables.** L'ancienne fenêtre n'éditait que la première et annonçait les
+  autres en note de bas de page : un cercle de lyre (pan + tilt déphasés de 90°) était affiché mais
+  inréglable.
+- **Un champ qui n'agit pas est grisé, pas muet.** Width / Attack / Decay / Seed ne veulent rien dire
+  hors des formes à fronts durs (créneau, aléatoire) — c'est aussi la règle du pupitre. Même logique
+  pour les tuiles du pool qui supposent une géométrie 3D : elles s'éteignent quand la sélection n'en a
+  pas, au lieu de lancer un effet silencieux.
+- **Un effet lancé suit l'éditeur.** Tant que la fenêtre pilote un effet en cours (voyant « Suivi »),
+  chaque réglage part en `PUT` après 150 ms — la phase ne repart pas de zéro. C'est ce qui permet de
+  régler en regardant le plateau plutôt qu'en devinant.
+
+Les champs qui n'avaient aucune UI auparavant sont désormais atteignables : `curve`, `dither`, les
+couleurs (`color`, `bgColor`, `colorTo`, `hueFrom/hueTo/saturation`), le nom de l'effet, et l'ajout
+ou la suppression de lignes.
 | `setStreaming(id, enabled, zoneCount?)` | Active/désactive le streaming UDP, persiste en DB |
 | `setEffect(id, effect)` | Définit l'effet position-aware courant, persiste en DB |
 | `setLayout(id, layout)` | Sauvegarde la disposition 3D des zones |

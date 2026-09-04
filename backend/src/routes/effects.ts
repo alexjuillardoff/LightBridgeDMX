@@ -37,6 +37,22 @@ export const registerEffectRoutes = (app: FastifyInstance, ctx: RouteContext) =>
     return running;
   });
 
+  // Retouche un effet EN COURS sans le relancer : la phase ne repart pas de zero,
+  // donc on peut regler la vitesse ou la forme en regardant le plateau.
+  app.put("/api/effects/:id", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const parsed = DmxEffectSchema.safeParse((request.body as { effect?: unknown })?.effect);
+    if (!parsed.success) {
+      return reply.code(400).send({ message: "Effet invalide", issues: parsed.error.issues });
+    }
+    const running = ctx.effects.updateRun(id, parsed.data);
+    if (!running) {
+      return reply.code(404).send({ message: "Effet introuvable (deja arrete ?)" });
+    }
+    ctx.broadcast({ type: "effects_updated", data: { running: ctx.effects.list() } });
+    return running;
+  });
+
   // Arrete un effet. Ses canaux reprennent la valeur qu'ils avaient avant.
   app.delete("/api/effects/:id", async (request, reply) => {
     const id = (request.params as { id: string }).id;

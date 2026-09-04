@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+// Code teste : packages/shared/src/effect-cells.ts (voir engine.spec.ts).
 import type { Fixture, SmartLight } from "@lightbridgedmx/shared";
-import { resolveCells } from "./cells";
+import { resolveCells } from "@lightbridgedmx/shared";
 
 const fixture = (over: Partial<Fixture> & Pick<Fixture, "id" | "name" | "address" | "channels">): Fixture =>
   ({ universe: 0, ...over }) as Fixture;

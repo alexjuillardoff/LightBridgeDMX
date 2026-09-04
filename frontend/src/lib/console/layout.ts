@@ -137,7 +137,7 @@ export const WINDOW_LABELS: Record<WindowKind, { title: string; hint: string }> 
   presets: { title: "Presets", hint: "Valeurs de canaux mémorisées" },
   faders: { title: "Fader View", hint: "Canaux DMX un par un" },
   dmx: { title: "DMX Sheet", hint: "Les 512 canaux en un coup d'œil" },
-  effects: { title: "Effets", hint: "Pool d'effets des bandeaux LED" },
+  effects: { title: "Effets", hint: "Pool d'effets joués sur la sélection" },
   log: { title: "Command Feedback", hint: "Journal des événements" }
 };
 

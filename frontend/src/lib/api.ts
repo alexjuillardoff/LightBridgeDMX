@@ -284,14 +284,21 @@ export const api = {
   },
 
   // Moteur d'effets DMX. Un effet se joue sur une SELECTION de projecteurs et vit
-  // dans le backend le temps qu'il tourne — rien n'est persiste, il n'y a donc ni
-  // creation ni mise a jour, seulement « lance », « arrete » et « qu'est-ce qui tourne ».
+  // dans le backend le temps qu'il tourne — rien n'est persiste. On peut le lancer,
+  // le retoucher pendant qu'il tourne, et l'arreter ; il n'y a rien a enregistrer.
   effects: {
     list: () => fetchJSON<{ running: RunningEffect[] }>("/api/effects"),
     run: (effect: DmxEffect, fixtureIds: string[]) =>
       fetchJSON<RunningEffect>("/api/effects/run", {
         method: "POST",
         body: JSON.stringify({ effect, fixtureIds })
+      }),
+    /** Retouche un effet EN COURS : la phase ne repart pas de zero, l'effet suit
+     *  les reglages comme un encodeur de pupitre. */
+    update: (id: string, effect: DmxEffect) =>
+      fetchJSON<RunningEffect>(`/api/effects/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ effect })
       }),
     stop: (id: string) => fetchJSON<{ stopped: string }>(`/api/effects/${id}`, { method: "DELETE" }),
     stopAll: () =>

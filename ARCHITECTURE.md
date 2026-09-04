@@ -155,6 +155,7 @@ l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes
   - `ConsoleWindow.tsx` — cadre de fenêtre : glisser la barre de titre déplace, glisser le coin bas-droit redimensionne (Pointer Events, accrochage grille, géométrie locale pendant le geste)
   - `windows/registry.tsx` — `WindowKind` → composant de contenu. **Seul endroit à toucher** pour ajouter une fenêtre.
   - `windows/` — `ExecutorsWindow` (Store/Go/Off/libérer), `PlaybacksWindow` (faders master), `GroupsWindow`, `PresetsWindow`, `LogWindow`
+  - `windows/effects/` — la fenêtre Effets, calquée sur l'Effect Editor d'un grandMA2 : pool de départs, aperçu animé (mêmes fonctions que le runner DMX), tableau des lignes, vitesse/MAtricks/couleurs/rendu, et retouche à chaud de l'effet en cours
 - `src/lib/console/` :
   - `layout.ts` — modèle de disposition : grille 24 colonnes × rangées de 30 px, bornes, 4 Views d'origine (Programmer / Playback / DMX / Effets), libellés des fenêtres
   - `scenes.ts` — `captureScene()` (STORE) et `applySceneAtLevel()` (rappel à niveau). Un master **n'atténue que** `intensity/r/g/b/w/uv` : pan, tilt, gobo et roue de couleurs sont rejoués tels quels, sinon baisser un playback ferait dériver la lyre à mi-course.
@@ -177,6 +178,8 @@ l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes
 - `src/styles.css` : feuille unique sans framework — thème pupitre (fond noir, liseré ambre `--edge`, barres de titre bleues, ligne de commande turquoise, zéro arrondi), fenêtres du plan de travail, pools, breakpoints `<640px` / `640-1023px` / `≥1024px` (plan de travail) / `≥1280px` (rail), `.channels` adaptatif (16 → 12 → 8 → 4 colonnes), `.table` en cartes empilées sur mobile.
 
 ### Shared (`packages/shared/`)
+- `src/effect-engine.ts` : la math des effets DMX — `evaluateDmxEffect()`, `spatialPositions()`, `applyCurve()`, `effectLineColor()`. Partagée entre le runner DMX et l'aperçu de la fenêtre Effets, pour que l'aperçu ne puisse pas mentir.
+- `src/effect-cells.ts` : `resolveCells()` — développe une sélection de projecteurs en cellules (un PAR = 1, un bandeau = 1 par zone).
 - `src/index.ts` : types et schémas Zod partagés. Sections :
   - DMX : `Capability`, `FixtureChannel`, `FixtureHomeKit*`, `Fixture`, `Scene`, `SceneStep`, `Preset`, `UniverseState`, `LogEvent`, `WsEvent`
   - Effets : `EffectForm`, `EffectTarget`, `EffectMatricks`, `EffectSpatial`, `EffectMa`, `SMART_LIGHT_EFFECT_PRESETS`

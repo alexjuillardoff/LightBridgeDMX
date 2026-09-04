@@ -229,4 +229,40 @@ describe("tramage temporel", () => {
     expect(new Set(seen)).toEqual(new Set([255]));
     runner.stop();
   });
+  it("retouche un effet en cours sans le relancer ni rendre les canaux", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    universe[9] = 40; // valeur d'avant l'effet, a restaurer plus tard
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [par], () => []);
+
+    const run = await runner.run(dimmerEffect(), ["par-1"]);
+    frame();
+    expect(universe[9]).toBe(255);
+
+    // Meme effet, plafonne a 50 % : la retouche prend effet des la trame suivante.
+    const updated = runner.updateRun(
+      run!.id,
+      dimmerEffect({ lines: [{ ...dimmerEffect().lines[0], high: 50 }] })
+    );
+    frame();
+    expect(universe[9]).toBe(128);
+    // C'est bien le MEME effet : meme id, meme instant de depart. Le relancer aurait
+    // remis la phase a zero, donc fait sauter le plateau a chaque cran d'encodeur.
+    expect(updated?.id).toBe(run!.id);
+    expect(updated?.startedAt).toBe(run!.startedAt);
+
+    // La photo d'avant lancement survit a la retouche : l'arret rend toujours 40.
+    runner.stopRun(run!.id);
+    expect(universe[9]).toBe(40);
+    runner.stop();
+  });
+
+  it("ignore la retouche d'un effet qui ne tourne plus", async () => {
+    const { dmx } = fakeDmx();
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [par], () => []);
+
+    expect(runner.updateRun("effet-inconnu", dimmerEffect())).toBeUndefined();
+    runner.stop();
+  });
 });

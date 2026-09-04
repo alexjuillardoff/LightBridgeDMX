@@ -12,6 +12,10 @@
 // La phase de l'effet se repartit ensuite sur cette liste a plat, dans l'ordre de
 // selection : selectionner la lyre puis le bandeau met la lyre en phase 0 et etale
 // le reste du cycle sur les 50 zones.
+//
+// Ce module vit dans le package PARTAGE, et pas cote backend : l'apercu de la
+// fenetre Effets doit developper la selection exactement comme le moteur le fera,
+// sinon il annonce un chenillard sur 3 pas la ou le bandeau en jouera 50.
 // =============================================================================
 import type {
   EffectAttribute,
@@ -19,7 +23,7 @@ import type {
   Point3D,
   SmartLight,
   SmartLightZoneLayout
-} from "@lightbridgedmx/shared";
+} from "./index";
 
 /** Une cellule pilotable : ses canaux DMX absolus, par attribut. */
 export type EffectCell = {
