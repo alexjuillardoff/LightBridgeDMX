@@ -20,7 +20,16 @@ import { Store } from "./state/store";
 // ----- Configuration depuis l'environnement -----
 // ATTENTION : port verrouille, ne pas modifier (voir avertissement plus bas si PORT differe).
 const PORT = 5000;
-const DMX_FPS = parseInt(process.env.DMX_FPS ?? "30", 10);
+// Monter la cadence est le seul levier cote logiciel contre l'escalier d'un fondu :
+// en 8 bits, un sinus pleine echelle en 2 s franchit 255 valeurs en 1 s, soit 13 pas
+// par trame a 30 Hz, 9 a 44 et 7 a 60.
+//
+// A savoir : une ligne DMX512 PHYSIQUE plafonne vers 44 trames/s pour un univers
+// plein (512 canaux a 250 kbit/s, plus les temps de trame). Au-dela, on emet
+// simplement plus d'Art-Net que la ligne n'en transporte — sans danger, les trames
+// en trop sont absorbees en aval, mais le gain reel s'arrete a ce que QLC+ et
+// l'interface savent ecouler. Le service borne de toute facon a 60 (clampFps).
+const DMX_FPS = parseInt(process.env.DMX_FPS ?? "60", 10);
 const DMX_PORT = process.env.DMX_PORT;
 const DMX_OUTPUT = (process.env.DMX_OUTPUT ?? "enttec") as "enttec" | "artnet";
 const ARTNET_HOST = process.env.ARTNET_HOST;

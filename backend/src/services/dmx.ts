@@ -234,10 +234,36 @@ export class DmxService extends EventEmitter {
     };
   }
 
-  // Un battement de la boucle : pousse la trame courante puis emet "tick".
+  /** Producteurs appeles JUSTE AVANT la construction de chaque trame.
+   *
+   *  Pourquoi un point d'accroche plutot qu'un minuteur a eux : un ecrivain
+   *  periodique qui bat sur sa propre horloge (setInterval 33 ms) derive contre
+   *  celle de la sortie. Les deux cadences battent l'une contre l'autre et il en
+   *  sort, regulierement, une trame ou l'ecrivain n'a pas encore recalcule — donc
+   *  une valeur repetee. Mesure sur le moteur d'effets : 4 trames repetees sur 90,
+   *  soit un accroc toutes les 0,75 s dans un fondu qui devrait etre lisse.
+   *  En calculant ici, chaque trame envoyee porte une valeur fraiche, une seule fois. */
+  private readonly frameProducers = new Set<() => void>();
+
+  /** Enregistre un producteur de trame. Renvoie de quoi se desabonner. */
+  onBeforeFrame(producer: () => void): () => void {
+    this.frameProducers.add(producer);
+    return () => this.frameProducers.delete(producer);
+  }
+
+  // Un battement de la boucle : laisse les producteurs ecrire, pousse la trame
+  // courante, puis emet "tick".
   // Tout est protege par try/catch pour qu'une erreur n'arrete jamais la boucle.
   private safeTick() {
     try {
+      for (const produce of this.frameProducers) {
+        try {
+          produce();
+        } catch (err) {
+          // Un producteur en echec ne doit pas emporter la sortie DMX avec lui.
+          this.logger.error({ err }, "Producteur de trame en echec");
+        }
+      }
       this.pendingFrame = true;
       this.pushFrame();
       const state = this.getState();

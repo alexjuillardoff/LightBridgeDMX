@@ -25,10 +25,6 @@ import { DmxService } from "../dmx";
 import { EffectCell, resolveCells } from "./cells";
 import { evaluateDmxEffect } from "./engine";
 
-/** Cadence de la boucle : la meme que le streaming UDP du bandeau (~30 Hz).
- *  Plus rapide n'apporterait rien — le DMX512 lui-meme plafonne vers 44 trames/s. */
-const TICK_MS = 33;
-
 type Run = {
   id: string;
   effect: DmxEffect;
@@ -48,7 +44,8 @@ export class EffectRunner {
   private readonly logger: FastifyBaseLogger;
   private readonly dmx: DmxService;
   private readonly runs = new Map<string, Run>();
-  private timer: NodeJS.Timeout | null = null;
+  /** Desabonnement du producteur de trame DMX (voir start). */
+  private unsubscribe: (() => void) | null = null;
   /** Fournisseurs de patch, injectes au demarrage : le runner ne parle pas a la base. */
   private getFixtures: () => Promise<Fixture[]> = async () => [];
   private getSmartLights: () => SmartLight[] = () => [];
@@ -58,15 +55,27 @@ export class EffectRunner {
     this.dmx = dmx;
   }
 
+  /**
+   * Branche le moteur sur la boucle de sortie DMX.
+   *
+   * Le runner n'a deliberement PAS d'horloge a lui. Un setInterval de 33 ms a cote
+   * d'une sortie a 30 Hz derive contre elle : les deux cadences battent l'une contre
+   * l'autre et il sort regulierement une trame ou l'effet n'a pas encore recalcule,
+   * donc une valeur repetee. Mesure sur un fondu sinus : 4 trames repetees sur 90,
+   * soit un accroc toutes les 0,75 s — parfaitement visible sur un PAR.
+   *
+   * En se calant sur `onBeforeFrame`, chaque trame envoyee porte une valeur fraiche,
+   * calculee une seule fois. C'est la regle d'un pupitre : une seule horloge.
+   */
   start(getFixtures: () => Promise<Fixture[]>, getSmartLights: () => SmartLight[]): void {
     this.getFixtures = getFixtures;
     this.getSmartLights = getSmartLights;
-    if (!this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
+    if (!this.unsubscribe) this.unsubscribe = this.dmx.onBeforeFrame(() => this.tick());
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.stopAll();
   }
 

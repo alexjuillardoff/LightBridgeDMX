@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Fixture, SmartLight } from "@lightbridgedmx/shared";
 import type { DmxService } from "../dmx";
 import { EffectRunner } from "./runner";
@@ -8,7 +8,15 @@ import { EffectRunner } from "./runner";
 const fakeDmx = () => {
   const universe = new Array<number>(512).fill(0);
   const writes: Array<{ address: number; values: number[]; source?: string }> = [];
+  // Producteurs enregistres via onBeforeFrame. `frame()` joue une trame de sortie :
+  // le runner n'a plus d'horloge a lui, c'est la boucle DMX qui le cadence.
+  const producers = new Set<() => void>();
+  const frame = () => producers.forEach((p) => p());
   const dmx = {
+    onBeforeFrame: (p: () => void) => {
+      producers.add(p);
+      return () => producers.delete(p);
+    },
     getUniverseSnapshot: () => [...universe],
     applyWrite: (w: { address: number; values: number[] }, source?: string) => {
       writes.push({ ...w, source });
@@ -18,7 +26,7 @@ const fakeDmx = () => {
       universe[channel - 1] = value;
     }
   };
-  return { dmx: dmx as unknown as DmxService, universe, writes };
+  return { dmx: dmx as unknown as DmxService, universe, writes, frame };
 };
 
 const logger = {
@@ -61,16 +69,13 @@ const dimmerEffect = (over = {}) => ({
 });
 
 describe("EffectRunner", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
   it("ecrit le canal d'intensite du projecteur selectionne", async () => {
-    const { dmx, universe, writes } = fakeDmx();
+    const { dmx, universe, writes, frame } = fakeDmx();
     const runner = new EffectRunner(logger, dmx);
     runner.start(async () => [par], () => []);
 
     await runner.run(dimmerEffect(), ["par-1"]);
-    vi.advanceTimersByTime(40);
+    frame();
 
     // Adresse 10 + canal 1 - 1 = canal absolu 10, a fond (forme haute, high = 100 %).
     expect(universe[9]).toBe(255);
@@ -79,13 +84,13 @@ describe("EffectRunner", () => {
   });
 
   it("rend les canaux a leur valeur d'avant a l'arret", async () => {
-    const { dmx, universe } = fakeDmx();
+    const { dmx, universe, frame } = fakeDmx();
     universe[9] = 77; // le projecteur etait a 77 avant l'effet
     const runner = new EffectRunner(logger, dmx);
     runner.start(async () => [par], () => []);
 
     const run = await runner.run(dimmerEffect(), ["par-1"]);
-    vi.advanceTimersByTime(40);
+    frame();
     expect(universe[9]).toBe(255);
 
     runner.stopRun(run!.id);
@@ -95,20 +100,20 @@ describe("EffectRunner", () => {
   });
 
   it("le mode relatif se cale sur la valeur de depart, sans s'y additionner sans fin", async () => {
-    const { dmx, universe } = fakeDmx();
+    const { dmx, universe, frame } = fakeDmx();
     universe[9] = 100;
     const runner = new EffectRunner(logger, dmx);
     runner.start(async () => [par], () => []);
 
     // Forme constante a 1, bande 0..100 -> centre 0.5 -> decalage +127.5 : 100 + 128 = 228.
     await runner.run(dimmerEffect({ lines: [{ ...dimmerEffect().lines[0], mode: "relative" }] }), ["par-1"]);
-    vi.advanceTimersByTime(40);
+    frame();
     const afterFirst = universe[9];
     expect(afterFirst).toBe(228);
 
     // Vingt trames plus tard, la valeur n'a pas derive : la reference est figee au
     // lancement, pas relue dans l'univers (sinon l'effet monterait jusqu'en butee).
-    vi.advanceTimersByTime(660);
+    for (let i = 0; i < 20; i++) frame();
     expect(universe[9]).toBe(afterFirst);
     runner.stop();
   });
@@ -142,7 +147,7 @@ describe("EffectRunner", () => {
       dmxMirror: { zones: { startChannel: 108, zoneCount: 2, fixtureId: "s" } }
     } as unknown as SmartLight;
 
-    const { dmx, universe } = fakeDmx();
+    const { dmx, universe, frame } = fakeDmx();
     const runner = new EffectRunner(logger, dmx);
     runner.start(async () => [stripFixture], () => [strip]);
 
@@ -150,7 +155,7 @@ describe("EffectRunner", () => {
       dimmerEffect({ color: { r: 200, g: 100, b: 50 }, bgColor: { r: 0, g: 0, b: 0 } }),
       ["s"]
     );
-    vi.advanceTimersByTime(40);
+    frame();
 
     // Une zone n'a pas de canal d'intensite : l'effet doit sortir en couleur pleine.
     expect([universe[107], universe[108], universe[109]]).toEqual([200, 100, 50]);
