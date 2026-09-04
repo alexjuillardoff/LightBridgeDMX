@@ -321,9 +321,13 @@ aboutissent. Origine non élucidée.
 
 | Ampoule | Alias | État |
 |---|---|---|
-| Nanoleaf A19 26N3 | `a19-26n3` | appairée, pilotable, projecteur DMX 40-43 |
-| Nanoleaf A19 1W1D | `a19-1w1d` | appairée, pilotable, projecteur DMX 38-41 |
-| Nanoleaf A19 6IX7 | — | à appairer (code à 8 chiffres requis) |
+| Nanoleaf A19 26N3 | `a19-26n3` | « Lampe Salon » — projecteur « Lampe Canapé », DMX 33-37 |
+| Nanoleaf A19 1W1D | `a19-1w1d` | « Plafonnier Canapé » — DMX 38-42 |
+| Nanoleaf A19 6IX7 | `a19-6ix7` | « Lampe 6IX7 » — DMX 43-47 |
+
+Les trois sont appairées, joignables en CoAP/Thread et pilotables depuis la console,
+les scènes, les presets et l'app Maison. Cinq canaux chacune : Dimmer, R, V, B,
+température de couleur.
 
 **Le sidecar ne relit `pairings.json` qu'au démarrage.** Une ampoule fraîchement
 appairée lui reste donc invisible — et `POST /thread/adopt` répond « alias inconnu du
