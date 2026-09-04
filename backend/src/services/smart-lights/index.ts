@@ -635,27 +635,49 @@ export class SmartLightService extends EventEmitter {
     if (entry.threadClient) {
       try {
         const s = await entry.threadClient.getState();
-        entry.desired = {
+
+        // Ce que l'ampoule PORTE reellement, tel qu'elle vient de le declarer.
+        //
+        // `lastPushed` doit decrire l'APPAREIL, jamais notre consigne : c'est la
+        // reference contre laquelle computeStateDiff decide quoi envoyer. Y recopier
+        // `desired` — qui contient des consignes volontairement conservees, comme la
+        // temperature gardee lampe eteinte — revient a declarer acquis ce qui n'est
+        // jamais parti. Le diff suivant ne trouve alors plus rien a pousser, et le
+        // rafraichissement d'apres remplace la consigne par la valeur de l'ampoule :
+        // la demande disparait sans que rien ne l'ait jamais transmise. C'est ce qui
+        // faisait qu'une scene de l'app Maison ne prenait pas sur les ampoules alors
+        // que le DMX, lui, suivait.
+        //
+        // Le mode couleur n'est pas repris de l'ampoule : HAP ne l'expose pas. On
+        // garde donc le dernier mode reellement pousse, ce qui permet a
+        // computeStateDiff de detecter un basculement couleur <-> blanc.
+        const fromDevice: SmartLightState = {
           ...entry.desired,
           on: s.on ?? entry.desired.on,
           brightness: s.brightness ?? entry.desired.brightness,
           hue: s.hue ?? entry.desired.hue,
           sat: s.sat ?? entry.desired.sat,
+          ...(s.ct !== undefined ? { ct: s.ct } : {}),
+          colorMode: entry.lastPushed?.colorMode ?? entry.desired.colorMode ?? "hs",
+          reachable: s.reachable
+        };
+        entry.lastPushed = fromDevice;
+
+        entry.desired = {
+          ...fromDevice,
           // On ne reprend la temperature de l'ampoule que si on n'a pas de
           // consigne en attente : la couleur n'est poussee qu'a l'allumage, donc
           // une consigne donnee lampe eteinte serait sinon effacee avant d'avoir
           // servi.
-          ...(s.ct !== undefined && !(entry.desired.colorMode === "ct" && !entry.desired.on)
-            ? { ct: s.ct }
+          ...(entry.desired.colorMode === "ct" && !entry.desired.on && entry.desired.ct !== undefined
+            ? { ct: entry.desired.ct }
             : {}),
           // L'ampoule ne declare pas son mode : HAP n'a pas de caracteristique
           // pour ca. On garde donc le mode qu'on lui a demande, au lieu de
           // retomber systematiquement sur "hs" — ce qui effacait le blanc
           // des qu'un rafraichissement passait.
-          colorMode: entry.desired.colorMode ?? "hs",
-          reachable: s.reachable
+          colorMode: entry.desired.colorMode ?? "hs"
         };
-        entry.lastPushed = entry.desired;
         this.emit("light_updated", { ...entry.light, state: entry.desired });
       } catch (err) {
         this.logger.warn({ err, id: entry.light.id }, "Refresh Thread impossible (sidecar arrete ?)");
@@ -1082,7 +1104,7 @@ function sameZoneMirror(
  *  par ailleurs (MIN_PUSH_INTERVAL_MS / THREAD_PUSH_INTERVAL_MS) et seule la
  *  DERNIERE valeur voulue part a chaque fenetre. La tolerance ne fait que decider
  *  si un mouvement compte comme un changement. */
-function computeStateDiff(
+export function computeStateDiff(
   prev: SmartLightState | null,
   next: SmartLightState,
   tolerance = 1
@@ -1094,23 +1116,40 @@ function computeStateDiff(
     any = true;
   }
   if (next.on) {
+    // Deux situations obligent a renvoyer la couleur meme si les NOMBRES n'ont pas
+    // bouge, parce que l'appareil, lui, ne les porte pas :
+    //
+    //  - basculement couleur <-> blanc : passer de "blanc 3040 K" a "violet
+    //    260/94" ne change ni ct ni teinte ni saturation si ces valeurs trainaient
+    //    deja dans l'etat ; seul le MODE change. Sans ce test, deux scenes Maison
+    //    qui different uniquement par le mode donnaient un diff vide et l'ampoule
+    //    restait sur la precedente.
+    //  - allumage : lampe eteinte, ni couleur ni luminosite ne sont transmises
+    //    (c'est le `if (next.on)` qui englobe ce bloc). Ce qu'on croit pousse ne
+    //    l'a donc jamais ete, et il faut tout redire au moment de l'allumage.
+    const turningOn = !prev || !prev.on;
+    const resendColor = turningOn || prev.colorMode !== next.colorMode;
+    // Court-circuite la comparaison quand la valeur precedente manque ou ment.
+    const moved = (force: boolean, before: number | undefined, after: number) =>
+      force || before === undefined || Math.abs(before - after) > tolerance;
+
     // En mode "ct" (temperature de couleur) on pousse ct ; sinon on pousse teinte+saturation.
     if (next.colorMode === "ct" && next.ct !== undefined) {
-      if (!prev || prev.ct !== next.ct) {
+      if (resendColor || prev.ct !== next.ct) {
         out.ct = next.ct;
         any = true;
       }
     } else {
-      if (!prev || Math.abs(prev.hue - next.hue) > tolerance) {
+      if (moved(resendColor, prev?.hue, next.hue)) {
         out.hue = next.hue;
         any = true;
       }
-      if (!prev || Math.abs(prev.sat - next.sat) > tolerance) {
+      if (moved(resendColor, prev?.sat, next.sat)) {
         out.sat = next.sat;
         any = true;
       }
     }
-    if (!prev || Math.abs(prev.brightness - next.brightness) > tolerance) {
+    if (moved(turningOn, prev?.brightness, next.brightness)) {
       out.brightness = next.brightness;
       any = true;
     }
