@@ -514,7 +514,12 @@ export class HomeKitBridge {
       .addCharacteristic(Characteristic.ColorTemperature)
       .setProps({ minValue: kelvinToMired(COLOR_TEMP_MAX_K), maxValue: kelvinToMired(COLOR_TEMP_MIN_K) })
       .onGet(() => kelvinToMired(current()?.ct ?? COLOR_TEMP_MIN_K))
-      .onSet((v: CharacteristicValue) => write({ ct: miredToKelvin(Number(v)) }));
+      .onSet((v: CharacteristicValue) => write({ ct: miredToKelvin(Number(v)) }))
+      // hap-nodejs cree la caracteristique a SA valeur par defaut (140 mired), puis
+      // setProps resserre le minimum a 153 : la valeur portee devient illegale et
+      // chaque rafraichissement le signale en boucle dans les logs. On la ramene
+      // donc tout de suite dans la plage qu'on vient de declarer.
+      .updateValue(kelvinToMired(current()?.ct ?? COLOR_TEMP_MIN_K));
 
     return managed;
   }

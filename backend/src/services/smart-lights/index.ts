@@ -16,6 +16,7 @@ import { EventEmitter } from "node:events";
 import type { FastifyBaseLogger } from "fastify";
 import {
   dmxToKelvin,
+  kelvinToRgb,
   SmartLight,
   SmartLightEffectConfig,
   SmartLightDmxZoneMirror,
@@ -76,6 +77,10 @@ type RuntimeEntry = {
    *  (priorite sur l'effet et sur desired.on). Une ecriture locale (painter, effet, couleur)
    *  rend la main jusqu'au prochain mouvement du DMX. */
   dmxZonesOwned: boolean;
+  /** Horodatage de la derniere diffusion d'un mouvement de master repercute en
+   *  luminosite. Un fader bouge en continu : sans cette borne, un seul mouvement
+   *  emettrait 60 evenements par seconde vers le WebSocket et vers HomeKit. */
+  masterEmitAt: number;
 };
 
 // Valeurs en dur de cadence reseau. Choisies pour ne pas saturer l'appareil.
@@ -96,6 +101,7 @@ const REFRESH_QUIESCENT_MS = 2000;   // ne pas refresh si l'utilisateur a ecrit 
 const STREAM_WATCHDOG_INTERVAL_MS = 10000; // tick du chien de garde (watchdog) du streaming UDP
 const STREAM_RETRY_BASE_MS = 2000;   // premier delai de backoff apres un echec de (re)activation
 const STREAM_RETRY_MAX_MS = 60000;   // plafond du backoff — un appareil hors ligne n'est pas martele
+const MASTER_EMIT_INTERVAL_MS = 200; // cadence max de diffusion d'un master repercute en luminosite
 
 /** Luminosite maitre imposee a l'appareil avant toute entree en extControl.
  *
@@ -247,9 +253,22 @@ export class SmartLightService extends EventEmitter {
       next.colorMode = "ct";
     }
 
+    const previous = entry.desired;
     entry.desired = next;
     entry.zonePalette = null; // une ecriture de couleur uniforme efface toute palette par zone
     entry.dmxZonesOwned = false; // et rend la main au pilotage local jusqu'au prochain mouvement DMX
+
+    // Le reste de LightBridge n'apprend l'etat d'une lampe que par cet evenement.
+    // Il n'etait emis que par flushAll, apres un push HTTP reussi — or flushAll
+    // saute les lampes en streaming : une couleur posee depuis l'app Maison
+    // changeait bien le bandeau, mais l'onglet Lampes et le pupitre restaient sur
+    // l'ancienne valeur, sans que rien ne vienne jamais les detromper.
+    // On ne diffuse que sur changement reel : une consigne identique repetee
+    // (curseur repose au meme endroit) n'a rien a annoncer.
+    const modeChanged = next.colorMode !== previous.colorMode;
+    if (modeChanged || computeStateDiff(previous, next, 0) !== null) {
+      this.emit("light_updated", { ...entry.light, state: next });
+    }
     return { ...entry.light, state: next };
   }
 
@@ -481,6 +500,7 @@ export class SmartLightService extends EventEmitter {
       dmxMaster: sameZoneMirror(existing?.light.dmxMirror?.zones, light.dmxMirror?.zones)
         ? existing?.dmxMaster ?? null
         : null,
+      masterEmitAt: existing?.masterEmitAt ?? 0,
       lastPushAt: existing?.lastPushAt ?? 0,
       inflight: false,
       lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0,
@@ -828,10 +848,11 @@ export class SmartLightService extends EventEmitter {
 
     // Dimmer maitre : lu a chaque tick, et volontairement HORS de la logique de
     // propriete du bandeau. Bouger le master ne doit pas voler le bandeau a l'effet en
-    // cours — c'est un fader d'intensite, pas une commande de contenu : il attenue ce
-    // qui joue, quelle qu'en soit la source, exactement comme le grand master d'un
-    // pupitre. Le lire ici, avant le retour anticipe ci-dessous, garantit qu'il
-    // s'applique aussi aux trames que le moteur d'effets vient de publier.
+    // cours — c'est un fader d'intensite, pas une commande de contenu : il fixe le
+    // niveau de ce qui joue, quelle qu'en soit la source, exactement comme le grand
+    // master d'un pupitre. Le lire ici, avant toute sortie de la fonction, garantit
+    // qu'il s'applique aussi aux trames que le moteur d'effets vient de publier.
+    const prevMaster = entry.dmxMaster;
     entry.dmxMaster =
       cfg.dimmerChannel === undefined
         ? null
@@ -848,19 +869,50 @@ export class SmartLightService extends EventEmitter {
       prev.length !== zones.length ||
       zones.some((z, i) => z.r !== prev[i].r || z.g !== prev[i].g || z.b !== prev[i].b);
     entry.dmxZones = zones;
-    if (!changed) return;
 
-    // Premier tick connu : on ne s'empare du bandeau que s'il y a quelque chose a montrer.
-    if (!prev && !anyLit) return;
-
-    entry.dmxZonesOwned = true;
-    entry.lastLocalWriteAt = Date.now();
-    // On reporte l'allumage dans l'etat expose a l'UI, mais on ne diffuse (broadcast)
-    // que sur bascule on/off : emettre a chaque tick DMX inonderait le WebSocket.
-    if (entry.desired.on !== anyLit) {
-      entry.desired = { ...entry.desired, on: anyLit };
-      this.emit("light_updated", { ...entry.light, state: entry.desired });
+    // Le bloc de zones a bouge (et il y a quelque chose a montrer au tout premier
+    // tick connu) : le DMX prend, ou garde, la main sur le bandeau.
+    if (changed && (prev || anyLit)) {
+      entry.dmxZonesOwned = true;
+      entry.lastLocalWriteAt = Date.now();
+      // On reporte l'allumage dans l'etat expose a l'UI, mais on ne diffuse (broadcast)
+      // que sur bascule on/off : emettre a chaque tick DMX inonderait le WebSocket.
+      if (entry.desired.on !== anyLit) {
+        entry.desired = { ...entry.desired, on: anyLit };
+        this.emit("light_updated", { ...entry.light, state: entry.desired });
+      }
+      return;
     }
+
+    // Le DMX ne possede pas le bandeau : le master n'attenue alors plus rien
+    // (voir streamAll), il DICTE l'intensite de la source locale qui joue.
+    if (!entry.dmxZonesOwned) this.applyMasterAsBrightness(entry, prevMaster);
+  }
+
+  /** Repercute un mouvement du fader de master en luminosite de la lampe, quand le
+   *  DMX ne possede pas le bandeau.
+   *
+   *  Le master ne peut pas rester un simple multiplicateur applique a tout : laisse
+   *  a zero par le pupitre — son etat au repos — il rendait le bandeau totalement
+   *  sourd a HomeKit, au painter et a l'onglet Lampes, dont la sortie etait
+   *  multipliee par zero sans qu'aucune commande locale ne puisse jamais y remonter.
+   *  Il garde pourtant tout son sens de fader d'intensite : quand il bouge alors
+   *  qu'une source locale joue, c'est lui qui fixe le niveau — et l'app Maison,
+   *  qui lit cette luminosite, reste d'accord avec le pupitre. */
+  private applyMasterAsBrightness(entry: RuntimeEntry, prevMaster: number | null): void {
+    const master = entry.dmxMaster;
+    // prevMaster null = premiere lecture : un master au repos ne doit pas eteindre
+    // au demarrage ce qui jouait deja.
+    if (master === null || prevMaster === null || master === prevMaster) return;
+
+    const brightness = master * 100;
+    entry.desired = { ...entry.desired, brightness, on: brightness > 0 };
+    entry.lastLocalWriteAt = Date.now();
+
+    const now = Date.now();
+    if (now - entry.masterEmitAt < MASTER_EMIT_INTERVAL_MS) return;
+    entry.masterEmitAt = now;
+    this.emit("light_updated", { ...entry.light, state: entry.desired });
   }
 
   /** Chemin HTTP : parcourt chaque lampe NON streaming et pousse les differences.
@@ -967,14 +1019,15 @@ export class SmartLightService extends EventEmitter {
       // Miroir DMX par zone actif : le pupitre possede le bandeau. On passe donc
       // AVANT la garde desired.on, pour qu'un noir envoye depuis le DMX (blackout)
       // eteigne bien le bandeau au lieu de rendre la main a l'effet en cours.
-      // Intensite maitre du bandeau, appliquee a TOUTES les sorties ci-dessous.
-      // C'est le seul endroit ou une intensite peut agir en streaming : la trame
-      // extControl ne transporte que du R/G/B, et la luminosite de l'appareil est
-      // clouee a 100 % pour ne pas attenuer deux fois.
-      const master = entry.dmxMaster ?? 1;
-
+      //
+      // Le master DMX n'attenue QUE ce qui vient du DMX. La trame extControl ne
+      // transportant que du R/G/B, l'intensite doit bien etre appliquee ici — mais
+      // une source locale (HomeKit, painter, onglet Lampes) porte deja la sienne
+      // dans desired.brightness. Multiplier les deux rendait le bandeau muet des
+      // que le pupitre laissait son master a zero ; un mouvement de ce fader est
+      // desormais repercute en luminosite (voir applyMasterAsBrightness).
       if (entry.dmxZonesOwned && entry.dmxZones) {
-        s.sendZones(scaleZones(entry.dmxZones, master));
+        s.sendZones(scaleZones(entry.dmxZones, entry.dmxMaster ?? 1));
         continue;
       }
       // Lampe eteinte : on envoie quand meme du noir a chaque tick pour maintenir
@@ -983,12 +1036,13 @@ export class SmartLightService extends EventEmitter {
         s.sendUniform({ r: 0, g: 0, b: 0 });
         continue;
       }
+      // Intensite de la source locale. desiredRgb l'inclut deja pour une couleur
+      // uniforme ; une palette par zone, elle, arrive en couleurs brutes.
       if (entry.zonePalette) {
-        s.sendZones(scaleZones(entry.zonePalette.zones, master));
+        s.sendZones(scaleZones(entry.zonePalette.zones, entry.desired.brightness / 100));
         continue;
       }
-      const rgb = hsbToRgb(entry.desired);
-      s.sendUniform({ r: rgb.r * master, g: rgb.g * master, b: rgb.b * master });
+      s.sendUniform(desiredRgb(entry.desired));
     }
   }
 }
@@ -1062,6 +1116,20 @@ function computeStateDiff(
     }
   }
   return any ? out : null;
+}
+
+/** Couleur a envoyer en streaming pour l'etat voulu, luminosite comprise.
+ *
+ *  Le mode couleur decide de la source : en mode blanc c'est la temperature qui
+ *  fait la couleur, pas la teinte. Passer systematiquement par le HSB laissait la
+ *  consigne de blanc sans aucun effet — la trame extControl ne transporte que du
+ *  R/G/B, et personne ne convertissait les Kelvin. Le curseur de blanc de l'app
+ *  Maison bougeait donc dans le vide, en streaming comme au painter. */
+function desiredRgb(state: SmartLightState): { r: number; g: number; b: number } {
+  if (state.colorMode !== "ct" || state.ct === undefined) return hsbToRgb(state);
+  const white = kelvinToRgb(state.ct);
+  const v = state.brightness / 100;
+  return { r: white.r * v, g: white.g * v, b: white.b * v };
 }
 
 /** Convertit HSV (h:0-360, s/v:0-100) en RGB 0-255. La luminosite (brightness)

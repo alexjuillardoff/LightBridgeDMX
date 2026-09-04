@@ -14,6 +14,7 @@ import {
   dmxToKelvin,
   kelvinToDmx,
   kelvinToMired,
+  kelvinToRgb,
   miredToKelvin
 } from "@lightbridgedmx/shared";
 
@@ -43,6 +44,39 @@ describe("temperature de couleur", () => {
   it("boucle DMX -> Kelvin -> DMX", () => {
     for (const v of [0, 1, 64, 128, 200, 255]) {
       expect(Math.abs(kelvinToDmx(dmxToKelvin(v)) - v)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("rend le blanc en RGB, du chaud ambre au froid neutre", () => {
+    // Un bandeau en extControl ne recoit que du R/G/B : sans cette conversion, la
+    // consigne de blanc n'atteint jamais une LED.
+    const chaud = kelvinToRgb(COLOR_TEMP_MIN_K);
+    const froid = kelvinToRgb(COLOR_TEMP_MAX_K);
+
+    // Le chaud tire vers l'ambre : rouge sature, bleu quasi absent.
+    expect(chaud.r).toBe(255);
+    expect(chaud.b).toBeLessThan(chaud.g);
+    expect(chaud.g).toBeLessThan(chaud.r);
+
+    // Le froid est un blanc a peu pres neutre, les trois canaux se rejoignent.
+    expect(froid.r - froid.b).toBeLessThan(20);
+    expect(Math.min(froid.r, froid.g, froid.b)).toBeGreaterThan(230);
+
+    // Et le bleu monte de facon monotone avec la temperature : c'est le sens de
+    // l'echelle, celui qu'on inverserait sans s'en apercevoir.
+    for (const [froidK, chaudK] of [[3000, 2500], [4000, 3000], [6000, 4000]]) {
+      expect(kelvinToRgb(froidK).b).toBeGreaterThan(kelvinToRgb(chaudK).b);
+    }
+  });
+
+  it("ne sort jamais des bornes 0-255, meme hors plage pilotable", () => {
+    for (const k of [0, 1000, 2127, 4000, 6535, 40000]) {
+      const rgb = kelvinToRgb(k);
+      for (const canal of [rgb.r, rgb.g, rgb.b]) {
+        expect(canal).toBeGreaterThanOrEqual(0);
+        expect(canal).toBeLessThanOrEqual(255);
+        expect(Number.isInteger(canal)).toBe(true);
+      }
     }
   });
 
