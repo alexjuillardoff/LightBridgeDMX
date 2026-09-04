@@ -1,3 +1,5 @@
 aiohomekit==4.0.1
 bleak>=3.0
 aiocoap>=0.4.17
+zxing-cpp
+pillow

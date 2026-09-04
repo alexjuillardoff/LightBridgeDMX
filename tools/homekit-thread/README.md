@@ -236,21 +236,50 @@ Le seul recours face à un code refusé est de le relire, ou de décoder le QR d
 l'étiquette (il encode la charge utile `X-HM://`, code compris).
 
 **Lire l'échec au bon endroit.** `aiohomekit` traduit fidèlement la table 4-5 de la
-spec, donc l'exception nomme la cause :
+spec, donc l'exception nomme l'étape fautive :
 
 | Exception | Ce que dit l'ampoule |
 |---|---|
-| `AuthenticationError` à l'étape M4 | **code faux** — rien d'autre |
+| `AuthenticationError` à l'étape M4 | preuve SRP refusée — voir ci-dessous, **deux causes** |
 | `UnavailableError` | déjà appairée, sortir d'abord de Maison |
 | `BackoffError` / `MaxTriesError` | trop d'échecs, elle temporise |
 | `MaxPeersError` | plus de place pour un contrôleur |
 
-Ne pas confondre `AuthenticationError` avec un problème de réseau ou de reset : M1 et M2
-ont réussi, l'ampoule a renvoyé son sel et sa clé publique. Seul le code est en cause.
+**⚠️ `AuthenticationError` en M4 ne signifie PAS forcément que le code est faux.** Le
+piège a coûté cher : le bon code a été rejeté trois fois de suite, et le QR a fini par
+prouver qu'il était bon depuis le début. Les deux causes produisent une erreur
+rigoureusement identique :
 
-Après plusieurs échecs, l'ampoule peut cesser d'émettre en BLE. Un **cycle
-d'alimentation** (éteindre, rallumer) suffit à la remettre en annonce — pas besoin de
-refaire les cinq coupures du reset.
+1. le code est réellement faux ;
+2. **la session SRP est périmée** — l'ampoule a gardé le sel et la clé publique d'un
+   échange précédent, ou le lien BLE s'est rompu entre M2 et M3. La preuve est alors
+   calculée contre un `B` mort, et l'ampoule la refuse.
+
+Le second cas survient dès qu'on enchaîne les tentatives : chaque échec laisse l'ampoule
+dans un état bancal, et **tous les essais suivants échouent, code correct compris**.
+
+> **Règle : entre deux tentatives d'appairage, couper puis rétablir l'alimentation de
+> l'ampoule.** Un simple cycle, pas les cinq coupures du reset. C'est ce qui a débloqué
+> `1W1D` : même code, ampoule rebranchée, appairage réussi en 2 secondes.
+
+Le même cycle la remet en annonce quand elle a cessé d'émettre en BLE après une série
+d'échecs.
+
+**En cas de doute sur le code, décoder le QR plutôt que le relire :**
+
+    ./.venv/bin/python qr_code.py photo.jpeg
+
+    ===> CODE HOMEKIT : 988-01-473  (98801473)
+         Setup ID   : 1W1D
+         catégorie  : 5   drapeaux : 4
+
+Il attaque l'image avec une quinzaine de rehaussements (gris, auto-contraste,
+égalisation, seuillages, agrandissements, rotations) — la gravure Nanoleaf est en
+pointillés très peu contrastés. Photographier **en lumière rasante** : c'est le relief
+qui porte le contraste, un éclairage frontal l'écrase.
+
+Le Setup ID lu dans le QR doit correspondre à celui que `scan_ble.py` retrouve. Sinon,
+l'étiquette photographiée n'est pas celle de l'ampoule qu'on essaie d'appairer.
 
 ---
 
@@ -293,8 +322,12 @@ aboutissent. Origine non élucidée.
 | Ampoule | Alias | État |
 |---|---|---|
 | Nanoleaf A19 26N3 | `a19-26n3` | appairée, pilotable, projecteur DMX 40-43 |
-| Nanoleaf A19 1W1D | — | non appairée. Setup ID confirmé `1W1D` par `scan_ble.py` ; les codes essayés (`98881473`, `98801473`, `98861473`) sont refusés en M4. Relire l'étiquette portant `1W1D`. |
+| Nanoleaf A19 1W1D | `a19-1w1d` | appairée, pilotable, projecteur DMX 38-41 |
 | Nanoleaf A19 6IX7 | — | à appairer (code à 8 chiffres requis) |
+
+**Le sidecar ne relit `pairings.json` qu'au démarrage.** Une ampoule fraîchement
+appairée lui reste donc invisible — et `POST /thread/adopt` répond « alias inconnu du
+sidecar » — tant qu'il n'a pas été relancé.
 
 **Reste à faire** : le sidecar tourne en avant-plan, lancé à la main. Lui écrire un
 service launchd sur le modèle des trois autres (`~/Library/LaunchAgents/`) pour qu'il

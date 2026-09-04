@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import pathlib
 import sys
@@ -237,6 +238,20 @@ async def verify(pairing: AbstractPairing) -> None:
 
 
 async def run(args: argparse.Namespace) -> int:
+    if args.debug:
+        # `aiohomekit` logue chaque TLV en DEBUG. C'est le seul moyen de voir le
+        # code d'erreur brut renvoye par l'ampoule : l'exception, elle, ne porte
+        # que le nom de l'etape.
+        cible = (logging.StreamHandler(sys.stdout) if args.debug == "-"
+                 else logging.FileHandler(args.debug, mode="w"))
+        cible.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+        racine = logging.getLogger()
+        racine.setLevel(logging.DEBUG)
+        racine.addHandler(cible)
+        logging.getLogger("bleak").setLevel(logging.INFO)
+        if args.debug != "-":
+            print(f"Journal detaille : {args.debug}")
+
     dataset = build_dataset(args)
     print(f"Dataset Thread ({len(dataset) // 2} octets) : {dataset[:24]}…")
 
@@ -327,6 +342,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--alias", required=True, help="nom court de l'appairage (ex. a19-35q2)")
+    parser.add_argument("--debug", metavar="FICHIER", nargs="?", const="-",
+                        help="Journalise les echanges HAP (TLV de chaque etape M1..M6). "
+                             "Sans valeur : sur la sortie standard. Indispensable pour "
+                             "distinguer un code refuse d'une session SRP perdue — les "
+                             "deux remontent en AuthenticationError a l'etape M4.")
     parser.add_argument("--device-id",
                         help="Device ID HomeKit (change a chaque reset — prefere --name)")
     parser.add_argument("--name",
