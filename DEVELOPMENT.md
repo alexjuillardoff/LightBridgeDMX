@@ -865,7 +865,7 @@ Pilote des lampes WiFi (Nanoleaf en V1, extensible) avec deux paths de sortie, m
 
 À chaque flush, pour chaque light, dans cet ordre :
 
-1. **EffectEngine** — si `light.currentEffect` est défini ET `streaming.enabled = true` : engine évalue l'effet contre le layout 3D, push une frame per-zone via le streamer (~30 Hz). Les effets **builtin du device ne sont plus pilotés** : tout effet est calculé par LightBridge. Déléguer au device imposait de couper le streaming, ce qui laissait le strip figé sur sa dernière frame sans aucun signal.
+1. **Effets** — plus rien ici. Le `SmartLightService` ne calcule plus d'effet : il n'en a jamais eu les moyens, un effet posé sur une light ne pouvant sortir que par la frame UDP de ce strip. Les effets vivent maintenant au niveau DMX (`services/effects/`, voir ci-dessous) et le strip les reçoit comme n'importe quel projecteur, par sa façade DMX et son mirror par zone.
 2. **Zone palette statique** — si `entry.zonePalette` est posé via `applyZones()` mais pas d'effet : streamer push la palette telle quelle
 3. **Streaming uniforme** — si streaming actif sans effet ni palette : streamer push couleur unique calculée depuis `desired.{hue,sat,brightness}`
 4. **HTTP coalescé** — sinon : `flushAll()` calcule `computeStateDiff(lastPushed, desired)` et fait un `PUT /state` coalescé sur les dimensions changées (rate-limit 1 push / 70 ms / device)
@@ -929,6 +929,55 @@ Le `POST /api/smart-lights/:id/dmx-fixture` fait le câblage complet : il crée 
 | `applyZones(id, palette)` | Push direct un palette per-zone (active le streaming si besoin) |
 | `readZoneMirror(entry, cfg, state)` | *(privé)* Lit le bloc DMX par zone (+ le dimmer master) à chaque tick et gère la prise de main LTP |
 | `ensureStreamingForZoneWork(id)` | *(privé)* Active le streaming UDP quand une écriture par zone le réclame |
+
+## Moteur d'effets DMX (`backend/src/services/effects/`)
+
+Un effet s'applique à la **sélection courante de projecteurs**, pas à une lampe. C'est le modèle grandMA2 ([help.malighting.com](https://help.malighting.com/grandMA2/en/help/key_effects.html)) : « une modulation automatisée d'attributs », répartie sur les fixtures sélectionnées.
+
+| Fichier | Rôle |
+|---------|------|
+| `engine.ts` | Math pure : `evaluateDmxEffect(effect, cellCount, t, positions?)` → une valeur 0..1 par cellule et par ligne. Sans état, sans I/O, testé. |
+| `cells.ts` | `resolveCells(fixtureIds, fixtures, smartLights)` — développe une sélection en **cellules** portant leurs canaux DMX absolus. |
+| `runner.ts` | `EffectRunner` — boucle 33 ms qui évalue, traduit en écritures DMX et restaure à l'arrêt. |
+
+### La cellule, pièce centrale
+
+C'est elle qui fait qu'un effet ne connaît plus la différence entre un PAR et un ruban :
+
+```
+PAR 56 (intensity + RGB)          -> 1 cellule  { dimmer, red, green, blue }
+Lyre MH-X20 (pan/tilt/dimmer)     -> 1 cellule  { pan, tilt, dimmer }
+Bandeau LED (façade 50 zones)     -> 50 cellules { red, green, blue } chacune
+```
+
+La phase se répartit sur cette liste à plat, **dans l'ordre de sélection** — sélectionner de gauche à droite ou l'inverse donne deux balayages opposés, comme sur un pupitre.
+
+Une cellule de ruban n'a **pas** de canal `dimmer` : le master de la façade est unique pour tout le bandeau. Une ligne `dimmer` qui tombe sur une telle cellule est donc traduite en fondu `bgColor → color`, seule façon de faire varier l'intensité d'une LED qui n'a que trois canaux. Même mécanique pour les attributs `color` et `hue`, qui n'ont jamais de canal propre et pilotent le trio R/G/B.
+
+### Lignes, modes, MAtricks
+
+Un effet porte **plusieurs lignes**, une par attribut — c'est ce qui permet un cercle de lyre (une ligne `pan`, une ligne `tilt` déphasée de 90°).
+
+- **Mode `absolute`** : la forme balaie `low..high` et remplace la valeur.
+- **Mode `relative`** : la bande `low..high` devient une **amplitude** autour de la valeur de départ, figée au lancement. Sans ce gel, l'effet se relirait dans l'univers et s'additionnerait à lui-même jusqu'en butée.
+- **MAtricks** : `blocks` (cellules voisines en phase), `groups` (motif répété), `wings` (sélection pliée, une aile sur deux en miroir), `interleave` (une cellule sur N joue, les autres restent intactes). `single` de MA n'est **pas** repris : c'est un réglage du pas de Next/Previous, sans objet hors parcours interactif.
+- **Vitesse** : `speed` en BPM × `rate` (multiplicateur), comme sur le pupitre où Rate 1 = 60 BPM.
+
+### Règles de jeu
+
+- **Un seul effet par projecteur** : lancer sur une sélection qui recoupe un effet en cours arrête ce dernier. Deux effets sur les mêmes canaux se disputeraient l'univers à 30 Hz.
+- **L'arrêt restaure** les canaux à leur valeur d'avant le lancement — sinon la sélection reste figée sur la dernière frame (une lyre bloquée à mi-course).
+- **Rien n'est persisté** : un redémarrage du backend coupe tout. Un effet qui se rallume seul au petit matin est une mauvaise surprise, pas une fonctionnalité.
+- **La distribution spatiale** (`spatial`, `sides`) ne s'active que si les cellules ont une position 3D — les zones d'un ruban ayant un `zoneLayout`. Sur des projecteurs classiques, qui n'ont pas de coordonnées dans le patch, elle est ignorée et la phase suit le rang.
+
+| Méthode | Verbe HTTP | Rôle |
+|---------|-----------|------|
+| `GET /api/effects` | — | Effets en cours |
+| `POST /api/effects/run` | `{ effect, fixtureIds }` | Lance sur une sélection |
+| `DELETE /api/effects/:id` | — | Arrête et restaure |
+| `POST /api/effects/stop-all` | — | Arrête tout |
+
+Le pool de départs vit dans le package partagé (`DMX_EFFECT_PRESETS`), dérivé du pool historique via `maToDmxEffect()` : les 23 presets ont été réglés à l'oreille sur le bandeau du salon, leurs phases et origines spatiales valent mieux qu'une réécriture.
 | `setStreaming(id, enabled, zoneCount?)` | Active/désactive le streaming UDP, persiste en DB |
 | `setEffect(id, effect)` | Définit l'effet position-aware courant, persiste en DB |
 | `setLayout(id, layout)` | Sauvegarde la disposition 3D des zones |

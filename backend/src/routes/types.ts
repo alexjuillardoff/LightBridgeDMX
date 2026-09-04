@@ -7,6 +7,7 @@
 import type { FastifyReply } from "fastify";
 import { WsEvent } from "@lightbridgedmx/shared";
 import { DmxService } from "../services/dmx";
+import { EffectRunner } from "../services/effects/runner";
 import { HomeKitBridge } from "../services/homekit";
 import { MerossPlugService } from "../services/meross-plug";
 import { SmartLightService } from "../services/smart-lights";
@@ -20,6 +21,7 @@ export type Broadcast = (event: WsEvent) => void;
 export type RouteContext = {
   store: Store;
   dmx: DmxService;
+  effects: EffectRunner;
   homekit: HomeKitBridge;
   smartLights: SmartLightService;
   meross: MerossPlugService;

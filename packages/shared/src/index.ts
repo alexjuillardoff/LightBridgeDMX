@@ -581,15 +581,25 @@ export const EffectFormSchema = z.enum([
 ]);
 export type EffectForm = z.infer<typeof EffectFormSchema>;
 
-/** MAtricks : rearrangement de la distribution de phase le long du bandeau.
- *  - blocks : N zones consecutives partagent la meme phase (elles bougent ensemble) ;
- *  - groups : le motif complet se repete N fois sur la longueur ;
- *  - wings  : le bandeau est plie en N ailes, une aile sur deux etant miroir
- *             (un effet qui part du centre vers les deux extremites). */
+/** MAtricks : rearrangement de la distribution de phase sur les cellules (zones
+ *  d'un bandeau, ou projecteurs d'une selection). Vocabulaire grandMA2 :
+ *  - blocks     : N cellules consecutives partagent la meme phase — « fixtures next
+ *                 to each other execute the same phase » ;
+ *  - groups     : le motif complet se repete N fois — « phases are divided
+ *                 corresponding the number of groups » ;
+ *  - wings      : la selection est pliee en N ailes, une aile sur deux lue en miroir
+ *                 — « the phase is applied starting outwards and moving inwards » ;
+ *  - interleave : une cellule sur N joue l'effet, les autres restent a la valeur
+ *                 basse — « defines the fixtures that are to use the effect ».
+ *
+ *  MA propose aussi « Single », qui n'est PAS repris ici : sur le pupitre c'est un
+ *  reglage du pas de Next/Previous quand on parcourt une selection a la main, pas
+ *  une distribution de phase. Sans parcours interactif, il n'aurait rien a piloter. */
 export const EffectMatricksSchema = z.object({
   blocks: z.number().int().min(1).max(100).default(1).optional(),
   groups: z.number().int().min(1).max(50).default(1).optional(),
-  wings: z.number().int().min(1).max(8).default(1).optional()
+  wings: z.number().int().min(1).max(8).default(1).optional(),
+  interleave: z.number().int().min(1).max(16).default(1).optional()
 });
 export type EffectMatricks = z.infer<typeof EffectMatricksSchema>;
 
@@ -690,6 +700,133 @@ export const SmartLightEffectConfigSchema = z.discriminatedUnion("kind", [
   EffectMaSchema
 ]);
 export type SmartLightEffectConfig = z.infer<typeof SmartLightEffectConfigSchema>;
+
+// ─── Effets DMX : le moteur applique a une SELECTION de projecteurs ─────────
+//
+// Modele repris de grandMA2 (help.malighting.com, « Effects » / « Use predefined
+// effects »). Le vocabulaire y est precis, on le garde tel quel :
+//
+//   • un effet est « une modulation automatisee d'attributs » — pas seulement une
+//     couleur : dimmer, pan, tilt, rouge/vert/bleu sont tous des cibles valables ;
+//   • un effet porte plusieurs LIGNES, une par attribut vise. C'est ce qui permet
+//     un cercle de lyre : une ligne pan et une ligne tilt, dephasees de 90° ;
+//   • un effet s'applique a la SELECTION courante, et la phase se repartit sur les
+//     projecteurs selectionnes — d'ou le fait qu'un meme effet donne un resultat
+//     different selon ce qu'on a selectionne avant de le lancer.
+//
+// Ce qui suit remplace l'ancien modele, ou un effet etait un champ porte par UNE
+// lampe connectee et ne pouvait sortir que par la trame UDP de ce bandeau.
+
+/** Attribut vise par une ligne d'effet.
+ *
+ *  Deux familles, et la difference compte :
+ *  - les attributs de CANAL (dimmer, red, green, blue, pan, tilt) se resolvent
+ *    directement par les capabilities du projecteur (intensity / r / g / b / pan / tilt) ;
+ *  - les attributs de COULEUR (color, hue) n'ont pas de canal a eux : ils pilotent
+ *    le trio R/G/B d'un coup. Un balayage de teinte n'est pas exprimable en une
+ *    ligne par composante — trois rampes decalees ne donnent pas un arc-en-ciel. */
+export const EffectAttributeSchema = z.enum([
+  "dimmer",
+  "red",
+  "green",
+  "blue",
+  "pan",
+  "tilt",
+  /** Fondu de `color` vers `colorTo` sur les canaux R/G/B de la cellule. */
+  "color",
+  /** Balayage de teinte de `hueFrom` a `hueTo` (arc-en-ciel), a `saturation` fixe. */
+  "hue"
+]);
+export type EffectAttribute = z.infer<typeof EffectAttributeSchema>;
+
+/** Mode d'une ligne, au sens MA :
+ *  - "absolute" : la forme se promene entre low et high, et REMPLACE la valeur ;
+ *  - "relative" : la forme s'AJOUTE a la valeur de depart du canal. C'est le mode
+ *    qui rend un effet de pan/tilt utilisable : le cercle se dessine autour de la
+ *    position ou la lyre pointe deja, au lieu de la ramener au centre du plateau.
+ *    La valeur de reference est figee au lancement de l'effet, pas relue a chaque
+ *    trame — sinon l'effet s'additionnerait a lui-meme et partirait en butee. */
+export const EffectLineModeSchema = z.enum(["absolute", "relative"]);
+export type EffectLineMode = z.infer<typeof EffectLineModeSchema>;
+
+/** Une ligne d'effet : un attribut, une forme, et sa repartition de phase. */
+export const EffectLineSchema = z.object({
+  attribute: EffectAttributeSchema,
+  form: EffectFormSchema.default("sin"),
+  mode: EffectLineModeSchema.default("absolute"),
+  /** Valeurs basse et haute (%). low > high est permis : la forme s'inverse. */
+  low: z.number().min(0).max(100).default(0),
+  high: z.number().min(0).max(100).default(100),
+  /** Phase (degres) de la premiere et de la derniere cellule de la selection.
+   *  0 -> 360 = un cycle complet reparti sur la selection (l'effet defile) ;
+   *  0 -> 0 = toute la selection a l'unisson. */
+  phaseFrom: z.number().min(-1440).max(1440).default(0),
+  phaseTo: z.number().min(-1440).max(1440).default(360),
+  /** Largeur (%) de la portion haute du cycle — « Width » sur le pupitre.
+   *  Sans effet sur les formes continues (sin, cos, rampes, triangle). */
+  width: z.number().min(1).max(100).default(50),
+  /** Attack / Decay (% de la portion haute) : adoucissent les fronts des formes
+   *  dures. MA ne les propose que pour Random, Pwm et Chaser — ici pwm et random. */
+  attack: z.number().min(0).max(100).default(0).optional(),
+  decay: z.number().min(0).max(100).default(0).optional(),
+  /** Graine du tirage pseudo-aleatoire (forme "random"), pour que deux lignes
+   *  aleatoires d'un meme effet ne scintillent pas a l'identique. */
+  seed: z.number().int().min(0).max(65535).default(1).optional()
+});
+export type EffectLine = z.infer<typeof EffectLineSchema>;
+
+/** Un effet DMX complet, joue sur une selection. */
+export const DmxEffectSchema = z.object({
+  name: z.string().min(1).optional(),
+  /** Vitesse en BPM : 60 BPM = 1 cycle par seconde. 0 fige l'effet. */
+  speed: z.number().min(0).max(1200).default(60),
+  /** Multiplicateur de vitesse, distinct du BPM — « Rate » sur le pupitre, ou
+   *  Rate 1 = 60 BPM. Permet de doubler un effet sans retoucher sa vitesse. */
+  rate: z.number().min(0.05).max(20).default(1),
+  direction: z.enum(["forward", "backward"]).default("forward"),
+  matricks: EffectMatricksSchema.optional(),
+  /** Distribution de la phase par la GEOMETRIE plutot que par le rang de cellule.
+   *  N'a de sens que sur des cellules dont on connait la position 3D — aujourd'hui
+   *  les zones d'un bandeau, via son zoneLayout. Sur une selection de projecteurs
+   *  sans coordonnees, elle est ignoree et la phase suit l'ordre de selection.
+   *  Quand elle s'applique, les MAtricks blocks/wings sont ignores : ils raisonnent
+   *  en rang, et les melanger a une distribution spatiale donne un resultat illisible. */
+  spatial: EffectSpatialSchema.optional(),
+  /** Restreint l'effet a certaines sections nommees du layout d'un bandeau
+   *  (`zoneLayout.sides`) — ex. ne jouer que sur la traversee de plafond. */
+  sides: z.array(z.string().min(1)).optional(),
+  /** Les lignes de l'effet. Au moins une ; plusieurs pour croiser des attributs. */
+  lines: z.array(EffectLineSchema).min(1).max(8),
+  /** Couleurs employees quand une ligne "dimmer" tombe sur une cellule qui n'a PAS
+   *  de canal d'intensite mais des canaux R/G/B — le cas de chaque zone du bandeau.
+   *  La forme fait alors un fondu de bgColor vers color. Sans elles : noir -> blanc. */
+  color: RgbColorSchema.optional(),
+  bgColor: RgbColorSchema.optional(),
+  /** Couleur d'arrivee du fondu, pour une ligne d'attribut "color". */
+  colorTo: RgbColorSchema.optional(),
+  /** Bornes du balayage de teinte (degres) et saturation, pour l'attribut "hue". */
+  hueFrom: z.number().min(-720).max(720).default(0).optional(),
+  hueTo: z.number().min(-720).max(720).default(360).optional(),
+  saturation: z.number().min(0).max(100).default(100).optional()
+});
+export type DmxEffect = z.infer<typeof DmxEffectSchema>;
+
+/** Un effet en train de tourner. Purement vivant : rien n'est persiste, un
+ *  redemarrage du backend rend les canaux a leur valeur precedente. C'est le
+ *  comportement d'un pupitre, et ca evite qu'un effet se rallume tout seul sur un
+ *  projecteur sans que personne ne l'ait demande. */
+export const RunningEffectSchema = z.object({
+  id: z.string(),
+  effect: DmxEffectSchema,
+  /** Projecteurs vises, dans l'ordre de selection — c'est cet ordre qui porte la
+   *  repartition de phase. */
+  fixtureIds: z.array(z.string()),
+  /** Nombre de cellules reellement pilotees (un bandeau en compte autant que de
+   *  zones), utile a l'UI pour expliquer la repartition. */
+  cellCount: z.number().int().min(0),
+  startedAt: z.string()
+});
+export type RunningEffect = z.infer<typeof RunningEffectSchema>;
 
 // ─── Pool d'effets predefinis ───────────────────────────────────────────────
 // Equivalent du pool d'effets d'un grandMA2 : des points de depart nommes, prets
@@ -1499,7 +1636,13 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("fixture_updated"), data: FixtureSchema }),
   z.object({ type: z.literal("scene_activated"), data: SceneSchema }),
   z.object({ type: z.literal("log"), data: LogEventSchema }),
-  z.object({ type: z.literal("smart_light_updated"), data: SmartLightSchema })
+  z.object({ type: z.literal("smart_light_updated"), data: SmartLightSchema }),
+  // Liste des effets en cours. Diffusee a chaque lancement/arret pour que toutes
+  // les fenetres du pupitre montrent le meme etat de jeu.
+  z.object({
+    type: z.literal("effects_updated"),
+    data: z.object({ running: z.array(RunningEffectSchema) })
+  })
 ]);
 
 export type WsEvent = z.infer<typeof WsEventSchema>;
@@ -1541,3 +1684,79 @@ export const QxfLibraryFixtureSchema = QxfParseResultSchema.extend({
 });
 
 export type QxfLibraryFixture = z.infer<typeof QxfLibraryFixtureSchema>;
+
+// ─── Pont ancien pool -> effets DMX ─────────────────────────────────────────
+//
+// Les 23 presets du pool ont ete regles a l'oreille sur le bandeau du salon : leurs
+// phases, largeurs et origines spatiales valent mieux qu'une reecriture. On garde
+// donc `EffectMa` comme FORMAT D'ECRITURE des presets, et on le convertit a la
+// volee vers le modele generique joue par le moteur DMX.
+//
+// La conversion est totale sauf sur un point : `brightness`, le multiplicateur
+// global d'intensite de l'ancien modele, disparait. Ce n'est pas une perte — c'est
+// desormais le role du canal de dimmer master de la facade DMX (voir
+// SmartLightDmxZoneMirror.dimmerChannel), qui le fait pour TOUS les effets au lieu
+// d'un seul, et depuis un fader du pupitre au lieu d'un champ de config.
+// (Tous les presets du pool valent 100, la conversion est donc sans perte.)
+
+/** Convertit un effet de l'ancien modele (une forme, une cible) vers le modele
+ *  generique a lignes. Un effet `ma` donne exactement une ligne. */
+export function maToDmxEffect(ma: EffectMa): DmxEffect {
+  return {
+    speed: ma.speed,
+    rate: 1,
+    direction: ma.direction ?? "forward",
+    matricks: ma.matricks,
+    spatial: ma.spatial,
+    sides: ma.sides,
+    lines: [
+      {
+        // Les cibles de l'ancien modele (dimmer / color / hue) sont exactement
+        // trois des attributs du nouveau : la traduction est l'identite.
+        attribute: ma.target,
+        form: ma.form,
+        mode: "absolute",
+        low: ma.low,
+        high: ma.high,
+        phaseFrom: ma.phaseFrom,
+        phaseTo: ma.phaseTo,
+        width: ma.width,
+        attack: ma.attack,
+        decay: ma.decay,
+        seed: ma.seed
+      }
+    ],
+    color: ma.color,
+    bgColor: ma.bgColor,
+    colorTo: ma.colorTo,
+    hueFrom: ma.hueFrom,
+    hueTo: ma.hueTo,
+    saturation: ma.saturation
+  };
+}
+
+/** Un preset du pool, pret a etre joue sur une selection. */
+export interface DmxEffectPreset {
+  id: string;
+  group: "pupitre" | "3d" | "meuble";
+  label: string;
+  hint: string;
+  effect: DmxEffect;
+  /** true si le preset s'appuie sur la geometrie 3D d'un bandeau : le proposer sur
+   *  une selection de PAR n'aurait pas de sens, la distribution spatiale y est
+   *  ignoree faute de coordonnees dans le patch. */
+  needsGeometry: boolean;
+}
+
+/** Le pool, exprime dans le modele generique. Derive du pool historique pour qu'il
+ *  n'y ait qu'une seule liste a maintenir. */
+export const DMX_EFFECT_PRESETS: DmxEffectPreset[] = SMART_LIGHT_EFFECT_PRESETS.filter(
+  (p): p is SmartLightEffectPreset & { config: EffectMa } => p.config.kind === "ma"
+).map((p) => ({
+  id: p.id,
+  group: p.group,
+  label: p.label,
+  hint: p.hint,
+  effect: maToDmxEffect(p.config),
+  needsGeometry: p.config.spatial !== undefined || p.config.sides !== undefined
+}));

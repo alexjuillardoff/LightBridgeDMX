@@ -421,22 +421,12 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── Effet actif sensible a la position (position-aware) ─────────────────
-
-  // Definit l'effet anime evalue par le moteur d'effets (EffectEngine) cote backend,
-  // a distinguer des effets natifs Nanoleaf. null = arrete l'effet en cours.
-  app.post("/api/smart-lights/:id/effect", async (request, reply) => {
-    try {
-      const id = (request.params as { id: string }).id;
-      const parsed = SmartLightEffectConfigSchema.nullable().parse(request.body);
-      const light = await ctx.smartLights.setEffect(id, parsed);
-      if (!light) return reply.code(404).send({ message: "Smart light not found" });
-      ctx.broadcast({ type: "smart_light_updated", data: light });
-      reply.send(light);
-    } catch (err) {
-      handleError(err, reply);
-    }
-  });
+  // ─── Effets ───────────────────────────────────────────────────────────────
+  //
+  // Plus d'endpoint d'effet ici non plus. Un effet ne se pose plus SUR une lampe :
+  // il se joue sur une SELECTION de projecteurs, par le moteur d'effets DMX
+  // (/api/effects). Le bandeau le recoit comme n'importe quel autre projecteur,
+  // par sa facade DMX et son miroir par zone.
 
   // ─── Decouverte (discovery mDNS) ─────────────────────────────────────────
 

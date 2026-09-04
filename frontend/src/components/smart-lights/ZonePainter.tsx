@@ -49,10 +49,15 @@ export const ZonePainter = ({
   // Vrai tant que le bouton souris est enfonce : permet de peindre en glissant.
   const [isPainting, setIsPainting] = useState(false);
 
-  // Envoie la palette au backend comme effet "static" (le moteur d'effets la rejoue).
+  // Pousse la palette directement par le streaming UDP. Avant, la peinture passait
+  // par un effet "static" — on detournait le moteur d'effets pour ranger une image
+  // fixe. Le moteur d'effets vit desormais au niveau DMX et joue sur une selection ;
+  // une peinture n'est pas un effet, c'est un etat, et setZones est fait pour ca.
   const apply = useMutation(
     (next: RgbColor[]) =>
-      api.smartLights.setEffect(light.id, { kind: "static", palette: next, brightness: 100 }),
+      api.smartLights.setZones(light.id, {
+        zones: next.map((c, index) => ({ index, r: c.r, g: c.g, b: c.b }))
+      }),
     { onSuccess: onUpdated }
   );
 

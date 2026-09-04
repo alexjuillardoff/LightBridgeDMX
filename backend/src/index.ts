@@ -12,6 +12,7 @@ import { createErrorHandler } from "./routes/errors";
 import { DmxService } from "./services/dmx";
 import { HomeKitBridge } from "./services/homekit";
 import { MerossPlugService } from "./services/meross-plug";
+import { EffectRunner } from "./services/effects/runner";
 import { SmartLightService } from "./services/smart-lights";
 import { createWebsocketManager } from "./websocket";
 import { Store } from "./state/store";
@@ -100,6 +101,10 @@ const meross = new MerossPlugService(app.log, dmx, store, {
 });
 const websocket = createWebsocketManager({ logger: app.log, store, dmx });
 const smartLights = new SmartLightService(app.log, dmx, store);
+// Moteur d'effets DMX : il tourne au-dessus de l'univers, pas au-dessus d'une
+// lampe. Il recoit le patch par fonctions plutot que le store, pour rester
+// testable sans base et n'avoir aucune opinion sur la persistance.
+const effects = new EffectRunner(app.log, dmx);
 // Le pont HomeKit expose aussi les lampes connectees, en un seul accessoire chacune.
 // Injection apres coup : le pont est construit avant le SmartLightService.
 homekit.attachSmartLights(smartLights);
@@ -107,7 +112,7 @@ const handleError = createErrorHandler(app.log);
 
 registerRoutes(
   app,
-  { store, dmx, homekit, smartLights, meross, broadcast: websocket.broadcast },
+  { store, dmx, homekit, smartLights, meross, effects, broadcast: websocket.broadcast },
   handleError
 );
 
@@ -171,6 +176,7 @@ app.addHook("onClose", async () => {
   }
   await smartLights.stop();
   await meross.stop();
+  effects.stop();
   await dmx.stop();
   await homekit.stop();
   await store.disconnect();
@@ -202,6 +208,10 @@ const start = async () => {
     // MEROSS_SEED n'amorce la config que si la base est vide (1er lancement).
     await meross.start(fixtures, MEROSS_SEED);
     await smartLights.start();
+    effects.start(
+      () => store.listFixtures(),
+      () => smartLights.listWithState()
+    );
     // Les accessoires de lampes ne peuvent etre crees qu'une fois le service demarre
     // (c'est lui qui porte l'etat) et le pont publie.
     homekit.syncSmartLights(smartLights.listWithState());

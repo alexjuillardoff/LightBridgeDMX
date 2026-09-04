@@ -14,8 +14,9 @@ import {
   Preset,
   QxfLibraryFixture,
   Scene,
+  DmxEffect,
+  RunningEffect,
   SmartLight,
-  SmartLightEffectConfig,
   SmartLightInput,
   SmartLightStateInput,
   SmartLightZoneLayout,
@@ -267,11 +268,6 @@ export const api = {
         method: "POST",
         body: JSON.stringify(layout)
       }),
-    setEffect: (id: string, effect: SmartLightEffectConfig | null) =>
-      fetchJSON<SmartLight>(`/api/smart-lights/${id}/effect`, {
-        method: "POST",
-        body: JSON.stringify(effect)
-      }),
     // Expose le bandeau comme un projecteur DMX : 3 canaux (R/G/B) par zone.
     // Le corps est optionnel — sans adresse, le backend alloue le premier bloc libre.
     createDmxFixture: (
@@ -285,6 +281,21 @@ export const api = {
     // Supprime le projecteur genere et debranche le miroir DMX par zone.
     deleteDmxFixture: (id: string) =>
       fetchJSON<SmartLight>(`/api/smart-lights/${id}/dmx-fixture`, { method: "DELETE" })
+  },
+
+  // Moteur d'effets DMX. Un effet se joue sur une SELECTION de projecteurs et vit
+  // dans le backend le temps qu'il tourne — rien n'est persiste, il n'y a donc ni
+  // creation ni mise a jour, seulement « lance », « arrete » et « qu'est-ce qui tourne ».
+  effects: {
+    list: () => fetchJSON<{ running: RunningEffect[] }>("/api/effects"),
+    run: (effect: DmxEffect, fixtureIds: string[]) =>
+      fetchJSON<RunningEffect>("/api/effects/run", {
+        method: "POST",
+        body: JSON.stringify({ effect, fixtureIds })
+      }),
+    stop: (id: string) => fetchJSON<{ stopped: string }>(`/api/effects/${id}`, { method: "DELETE" }),
+    stopAll: () =>
+      fetchJSON<{ running: RunningEffect[] }>("/api/effects/stop-all", { method: "POST" })
   }
 };
 

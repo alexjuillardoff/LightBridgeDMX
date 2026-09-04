@@ -15,7 +15,6 @@ import {
 } from "@lightbridgedmx/shared";
 import { api } from "../lib/api";
 import { ZonePainter } from "./smart-lights/ZonePainter";
-import { EffectDesigner } from "./smart-lights/EffectDesigner";
 import { lightMatchesBackend, SmartLightBackendId } from "./smart-lights/backendRegistry";
 
 // Chargement differe (lazy) de l'editeur 3D : three.js + drei pesent ~600 Ko.
@@ -242,7 +241,7 @@ const SmartLightCard = ({
     : state.colorMode ?? "hs";
   const [showAdvanced, setShowAdvanced] = useState(false);
   // Onglet ouvert sous la carte ("none" = aucun).
-  const [tab, setTab] = useState<"none" | "painter" | "effect" | "layout3d">("none");
+  const [tab, setTab] = useState<"none" | "painter" | "layout3d">("none");
 
   // --- Mutations : chaque action met a jour le cache via onUpdated/onDeleted ---
   // Applique un nouvel etat (on, couleur, luminosite...) a la lampe.
@@ -357,8 +356,6 @@ const SmartLightCard = ({
       <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button type="button" onClick={() => setTab(tab === "painter" ? "none" : "painter")}
           style={tab === "painter" ? buttonStylePrimary : buttonStyleSecondary}>🎨 Painter</button>
-        <button type="button" onClick={() => setTab(tab === "effect" ? "none" : "effect")}
-          style={tab === "effect" ? buttonStylePrimary : buttonStyleSecondary}>✨ Effets</button>
         <button type="button" onClick={() => setTab(tab === "layout3d" ? "none" : "layout3d")}
           style={tab === "layout3d" ? buttonStylePrimary : buttonStyleSecondary}>📐 Layout 3D</button>
         <button type="button" onClick={() => setShowAdvanced((v) => !v)} style={buttonStyleSecondary}>
@@ -380,11 +377,8 @@ const SmartLightCard = ({
           <ZonePainter light={light} onUpdated={onUpdated} />
         </div>
       ) : null}
-      {tab === "effect" ? (
-        <div style={{ marginTop: 10 }}>
-          <EffectDesigner light={light} onUpdated={onUpdated} />
-        </div>
-      ) : null}
+      {/* Plus d'onglet Effets ici : un effet ne se pose plus sur une lampe, il se joue
+          sur une sélection de projecteurs depuis la fenêtre Effets du pupitre. */}
       {/* Editeur 3D charge en differe (Suspense) : voir le lazy() en haut du fichier. */}
       {tab === "layout3d" ? (
         <div style={{ marginTop: 10 }}>

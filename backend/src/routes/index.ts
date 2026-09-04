@@ -3,6 +3,7 @@
 // et les branche en un seul appel depuis l'entree du serveur (index.ts).
 import type { FastifyInstance } from "fastify";
 import { registerDeviceRoutes } from "./devices";
+import { registerEffectRoutes } from "./effects";
 import { registerFixtureRoutes } from "./fixtures";
 import { registerMerossRoutes } from "./meross";
 import { registerPresetRoutes } from "./presets";
@@ -31,4 +32,5 @@ export const registerRoutes = (app: FastifyInstance, ctx: RouteContext, handleEr
   registerSmartLightRoutes(app, ctx, handleError);
   registerDeviceRoutes(app, ctx, handleError);
   registerThreadLightRoutes(app, ctx, handleError);
+  registerEffectRoutes(app, ctx);
 };
