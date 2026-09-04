@@ -73,6 +73,10 @@ type RuntimeEntry = {
    *  (0 = jamais). Sert a detecter qu'un autre auteur — fader, scene, blackout — a
    *  ecrit sur le bloc miroir depuis notre derniere trame. */
   effectDmxSeq: number;
+  /** Dernier niveau lu sur le canal de dimmer maitre du miroir par zone, ramene a
+   *  l'echelle 0..1. `null` = aucun canal de dimmer configure : les zones partent
+   *  alors a pleine echelle, comme avant l'introduction du master. */
+  dmxMaster: number | null;
   /** True quand le bloc DMX par zone a bouge en dernier — le DMX possede alors le bandeau
    *  (priorite sur l'effet et sur desired.on). Une ecriture locale (painter, effet, couleur)
    *  rend la main jusqu'au prochain mouvement du DMX. */
@@ -99,6 +103,17 @@ const STREAM_WATCHDOG_INTERVAL_MS = 10000; // tick du chien de garde (watchdog) 
 const STREAM_RETRY_BASE_MS = 2000;   // premier delai de backoff apres un echec de (re)activation
 const STREAM_RETRY_MAX_MS = 60000;   // plafond du backoff — un appareil hors ligne n'est pas martele
 
+/** Luminosite maitre imposee a l'appareil avant toute entree en extControl.
+ *
+ *  La trame extControl ne transporte que des couleurs : l'appareil multiplie ensuite
+ *  ce qu'il recoit par sa luminosite maitre, et cette valeur est injoignable pendant le
+ *  streaming (flushAll saute les lampes en streaming). Une lampe entree en extControl a
+ *  38 % plafonne donc a 38 % sans que rien ne le signale : le blanc plein sort gris.
+ *  On la neutralise donc a fond, une bonne fois, et l'intensite se joue ailleurs —
+ *  dans la trame, via le dimmer maitre du miroir DMX (`dimmerChannel`).
+ */
+const EXT_CONTROL_MASTER_BRIGHTNESS = 100;
+
 /** Nom que Nanoleaf renvoie dans effects/select quand l'appareil est en mode extControl.
  *  C'est le seul temoin fiable, cote appareil, que le flux UDP est reellement pris en compte. */
 const EXT_CONTROL_EFFECT = "*ExtControl*";
@@ -112,7 +127,8 @@ const EXT_CONTROL_EFFECT = "*ExtControl*";
  * En plus :
  *   - miroir DMX bidirectionnel (recopie RGB/luminosite depuis des canaux DMX configures)
  *   - refresh periodique de l'etat depuis l'appareil (pour rester synchro avec les apps externes)
- *   - relais des effets (selectEffect via NanoleafClient)
+ *   - effets : TOUS calcules localement par le moteur d'effets, jamais delegues aux
+ *     effets embarques de l'appareil (voir setEffect)
  *
  * Emet "light_updated" a chaque changement d'etat d'une lampe (apres un push
  * reussi ou apres une synchro depuis l'appareil). Les ecouteurs (couche WebSocket) re-diffusent.
@@ -246,13 +262,15 @@ export class SmartLightService extends EventEmitter {
     return { ...entry.light, state: next };
   }
 
-  /** Envoie une palette par zone via le streamer. Necessite streaming.enabled = true. */
-  applyZones(id: string, palette: SmartLightZonePalette): SmartLight | undefined {
+  /** Envoie une palette par zone via le streamer, en allumant le streaming UDP s'il
+   *  ne l'etait pas : une palette par zone n'a pas d'autre chemin de sortie. */
+  async applyZones(id: string, palette: SmartLightZonePalette): Promise<SmartLight | undefined> {
     const entry = this.runtime.get(id);
     if (!entry) return undefined;
     entry.lastLocalWriteAt = Date.now();
+    await this.ensureStreamingForZoneWork(id);
     if (!entry.streamer?.isEnabled()) {
-      throw new Error("Streaming not enabled on this smart light");
+      throw new Error("Streaming UDP indisponible sur cette lampe (appareil injoignable ?)");
     }
     entry.zonePalette = palette;
     entry.dmxZonesOwned = false; // peinture manuelle : le miroir DMX par zone reprend la main plus tard
@@ -260,39 +278,14 @@ export class SmartLightService extends EventEmitter {
     return { ...entry.light, state: entry.desired };
   }
 
-  /** Selectionne un effet integre a l'appareil. Le mode effet reste actif
-   *  jusqu'au prochain setState. NB : on coupe d'abord le streaming, car le flux
-   *  UDP et un effet embarque ne peuvent pas piloter la lampe en meme temps. */
-  async selectEffect(id: string, effectName: string): Promise<SmartLight | undefined> {
-    const entry = this.runtime.get(id);
-    if (!entry?.client) return undefined;
-    entry.lastLocalWriteAt = Date.now();
-    if (entry.streamer?.isEnabled()) await entry.streamer.disable();
-    // Choisir un effet natif est une sortie EXPLICITE du streaming : on persiste le
-    // drapeau a false. Sans ca, le chien de garde (watchdog) rallumerait l'extControl
-    // dans les 10 s et ecraserait l'effet qu'on vient tout juste de selectionner.
-    if (entry.light.streaming?.enabled) {
-      const off = await this.store.updateSmartLight(id, {
-        streaming: { enabled: false, zoneCount: entry.light.streaming?.zoneCount }
-      });
-      entry.light = off;
-    }
-    await entry.client.selectEffect(effectName);
-    entry.dmxZonesOwned = false;
-    entry.desired = { ...entry.desired, colorMode: "effect", currentEffect: effectName };
-    this.emit("light_updated", { ...entry.light, state: entry.desired });
-    return { ...entry.light, state: entry.desired };
-  }
-
-  // Renvoie la liste des effets integres disponibles sur l'appareil.
-  async listEffects(id: string): Promise<string[]> {
-    const entry = this.runtime.get(id);
-    if (!entry?.client) throw new Error("Unknown smart light or no client");
-    return entry.client.listEffects();
-  }
-
   /** Definit ou efface l'effet actif (moteur d'effets local, pas l'appareil).
-   *  Persiste en base ; le moteur le prend en compte au prochain tick de streaming. */
+   *  Persiste en base ; le moteur le prend en compte au prochain tick de streaming.
+   *
+   *  Les effets embarques de l'appareil (Nanoleaf & co) ne sont volontairement plus
+   *  exposes : tout ce qui joue sur un bandeau est calcule ici, par le moteur
+   *  d'effets. Ca garde un seul vocabulaire (forme, vitesse, phase, layout 3D) et un
+   *  seul chemin de sortie, et ca supprime la panne ou selectionner un effet natif
+   *  coupait le streaming en laissant l'appareil figé sur sa derniere trame. */
   async setEffect(id: string, effect: SmartLightEffectConfig | null): Promise<SmartLight | undefined> {
     const entry = this.runtime.get(id);
     if (!entry) return undefined;
@@ -300,8 +293,33 @@ export class SmartLightService extends EventEmitter {
     const updated = await this.store.updateSmartLight(id, { currentEffect: effect });
     entry.light = updated;
     entry.dmxZonesOwned = false;
-    this.emit("light_updated", { ...updated, state: entry.desired });
-    return { ...updated, state: entry.desired };
+    // Un effet ne sort que par la trame UDP : sans streaming il serait calcule a 30 Hz
+    // pour rien. On l'allume donc plutot que d'echouer en silence.
+    if (effect) await this.ensureStreamingForZoneWork(id);
+    this.emit("light_updated", { ...entry.light, state: entry.desired });
+    return { ...entry.light, state: entry.desired };
+  }
+
+  /** Allume le streaming UDP si une ecriture par zone (effet, painter) le reclame et
+   *  qu'il est encore eteint.
+   *
+   *  Sans ca, peindre ou lancer un effet sur un bandeau dont le streaming est coupe ne
+   *  produit RIEN : streamAll() sort au premier test (`if (!s?.isEnabled()) continue`),
+   *  les canaux DMX bougent, l'UI affiche l'effet en cours, et le bandeau reste sur sa
+   *  derniere trame. Aucun message, aucune erreur — c'est exactement la panne qu'on a
+   *  mis une session a diagnostiquer. Demander une couleur par zone, c'est demander le
+   *  seul transport qui sache la porter. */
+  private async ensureStreamingForZoneWork(id: string): Promise<void> {
+    const entry = this.runtime.get(id);
+    if (!entry) return;
+    if (entry.light.config.type !== "nanoleaf-http") return; // pas de streaming ailleurs
+    if (entry.light.streaming?.enabled === true && entry.streamer?.isEnabled()) return;
+    try {
+      await this.setStreaming(id, true);
+      this.logger.info({ id }, "Streaming UDP active automatiquement pour une ecriture par zone");
+    } catch (err) {
+      this.logger.warn({ err, id }, "Echec de l'activation automatique du streaming UDP");
+    }
   }
 
   /** Met a jour la disposition (layout) physique par zone : coordonnees de
@@ -338,9 +356,13 @@ export class SmartLightService extends EventEmitter {
       } else {
         entry.streamer.setZoneCount(zc);
       }
-      // Sous tension AVANT d'entrer en extControl : une fois dedans, plus aucune
-      // trame ne peut rallumer l'appareil, et il resterait noir sans qu'on le voie.
-      await entry.client.setState({ on: true }).catch(() => {});
+      // Sous tension ET a pleine luminosite AVANT d'entrer en extControl : une fois
+      // dedans, plus aucune trame ne peut ni rallumer l'appareil ni remonter sa
+      // luminosite maitre. Un strip entre en extControl a 38 % y reste bloque, et
+      // peint tout le show a 38 % sans que rien ne le signale.
+      await entry.client
+        .setState({ on: true, brightness: EXT_CONTROL_MASTER_BRIGHTNESS })
+        .catch(() => {});
       await entry.streamer.enable();
     } else {
       if (entry.streamer) await entry.streamer.disable();
@@ -436,6 +458,11 @@ export class SmartLightService extends EventEmitter {
           logger: this.logger
         });
         try {
+          // Meme preparation que setStreaming : sous tension et luminosite maitre a
+          // fond, sinon on entre en extControl sur l'etat ou l'appareil se trouvait.
+          await client
+            .setState({ on: true, brightness: EXT_CONTROL_MASTER_BRIGHTNESS })
+            .catch(() => {});
           await streamer.enable();
         } catch (err) {
           this.logger.warn({ err, id: light.id }, "Failed to enable streaming on register — will retry on next setStreaming");
@@ -480,6 +507,11 @@ export class SmartLightService extends EventEmitter {
       dmxZonesOwned: sameZoneMirror(existing?.light.dmxMirror?.zones, light.dmxMirror?.zones)
         ? existing?.dmxZonesOwned ?? false
         : false,
+      // Meme raisonnement que dmxZones : si le bloc a bouge, le niveau lu avant ne
+      // veut plus rien dire. `null` = on attend le premier tick DMX pour le savoir.
+      dmxMaster: sameZoneMirror(existing?.light.dmxMirror?.zones, light.dmxMirror?.zones)
+        ? existing?.dmxMaster ?? null
+        : null,
       lastPushAt: existing?.lastPushAt ?? 0,
       inflight: false,
       lastLocalWriteAt: existing?.lastLocalWriteAt ?? 0,
@@ -559,19 +591,28 @@ export class SmartLightService extends EventEmitter {
         // envoie reellement (le DMX possede le bandeau et passe AVANT la garde
         // desired.on). On se retrouvait a peindre des zones sur un panneau hors
         // tension, sans rien pour le signaler.
+        //
+        // Meme raisonnement pour la luminosite maitre : elle n'est pas dans la trame,
+        // le chemin HTTP est coupe, et elle module pourtant tout ce qu'on envoie. Une
+        // coupure secteur ou un passage par l'app Nanoleaf la ramene a sa valeur
+        // d'avant, et le bandeau se met a plafonner sans rien signaler. Le watchdog
+        // est le seul endroit qui puisse encore la voir : il la remet a fond.
         const needsPower = info.state.on === false;
-        if (needsPower) {
+        const needsFullBrightness = info.state.brightness < EXT_CONTROL_MASTER_BRIGHTNESS;
+        if (needsPower || needsFullBrightness) {
           this.logger.warn(
-            { id: light.id },
-            "Appareil en extControl mais hors tension — remise sous tension"
+            { id: light.id, on: info.state.on, brightness: info.state.brightness },
+            needsPower
+              ? "Appareil en extControl mais hors tension — remise sous tension"
+              : "Luminosite maitre retombee sous 100 % en extControl — remise a fond"
           );
           // Ce PUT met fin a l'extControl : la reactivation juste apres n'est pas
           // optionnelle, elle fait partie de la meme operation.
-          await entry.client.setState({ on: true });
+          await entry.client.setState({ on: true, brightness: EXT_CONTROL_MASTER_BRIGHTNESS });
         }
 
-        if (needsPower || info.state.currentEffect !== EXT_CONTROL_EFFECT) {
-          if (!needsPower) {
+        if (needsPower || needsFullBrightness || info.state.currentEffect !== EXT_CONTROL_EFFECT) {
+          if (!needsPower && !needsFullBrightness) {
             this.logger.warn(
               { id: light.id, effect: info.state.currentEffect },
               "Appareil sorti de l'extControl — reactivation du streaming UDP"
@@ -797,6 +838,17 @@ export class SmartLightService extends EventEmitter {
       zones.push({ index: i, r, g, b });
     }
 
+    // Dimmer maitre : lu a chaque tick, et volontairement HORS de la logique de
+    // propriete du bandeau. Bouger le master ne doit pas voler le bandeau a l'effet en
+    // cours — c'est un fader d'intensite, pas une commande de contenu : il attenue ce
+    // qui joue, quelle qu'en soit la source, exactement comme le grand master d'un
+    // pupitre. Le lire ici, avant le retour anticipe ci-dessous, garantit qu'il
+    // s'applique aussi aux trames que le moteur d'effets vient de publier.
+    entry.dmxMaster =
+      cfg.dimmerChannel === undefined
+        ? null
+        : (state.values[cfg.dimmerChannel - 1] ?? 0) / 255;
+
     // Le moteur d'effets publie sa trame sur ces memes canaux (pour que le pupitre
     // la voie bouger) : en la relisant ici, on la prendrait pour une commande DMX et
     // le miroir volerait le bandeau a l'effet a la trame suivante. On memorise donc
@@ -980,8 +1032,14 @@ export class SmartLightService extends EventEmitter {
       // Miroir DMX par zone actif : le pupitre possede le bandeau. On passe donc
       // AVANT la garde desired.on, pour qu'un noir envoye depuis le DMX (blackout)
       // eteigne bien le bandeau au lieu de rendre la main a l'effet en cours.
+      // Intensite maitre du bandeau, appliquee a TOUTES les sorties ci-dessous.
+      // C'est le seul endroit ou une intensite peut agir en streaming : la trame
+      // extControl ne transporte que du R/G/B, et la luminosite de l'appareil est
+      // clouee a 100 % pour ne pas attenuer deux fois.
+      const master = entry.dmxMaster ?? 1;
+
       if (entry.dmxZonesOwned && entry.dmxZones) {
-        s.sendZones(entry.dmxZones);
+        s.sendZones(scaleZones(entry.dmxZones, master));
         continue;
       }
       // Lampe eteinte : on envoie quand meme du noir a chaque tick pour maintenir
@@ -995,18 +1053,29 @@ export class SmartLightService extends EventEmitter {
         // Sans layout configure, on retombe sur une disposition lineaire par defaut.
         const layout = entry.light.zoneLayout ?? defaultLinearLayout(entry.light.streaming?.zoneCount ?? 50);
         const frame = evaluateEffect(effect, layout, tNow);
-        s.sendZones(frame.map((c, i) => ({ index: i, r: c.r, g: c.g, b: c.b })));
+        s.sendZones(scaleZones(frame.map((c, i) => ({ index: i, r: c.r, g: c.g, b: c.b })), master));
+        // On publie la trame NON attenuee : le master a son propre canal, et l'ecraser
+        // avec le resultat attenue le ferait s'appliquer deux fois — une premiere a la
+        // publication, une seconde a la relecture au tick suivant, jusqu'au noir.
         this.publishEffectToDmx(entry, frame);
         continue;
       }
       if (entry.zonePalette) {
-        s.sendZones(entry.zonePalette.zones);
+        s.sendZones(scaleZones(entry.zonePalette.zones, master));
         continue;
       }
       const rgb = hsbToRgb(entry.desired);
-      s.sendUniform(rgb);
+      s.sendUniform({ r: rgb.r * master, g: rgb.g * master, b: rgb.b * master });
     }
   }
+}
+
+/** Attenue une trame par zone par un facteur 0..1. Le clamp final est fait par le
+ *  streamer (clamp8), on se contente ici du produit — et on evite d'allouer quand le
+ *  master est a fond, ce qui est le cas courant. */
+function scaleZones<T extends { r: number; g: number; b: number }>(zones: T[], master: number): T[] {
+  if (master >= 1) return zones;
+  return zones.map((z) => ({ ...z, r: z.r * master, g: z.g * master, b: z.b * master }));
 }
 
 /** Signature des ecritures DMX faites par le moteur d'effets pour une lampe donnee.

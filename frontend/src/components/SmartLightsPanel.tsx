@@ -263,17 +263,6 @@ const SmartLightCard = ({
     (next: boolean) => api.smartLights.setStreaming(light.id, next),
     { onSuccess: onUpdated }
   );
-  // Liste des effets builtin de la lampe. Charge seulement si le panneau avance
-  // est ouvert ET que la lampe possede un token (sinon l'API n'est pas accessible).
-  // Les effets sont propres a l'API Nanoleaf : une ampoule HomeKit-sur-Thread n'en
-  // expose aucun, elle ne connait que teinte / saturation / luminosite.
-  const effectsQuery = useQuery(["smart-lights", light.id, "effects"], () => api.smartLights.listEffects(light.id), {
-    enabled: showAdvanced && light.config.type === "nanoleaf-http" && !!light.config.token
-  });
-  const selectEffect = useMutation(
-    (name: string) => api.smartLights.selectEffect(light.id, name),
-    { onSuccess: onUpdated }
-  );
 
   // Couleur du selecteur natif <input type=color> : on force V=100 % pour
   // afficher la teinte pure (la luminosite a son propre curseur).
@@ -405,25 +394,11 @@ const SmartLightCard = ({
         </div>
       ) : null}
 
-      {/* Panneau avance : choix d'un effet builtin de la lampe + edition du mirror DMX. */}
+      {/* Panneau avance : exposition DMX + edition du mirror. Les effets embarques de
+          l'appareil n'y figurent plus — tout effet est calcule par LightBridge, dans
+          l'onglet Effets. */}
       {showAdvanced ? (
         <div style={{ marginTop: 10, padding: 10, background: "#0a0a0a", borderRadius: 0 }}>
-          <p className="muted" style={{ margin: "0 0 6px 0", fontSize: 13 }}>Effets builtin</p>
-          {effectsQuery.isLoading ? (
-            <p className="muted" style={{ fontSize: 13 }}>Chargement…</p>
-          ) : (
-            <select
-              value={state.currentEffect ?? ""}
-              onChange={(e) => selectEffect.mutate(e.target.value)}
-              style={{ ...inputStyle, marginTop: 0 }}
-              disabled={selectEffect.isLoading}
-            >
-              <option value="" disabled>— Choisir un effet —</option>
-              {(effectsQuery.data?.effects ?? []).map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          )}
           <DmxFixtureEditor light={light} onUpdated={onUpdated} />
           <MirrorEditor
             mirror={light.dmxMirror ?? null}

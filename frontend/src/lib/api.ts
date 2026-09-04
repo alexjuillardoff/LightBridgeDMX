@@ -250,13 +250,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body ?? {})
       }),
-    listEffects: (id: string) =>
-      fetchJSON<{ effects: string[] }>(`/api/smart-lights/${id}/effects`),
-    selectEffect: (id: string, name: string) =>
-      fetchJSON<SmartLight>(`/api/smart-lights/${id}/effects/select`, {
-        method: "POST",
-        body: JSON.stringify({ name })
-      }),
+    // Pas de listEffects/selectEffect : les effets embarques de l'appareil ne sont
+    // plus pilotes. Tout effet passe par setEffect (moteur d'effets LightBridge).
     setStreaming: (id: string, enabled: boolean, zoneCount?: number) =>
       fetchJSON<SmartLight>(`/api/smart-lights/${id}/streaming`, {
         method: "POST",

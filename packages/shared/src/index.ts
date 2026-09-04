@@ -140,13 +140,23 @@ export type Fixture = z.infer<typeof FixtureSchema>;
  *
  * Partage backend/frontend pour que les deux cotes decrivent le meme mapping :
  * la zone i occupe les canaux 3i+1 (R), 3i+2 (G), 3i+3 (B).
+ *
+ * `withMasterDimmer` ajoute un canal d'intensite maitre APRES les zones, jamais
+ * avant. C'est contre-intuitif — sur un projecteur du commerce le dimmer ouvre le
+ * bloc — mais c'est deliberé : le dimmer en tete decalerait d'un cran les canaux
+ * de TOUTES les zones, donc l'adresse de chaque cellule dans les scenes, presets
+ * et pages de faders deja enregistres. En queue, l'ajout est purement additif :
+ * un patch existant continue de tomber juste.
  */
-export function buildZoneRgbChannels(zoneCount: number): FixtureChannel[] {
+export function buildZoneRgbChannels(zoneCount: number, withMasterDimmer = false): FixtureChannel[] {
   const channels: FixtureChannel[] = [];
   for (let i = 0; i < zoneCount; i++) {
     channels.push({ channel: i * 3 + 1, capability: "r", name: `Zone ${i + 1} Rouge` });
     channels.push({ channel: i * 3 + 2, capability: "g", name: `Zone ${i + 1} Vert` });
     channels.push({ channel: i * 3 + 3, capability: "b", name: `Zone ${i + 1} Bleu` });
+  }
+  if (withMasterDimmer) {
+    channels.push({ channel: zoneCount * 3 + 1, capability: "intensity", name: "Dimmer master" });
   }
   return channels;
 }
@@ -335,6 +345,16 @@ export const SmartLightDmxZoneMirrorSchema = z
     universe: z.number().int().min(0).default(0).optional(),
     startChannel: z.number().int().min(1).max(512),
     zoneCount: z.number().int().min(1).max(170), // 170 x 3 = 510 canaux, plafond d'un univers
+    /** Canal ABSOLU du dimmer maitre du bandeau (optionnel).
+     *
+     *  Pourquoi un canal a part : la trame extControl ne transporte que du R/G/B par
+     *  zone, sans notion d'intensite, et le chemin HTTP est coupe pendant le streaming
+     *  — la luminosite maitre de l'appareil est donc injoignable en cours de show. On
+     *  la neutralise a 100 % et on porte l'intensite ICI, dans la trame : les couleurs
+     *  de zone sont multipliees par ce canal avant l'envoi.
+     *
+     *  Absent = pas de master, les zones partent a pleine echelle (comportement d'origine). */
+    dimmerChannel: z.number().int().min(1).max(512).optional(),
     /** Id du projecteur DMX cree pour ce bloc (lien lampe <-> fixture). */
     fixtureId: z.string().uuid().optional()
   })

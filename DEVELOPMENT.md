@@ -70,7 +70,7 @@ LightBridgeDMX/
 │   │       ├── scenes.ts              ← CRUD /api/scenes + activate
 │   │       ├── presets.ts             ← CRUD /api/presets + apply
 │   │       ├── universe.ts            ← POST /api/universe/:channel, test fixture
-│   │       └── smart-lights.ts        ← /api/smart-lights (CRUD, pair, state, streaming, effects, layout, discover)
+│   │       └── smart-lights.ts        ← /api/smart-lights (CRUD, pair, state, streaming, effect, layout, discover)
 │   └── .homekit/                      ← stockage HAP (pairage, identifiants)
 ├── frontend/
 │   ├── package.json
@@ -470,12 +470,14 @@ interface SmartLightDmxMirror {
   zones?: SmartLightDmxZoneMirror;  // mirror par zone (le strip devient un projecteur multi-cellules)
 }
 
-// Mirror DMX par zone : bloc de canaux consécutifs, 3 canaux (R, G, B) par zone.
+// Mirror DMX par zone : bloc de canaux consécutifs, 3 canaux (R, G, B) par zone,
+// plus un canal de dimmer master optionnel placé APRÈS les zones.
 // zone i → startChannel + 3i (R), +1 (G), +2 (B). Passe par le streaming UDP.
 interface SmartLightDmxZoneMirror {
   universe?: number;
   startChannel: number;  // 1–512
   zoneCount: number;     // 1–170 (170 × 3 = 510 canaux)
+  dimmerChannel?: number; // canal absolu du master — multiplie les couleurs de zone
   fixtureId?: string;    // le projecteur DMX généré pour ce bloc
 }
 
@@ -612,14 +614,12 @@ interface SmartLight {
 | `POST` | `/api/smart-lights/pair` | `{ host, port?, name?, room? }` | Pair un Nanoleaf (le strip doit être en mode pairing) — 201 si OK, 409 si pas en pairing |
 | `POST` | `/api/smart-lights/:id/pair` | — | Re-pair un Nanoleaf existant (renouvelle le token) |
 | `POST` | `/api/smart-lights/:id/state` | `SmartLightStateInput` | Changement d'état (on/off/hue/sat/brightness/ct/rgb) — coalesce et flush async |
-| `POST` | `/api/smart-lights/:id/streaming` | `{ enabled, zoneCount? }` | Active/désactive le streaming UDP extControl |
-| `POST` | `/api/smart-lights/:id/zones` | `{ zones: [{index,r,g,b,w?}] }` | Push direct un palette par-zone (requiert streaming actif) |
-| `POST` | `/api/smart-lights/:id/dmx-fixture` | `{ zoneCount?, startChannel?, universe?, name?, room? }` | Expose le strip en projecteur DMX (3 canaux R/G/B par zone) : crée/maj le projecteur et branche `dmxMirror.zones`. Corps entièrement optionnel — adresse auto-allouée. Renvoie `{ light, fixture }` |
+| `POST` | `/api/smart-lights/:id/streaming` | `{ enabled, zoneCount? }` | Active/désactive le streaming UDP extControl (force `on` + luminosité device à 100 % avant d'entrer en extControl) |
+| `POST` | `/api/smart-lights/:id/zones` | `{ zones: [{index,r,g,b,w?}] }` | Push direct un palette par-zone (active le streaming automatiquement si besoin) |
+| `POST` | `/api/smart-lights/:id/dmx-fixture` | `{ zoneCount?, startChannel?, universe?, name?, room? }` | Expose le strip en projecteur DMX (3 canaux R/G/B par zone + 1 canal de dimmer master en queue) : crée/maj le projecteur et branche `dmxMirror.zones`. Corps entièrement optionnel — adresse auto-allouée. Renvoie `{ light, fixture }` |
 | `DELETE` | `/api/smart-lights/:id/dmx-fixture` | — | Supprime le projecteur généré et débranche `dmxMirror.zones` |
 | `POST` | `/api/smart-lights/:id/layout` | `SmartLightZoneLayout \| null` | Sauvegarde le placement 3D des zones |
 | `POST` | `/api/smart-lights/:id/effect` | `SmartLightEffectConfig \| null` | Active un effet position-aware (l'EffectEngine prend le relais) |
-| `GET` | `/api/smart-lights/:id/effects` | — | Liste les effets builtin du device (Nanoleaf) |
-| `POST` | `/api/smart-lights/:id/effects/select` | `{ name }` | Active un effet builtin Nanoleaf (sort du mode streaming si actif) |
 | `POST` | `/api/smart-lights/probe` | `{ host, port? }` | Test rapide de reachability sans pairing |
 | `POST` | `/api/smart-lights/discover` | `{ timeoutMs? }` | Scan mDNS (~3 s par défaut) — retourne les Nanoleaf trouvés |
 
@@ -865,7 +865,7 @@ Pilote des lampes WiFi (Nanoleaf en V1, extensible) avec deux paths de sortie, m
 
 À chaque flush, pour chaque light, dans cet ordre :
 
-1. **EffectEngine** — si `light.currentEffect` est défini ET `streaming.enabled = true` : engine évalue l'effet contre le layout 3D, push une frame per-zone via le streamer (~30 Hz)
+1. **EffectEngine** — si `light.currentEffect` est défini ET `streaming.enabled = true` : engine évalue l'effet contre le layout 3D, push une frame per-zone via le streamer (~30 Hz). Les effets **builtin du device ne sont plus pilotés** : tout effet est calculé par LightBridge. Déléguer au device imposait de couper le streaming, ce qui laissait le strip figé sur sa dernière frame sans aucun signal.
 2. **Zone palette statique** — si `entry.zonePalette` est posé via `applyZones()` mais pas d'effet : streamer push la palette telle quelle
 3. **Streaming uniforme** — si streaming actif sans effet ni palette : streamer push couleur unique calculée depuis `desired.{hue,sat,brightness}`
 4. **HTTP coalescé** — sinon : `flushAll()` calcule `computeStateDiff(lastPushed, desired)` et fait un `PUT /state` coalescé sur les dimensions changées (rate-limit 1 push / 70 ms / device)
@@ -892,17 +892,32 @@ zone 0 → startChannel (R), +1 (G), +2 (B)
 zone 1 → startChannel+3 (R), +4 (G), +5 (B)   …
 ```
 
-**Requiert `streaming.enabled = true`** : la frame part par le path UDP extControl (`streamAll` → `sendZones`), pas par HTTP.
+**Requiert `streaming.enabled = true`** : la frame part par le path UDP extControl (`streamAll` → `sendZones`), pas par HTTP. `setEffect` et `applyZones` l'activent d'office (`ensureStreamingForZoneWork`) — une couleur par zone n'a pas d'autre transport, et l'ancien comportement (ne rien faire, sans message) était indiagnosticable.
+
+#### Dimmer master (`dimmerChannel`)
+
+La frame extControl **ne transporte que du R/G/B** : aucune notion d'intensité. La luminosité master du device module pourtant tout ce qu'on envoie, et elle est injoignable pendant le streaming (`flushAll` saute les lights en streaming). Un strip entré en extControl à 38 % plafonne donc à 38 %, sans le moindre symptôme logiciel — le blanc plein sort gris.
+
+D'où le partage des rôles :
+
+- la **luminosité device est clouée à 100 %** avant toute entrée en extControl (`setStreaming`, `register`, et rattrapée par le watchdog `ensureStreaming`) ;
+- l'**intensité se joue dans la frame**, via `dimmerChannel` : `streamAll` multiplie les couleurs de zone par ce canal (`scaleZones`) sur **tous** les paths — mirror DMX, effet, palette, couleur uniforme.
+
+Deux propriétés voulues :
+
+- le master **ne prend jamais la main** sur le strip (pas de `dmxZonesOwned`) : c'est un fader d'intensité, il atténue ce qui joue sans le remplacer — bouger le master pendant un effet dimme l'effet, il ne le fige pas ;
+- `publishEffectToDmx` republie la frame **non atténuée** : le master a son propre canal, l'atténuer à la publication l'appliquerait une deuxième fois à la relecture du tick suivant, jusqu'au noir.
 
 **Priorité LTP (latest takes precedence)** — pour que configurer ce mirror ne rende pas le painter et les effets inutilisables :
 
 | Événement | Effet |
 |-----------|-------|
 | Le bloc DMX change de valeur | `dmxZonesOwned = true` — le DMX possède le strip, **avant** la garde `desired.on` (un blackout DMX éteint donc bien le strip) et avant `currentEffect` |
-| `applyState` / `applyZones` / `setEffect` / `selectEffect` | `dmxZonesOwned = false` — le pilotage local reprend jusqu'au prochain mouvement DMX |
+| `applyState` / `applyZones` / `setEffect` | `dmxZonesOwned = false` — le pilotage local reprend jusqu'au prochain mouvement DMX |
+| Le `dimmerChannel` change de valeur | **Aucune** prise de main — le master atténue la source en cours sans la remplacer |
 | Premier tick après `register`, bloc entièrement à 0 | Pas de prise de main (sinon un bloc vide éteindrait un effet en cours au démarrage) |
 
-Le `POST /api/smart-lights/:id/dmx-fixture` fait le câblage complet : il crée un projecteur de `zoneCount × 3` canaux (`buildZoneRgbChannels()` dans `shared` — capabilities `r`/`g`/`b`, nommés « Zone N Rouge/Vert/Bleu »), alloue automatiquement le premier bloc de canaux libre si aucune adresse n'est donnée, et branche `dmxMirror.zones` dessus. Le projecteur généré est créé avec `homekit: { enabled: false }` : la lampe est déjà exposée nativement par Nanoleaf, et un accessoire HomeKit ne saurait piloter que la première zone.
+Le `POST /api/smart-lights/:id/dmx-fixture` fait le câblage complet : il crée un projecteur de `zoneCount × 3 + 1` canaux (`buildZoneRgbChannels()` dans `shared` — capabilities `r`/`g`/`b`, nommés « Zone N Rouge/Vert/Bleu », plus un canal `intensity` « Dimmer master » **en queue de bloc**), le pousse à 255 dans l'univers avant de brancher le mirror (un canal DMX vaut 0 par défaut : dans l'autre ordre, le strip clignote en noir), alloue automatiquement le premier bloc de canaux libre si aucune adresse n'est donnée, et branche `dmxMirror.zones` dessus. Le projecteur généré est créé avec `homekit: { enabled: false }` : la lampe est déjà exposée nativement par Nanoleaf, et un accessoire HomeKit ne saurait piloter que la première zone.
 
 ### Méthodes principales du SmartLightService
 
@@ -911,9 +926,9 @@ Le `POST /api/smart-lights/:id/dmx-fixture` fait le câblage complet : il crée 
 | `register(light)` | Ajoute ou remplace une light dans le registry, initialise le client et le streamer si configuré |
 | `unregister(id)` | Stoppe le streamer et supprime du registry |
 | `applyState(id, patch)` | Met à jour `desired` depuis un patch (rgb / hue / sat / brightness / ct / on), trigger flush |
-| `applyZones(id, palette)` | Push direct un palette per-zone (requiert streaming actif) |
-| `readZoneMirror(entry, cfg, state)` | *(privé)* Lit le bloc DMX par zone à chaque tick et gère la prise de main LTP |
-| `selectEffect(id, name)` | Sélectionne un effet builtin Nanoleaf (sort du streaming) |
+| `applyZones(id, palette)` | Push direct un palette per-zone (active le streaming si besoin) |
+| `readZoneMirror(entry, cfg, state)` | *(privé)* Lit le bloc DMX par zone (+ le dimmer master) à chaque tick et gère la prise de main LTP |
+| `ensureStreamingForZoneWork(id)` | *(privé)* Active le streaming UDP quand une écriture par zone le réclame |
 | `setStreaming(id, enabled, zoneCount?)` | Active/désactive le streaming UDP, persiste en DB |
 | `setEffect(id, effect)` | Définit l'effet position-aware courant, persiste en DB |
 | `setLayout(id, layout)` | Sauvegarde la disposition 3D des zones |

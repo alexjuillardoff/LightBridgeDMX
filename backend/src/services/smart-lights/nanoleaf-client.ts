@@ -137,28 +137,10 @@ export class NanoleafClient {
     };
   }
 
-  // Liste les noms des effets disponibles sur la lampe.
-  async listEffects(): Promise<string[]> {
-    const token = this.requireToken();
-    const res = await fetch(`${this.base}/api/v1/${token}/effects/effectsList`);
-    if (!res.ok) throw new NanoleafApiError(`GET /effects/effectsList failed (HTTP ${res.status})`, res.status);
-    const arr = (await res.json()) as string[];
-    // La lampe renvoie parfois des doublons : on dedoublonne avant de retourner.
-    return [...new Set(arr)];
-  }
-
-  // Demande a la lampe de jouer l'effet nomme.
-  async selectEffect(name: string): Promise<void> {
-    const token = this.requireToken();
-    const res = await fetch(`${this.base}/api/v1/${token}/effects`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ select: name })
-    });
-    if (!res.ok && res.status !== 204) {
-      throw new NanoleafApiError(`PUT /effects (select) failed (HTTP ${res.status})`, res.status);
-    }
-  }
+  // NB : plus de listEffects()/selectEffect() ici. Les effets embarques de l'appareil
+  // ne sont plus pilotes par LightBridge — tout ce qui joue sur un bandeau est calcule
+  // par le moteur d'effets local, et sort par la trame UDP. Le nom d'effet renvoye par
+  // getInfo() reste lu, mais uniquement comme temoin du mode extControl.
 
   /**
    * Bascule la lampe en mode streaming UDP (extControl v2). Une fois cet appel

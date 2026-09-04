@@ -223,32 +223,13 @@ export const registerSmartLightRoutes = (
     }
   });
 
-  // ─── Effets (effects natifs Nanoleaf) ─────────────────────────────────────
-
-  // Liste les effets disponibles sur la lampe (effets embarques dans l'appareil).
-  app.get("/api/smart-lights/:id/effects", async (request, reply) => {
-    try {
-      const id = (request.params as { id: string }).id;
-      const effects = await ctx.smartLights.listEffects(id);
-      reply.send({ effects });
-    } catch (err) {
-      handleError(err, reply);
-    }
-  });
-
-  // Active un effet existant par son nom sur la lampe.
-  app.post("/api/smart-lights/:id/effects/select", async (request, reply) => {
-    try {
-      const id = (request.params as { id: string }).id;
-      const parsed = z.object({ name: z.string().min(1) }).parse(request.body);
-      const light = await ctx.smartLights.selectEffect(id, parsed.name);
-      if (!light) return reply.code(404).send({ message: "Smart light not found" });
-      ctx.broadcast({ type: "smart_light_updated", data: light });
-      reply.send(light);
-    } catch (err) {
-      handleError(err, reply);
-    }
-  });
+  // ─── Effets ───────────────────────────────────────────────────────────────
+  //
+  // Il n'y a volontairement PAS d'endpoint pour les effets embarques de l'appareil.
+  // Tout effet joue sur un bandeau est calcule par le moteur d'effets de LightBridge
+  // (POST /api/smart-lights/:id/effect) et sort par la trame UDP. Deleguer a l'appareil
+  // imposait de couper le streaming, ce qui laissait le bandeau fige sur sa derniere
+  // trame sans que rien ne le signale.
 
   // ─── Streaming UDP (extControl Nanoleaf) ─────────────────────────────────
 
@@ -271,13 +252,14 @@ export const registerSmartLightRoutes = (
 
   // ─── Palette par zone (necessite streaming.enabled = true) ───────────────
 
-  // Applique une palette : une couleur par zone du bandeau. NB : ne fonctionne
-  // que si le streaming UDP est actif, sinon le service n'a pas de canal d'envoi.
+  // Applique une palette : une couleur par zone du bandeau. Le streaming UDP est
+  // allume automatiquement si besoin — c'est le seul transport capable de porter une
+  // couleur par zone, le demander revient donc a le demander.
   app.post("/api/smart-lights/:id/zones", async (request, reply) => {
     try {
       const id = (request.params as { id: string }).id;
       const parsed = SmartLightZonePaletteSchema.parse(request.body);
-      const light = ctx.smartLights.applyZones(id, parsed);
+      const light = await ctx.smartLights.applyZones(id, parsed);
       if (!light) return reply.code(404).send({ message: "Smart light not found" });
       reply.send(light);
     } catch (err) {
@@ -315,7 +297,8 @@ export const registerSmartLightRoutes = (
         .parse(request.body ?? {});
 
       const zoneCount = parsed.zoneCount ?? light.streaming?.zoneCount ?? DEFAULT_ZONE_COUNT;
-      const size = zoneCount * 3;
+      // + 1 : le dimmer maitre, place APRES les zones (voir buildZoneRgbChannels).
+      const size = zoneCount * 3 + 1;
       const universe = parsed.universe ?? light.dmxMirror?.zones?.universe ?? 0;
 
       // Le projecteur deja genere pour cette lampe, s'il existe encore en base.
@@ -344,7 +327,7 @@ export const registerSmartLightRoutes = (
         name: parsed.name ?? existingFixture?.name ?? light.name,
         address: startChannel,
         universe,
-        channels: buildZoneRgbChannels(zoneCount),
+        channels: buildZoneRgbChannels(zoneCount, true),
         // Pas d'accessoire HomeKit : la lampe est deja exposee nativement par Nanoleaf,
         // et un projecteur multi-cellules se resumerait a la premiere zone dans Maison.
         homekit: { enabled: false },
@@ -359,10 +342,19 @@ export const registerSmartLightRoutes = (
 
       // On branche le miroir par zone sur le bloc qu'on vient de reserver, en gardant
       // le miroir uniforme eventuellement deja configure sur cette lampe.
+      const dimmerChannel = startChannel + zoneCount * 3;
+
+      // Le dimmer maitre part a fond, et il part AVANT que la lampe ne connaisse son
+      // canal. Un canal DMX vaut 0 tant que personne n'y touche : dans l'autre ordre,
+      // les ticks de streaming qui tombent entre le branchement et cette ecriture
+      // lisent un master a zero et envoient du noir. Un clignotement de 30 ms, invisible
+      // au debogage et parfaitement visible sur le mur.
+      ctx.dmx.applyWrite({ address: dimmerChannel, values: [255] }, "smart-light-dmx-fixture");
+
       const updated = await ctx.store.updateSmartLight(id, {
         dmxMirror: {
           ...(light.dmxMirror ?? {}),
-          zones: { universe, startChannel, zoneCount, fixtureId: fixture.id }
+          zones: { universe, startChannel, zoneCount, dimmerChannel, fixtureId: fixture.id }
         }
       });
       await ctx.smartLights.register(updated);
