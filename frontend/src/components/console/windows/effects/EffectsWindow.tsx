@@ -34,6 +34,7 @@ import { api } from "../../../../lib/api";
 import { useAppData } from "../../../../contexts/AppDataContext";
 import { useSelection } from "../../../../contexts/SelectionContext";
 import { useCommand } from "../../../../contexts/CommandContext";
+import { EffectDimmerGuard } from "./EffectDimmerGuard";
 import { EffectLines } from "./EffectLines";
 import { EffectMasters } from "./EffectMasters";
 import { EffectPool } from "./EffectPool";
@@ -208,6 +209,8 @@ export const EffectsWindow = () => {
           </>
         )}
       </div>
+
+      {canRun ? <EffectDimmerGuard cells={cells} effect={draft} /> : null}
 
       <EffectPool
         group={group}

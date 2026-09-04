@@ -16,6 +16,7 @@ import {
   EffectCell,
   EffectLine,
   Fixture,
+  RgbColor,
   RunningEffect,
   SmartLight,
   applyCurve,
@@ -243,6 +244,18 @@ export class EffectRunner {
       } else {
         out.set(channel, clampF(v * 255));
       }
+
+      // Un canal d'intensite ne dit rien de la COULEUR. Un projecteur qui a les deux
+      // (PAR 56 Lampe : R/G/B + un master) recevait donc un fondu sur son gradateur
+      // et gardait la couleur d'avant — souvent noire, donc un effet parfaitement
+      // invisible. Quand l'effet declare une couleur, on la pose aussi sur son trio
+      // R/G/B : c'est le gradateur qui module, la couleur reste celle qu'on a choisie.
+      //
+      // Sans couleur declaree, on ne touche a rien : un effet de gradation pose sur
+      // une teinte reglee a la main doit la laisser tranquille, comme sur un pupitre.
+      if (line.attribute === "dimmer" && run.effect.color && cell.channels.red !== undefined) {
+        writeRgb(out, cell, run.effect.color);
+      }
       return;
     }
 
@@ -257,10 +270,16 @@ export class EffectRunner {
     // pan/tilt/red/... sans canal : la cellule ne sait pas jouer cette ligne.
     if (!rgb) return;
 
-    out.set(cell.channels.red, rgb.r);
-    if (cell.channels.green !== undefined) out.set(cell.channels.green, rgb.g);
-    if (cell.channels.blue !== undefined) out.set(cell.channels.blue, rgb.b);
+    writeRgb(out, cell, rgb);
   }
+}
+
+/** Pose une couleur sur le trio R/G/B d'une cellule. Vert et bleu peuvent manquer
+ *  (une cellule monochrome), le rouge non — l'appelant l'a deja verifie. */
+function writeRgb(out: Map<number, number>, cell: EffectCell, rgb: RgbColor): void {
+  out.set(cell.channels.red!, rgb.r);
+  if (cell.channels.green !== undefined) out.set(cell.channels.green, rgb.g);
+  if (cell.channels.blue !== undefined) out.set(cell.channels.blue, rgb.b);
 }
 
 function toRunning(run: Run): RunningEffect {

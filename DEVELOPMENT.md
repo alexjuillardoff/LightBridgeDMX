@@ -1009,6 +1009,20 @@ La phase se répartit sur cette liste à plat, **dans l'ordre de sélection** �
 
 Une cellule de ruban n'a **pas** de canal `dimmer` : le master de la façade est unique pour tout le bandeau. Une ligne `dimmer` qui tombe sur une telle cellule est donc traduite en fondu `bgColor → color`, seule façon de faire varier l'intensité d'une LED qui n'a que trois canaux. Même mécanique pour les attributs `color` et `hue`, qui n'ont jamais de canal propre et pilotent le trio R/G/B.
 
+#### Intensité et couleur sont deux choses, même sur un seul projecteur
+
+Certains projecteurs ont **les deux** : R/G/B *et* un master (PAR 56 Lampe, Par 56 Bureau, Lampe Salon). Une ligne `dimmer` y écrivait le master et laissait le RGB tel quel — donc noir la plupart du temps, et un effet parfaitement invisible dont on ne voyait bouger que le gradateur. Règle actuelle :
+
+| Cellule | Ligne `dimmer` |
+|---------|----------------|
+| RGB seul (zone de ruban, PAR 56 Lava) | fondu `bgColor → color` sur le RGB |
+| RGB **+** master | le master module, et la couleur `color` est posée sur le RGB — si l'effet en déclare une |
+| Master seul (lyre) | le master module |
+
+**Sans `color` déclarée, le RGB n'est pas touché** : un effet de gradation posé sur une teinte réglée à la main doit la laisser tranquille, comme sur un pupitre où dimmer et couleur sont deux attributs séparés. Le bouton « Couleur libre » de la fenêtre efface `color` pour retrouver ce comportement.
+
+Le cas miroir — un effet de **couleur ou de position** sur un projecteur dont le master est à 0 — n'est pas corrigé par le moteur : l'intensité appartient à l'opérateur. La fenêtre le signale (`EffectDimmerGuard`) et propose « Ouvrir à 100 % », plutôt que de décider à sa place ou de laisser chercher.
+
 ### Lignes, modes, MAtricks
 
 Un effet porte **plusieurs lignes**, une par attribut — c'est ce qui permet un cercle de lyre (une ligne `pan`, une ligne `tilt` déphasée de 90°).

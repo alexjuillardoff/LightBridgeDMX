@@ -19,8 +19,7 @@ const RATE_STEPS = [0.5, 1, 2, 4];
 
 export const EffectMasters = ({ effect, onPatch, onMatricks }: Props) => {
   const attrs = new Set<EffectAttribute>(effect.lines.map((l) => l.attribute));
-  // Les champs de couleur ne concernent que les cellules RGB sans canal d'intensité
-  // — chaque zone d'un ruban. On ne les montre que si une ligne peut les employer.
+  // On ne montre les champs de couleur que si une ligne peut les employer.
   const usesFade = attrs.has("dimmer");
   const usesColor = attrs.has("color");
   const usesHue = attrs.has("hue");
@@ -145,23 +144,54 @@ export const EffectMasters = ({ effect, onPatch, onMatricks }: Props) => {
         <section className="fx-block">
           <div className="fx-block-head">
             <span>Couleurs</span>
-            <span className="fx-block-note">cellules RGB sans canal d'intensité</span>
+            <span className="fx-block-note">posées sur les canaux R/G/B de la sélection</span>
           </div>
           <div className="fx-colors">
             {usesFade ? (
               <>
                 <Swatch
-                  label="Fond"
-                  hint="Couleur de la valeur basse d'une ligne Dimmer sur une cellule RGB."
-                  value={toHex(effect.bgColor, "#000000")}
-                  onChange={(c) => onPatch({ bgColor: fromHex(c) })}
-                />
-                <Swatch
                   label="Pleine"
-                  hint="Couleur de la valeur haute d'une ligne Dimmer sur une cellule RGB."
+                  hint={
+                    "Couleur posée sur le trio R/G/B pendant l'effet. Sur une cellule sans canal " +
+                    "d'intensité (chaque zone d'un ruban), c'est aussi la couleur de la valeur haute du fondu."
+                  }
                   value={toHex(effect.color, "#ffffff")}
+                  disabled={!effect.color}
                   onChange={(c) => onPatch({ color: fromHex(c) })}
                 />
+                <Swatch
+                  label="Fond"
+                  hint={
+                    "Couleur de la valeur basse, sur les cellules sans canal d'intensité seulement. " +
+                    "Ailleurs, c'est le gradateur qui fait le noir."
+                  }
+                  value={toHex(effect.bgColor, "#000000")}
+                  disabled={!effect.color}
+                  onChange={(c) => onPatch({ bgColor: fromHex(c) })}
+                />
+                {/* Un effet de gradation peut vouloir laisser la couleur tranquille :
+                    c'est le comportement du pupitre, où le dimmer et la couleur sont
+                    deux attributs séparés. Un champ de couleur ne sait pas exprimer
+                    « aucune », d'où ce bouton. */}
+                <button
+                  type="button"
+                  className="fx-mini"
+                  title={
+                    effect.color
+                      ? "Ne plus toucher à la couleur : l'effet ne fera que graduer, sur la teinte réglée à la main"
+                      : "Poser une couleur pendant l'effet"
+                  }
+                  onClick={() =>
+                    onPatch({ color: effect.color ? undefined : { r: 255, g: 255, b: 255 } })
+                  }
+                >
+                  {effect.color ? "Couleur libre" : "Fixer la couleur"}
+                </button>
+                {!effect.color ? (
+                  <span className="fx-block-note">
+                    l'effet ne gradue que l'intensité, la couleur reste celle du programmer
+                  </span>
+                ) : null}
               </>
             ) : null}
             {usesColor ? (
@@ -299,16 +329,23 @@ const Swatch = ({
   label,
   hint,
   value,
+  disabled,
   onChange
 }: {
   label: string;
   hint: string;
   value: string;
+  disabled?: boolean;
   onChange: (hex: string) => void;
 }) => (
   <label className="fx-field fx-swatch" title={hint}>
     <span>{label}</span>
-    <input type="color" value={value} onChange={(e) => onChange(e.target.value)} />
+    <input
+      type="color"
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+    />
   </label>
 );
 

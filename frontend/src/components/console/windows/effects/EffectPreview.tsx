@@ -109,11 +109,16 @@ export const EffectPreview = ({ effect, cells, virtual, lineIndex }: Props) => {
               break;
             }
             case "dimmer":
-              // Canal d'intensité dédié : l'effet module la luminosité. Sinon (chaque
-              // zone d'un ruban RGB), il devient un fondu bgColor -> color.
-              if (hasChannel) intensity = applyCurve(v, fx.curve);
-              else if (cell.channels.red !== undefined)
+              // Canal d'intensité dédié : l'effet module la luminosité, et pose la
+              // couleur déclarée sur le trio R/G/B s'il y en a un — c'est ce que fait
+              // le runner. Sans canal d'intensité (chaque zone d'un ruban RGB), la
+              // ligne devient elle-même un fondu bgColor -> color.
+              if (hasChannel) {
+                intensity = applyCurve(v, fx.curve);
+                if (fx.color && cell.channels.red !== undefined) rgb = fx.color;
+              } else if (cell.channels.red !== undefined) {
                 rgb = effectLineColor(fx, "dimmer", applyCurve(v, fx.curve)) ?? rgb;
+              }
               break;
             default:
               // « Couleur » et « Teinte » n'ont pas de canal a elles : elles pilotent

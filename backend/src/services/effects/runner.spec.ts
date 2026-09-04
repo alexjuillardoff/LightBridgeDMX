@@ -72,6 +72,21 @@ const dimmerEffect = (over = {}) => ({
   ...over
 });
 
+/** PAR 56 Lampe : R/G/B **et** un master d'intensite. C'est la combinaison qui
+ *  faisait qu'un effet de gradation bougeait le master en laissant le RGB noir. */
+const parWithMaster = {
+  id: "par-2",
+  name: "PAR 56 Lampe",
+  address: 25,
+  universe: 0,
+  channels: [
+    { channel: 1, capability: "r" },
+    { channel: 2, capability: "g" },
+    { channel: 3, capability: "b" },
+    { channel: 8, capability: "intensity" }
+  ]
+} as unknown as Fixture;
+
 describe("EffectRunner", () => {
   it("ecrit le canal d'intensite du projecteur selectionne", async () => {
     const { dmx, universe, writes, frame } = fakeDmx();
@@ -263,6 +278,37 @@ describe("tramage temporel", () => {
     runner.start(async () => [par], () => []);
 
     expect(runner.updateRun("effet-inconnu", dimmerEffect())).toBeUndefined();
+    runner.stop();
+  });
+  it("pose la couleur de l'effet sur un projecteur qui a AUSSI un canal d'intensite", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [parWithMaster], () => []);
+
+    // Le RGB est noir au depart : c'est le cas reel qui rendait l'effet invisible.
+    await runner.run(dimmerEffect({ color: { r: 255, g: 120, b: 0 } }), ["par-2"]);
+    frame();
+
+    expect(universe[31]).toBe(255); // adresse 25 + canal 8 - 1 = 32 : le master module
+    expect([universe[24], universe[25], universe[26]]).toEqual([255, 120, 0]); // et la couleur sort
+    runner.stop();
+  });
+
+  it("ne repeint pas la couleur quand l'effet n'en declare pas", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    // Teinte posee a la main dans le programmer, avant l'effet.
+    universe[24] = 10;
+    universe[25] = 200;
+    universe[26] = 30;
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [parWithMaster], () => []);
+
+    await runner.run(dimmerEffect(), ["par-2"]);
+    frame();
+
+    // Un effet de gradation seul laisse la couleur tranquille, comme sur un pupitre.
+    expect([universe[24], universe[25], universe[26]]).toEqual([10, 200, 30]);
+    expect(universe[31]).toBe(255);
     runner.stop();
   });
 });

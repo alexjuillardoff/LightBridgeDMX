@@ -2310,6 +2310,28 @@ select {
   color: var(--faint);
 }
 
+/* Garde-fou « on ne verra rien » : gradateur à 0 sous un effet de couleur. */
+.fx-guard {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: #150f00;
+  border: 1px solid var(--amber-text);
+  font-size: 11px;
+  color: var(--amber-text);
+}
+
+.fx-guard span {
+  flex: 1;
+  min-width: 0;
+}
+
+.fx-guard strong {
+  font-family: var(--font-mono);
+  color: var(--yellow);
+}
+
 /* --- Pool d'effets --- */
 
 .fx-pool {
