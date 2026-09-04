@@ -202,7 +202,59 @@ Les effets par zone et le miroir DMX par zone ne conviennent pas à ces ampoules
 
 ---
 
-## 7. Pièges rencontrés — tous coûteux, tous réels
+## 7. Identifier une ampoule réinitialisée (sans dépenser de tentative)
+
+Un reset fait perdre à l'ampoule le nom donné dans Maison — elle redevient
+`Nanoleaf Light Bulb` — et **régénère son Device ID**. Plus rien ne permet de dire
+laquelle on a en face. D'où :
+
+    ./.venv/bin/python scan_ble.py 30        # depuis Terminal.app
+
+Lecture seule : aucun appairage tenté, donc rien de prélevé sur les 100 tentatives
+avant refus définitif. Sortie typique :
+
+    id            : d0:7e:1c:15:cd:f6
+    name          : Nanoleaf Light Bulb
+    category      : 5
+    status_flags  : 1 -> NON APPAIREE (appairable)
+    setup_hash    : 1de8df87 -> Setup ID 1W1D
+
+Deux renseignements décisifs :
+
+- **`status_flags` bit 0** — à 1, l'ampoule est bien en attente d'appairage. À 0, elle
+  est encore rattachée à une maison : inutile d'aller plus loin.
+- **`setup_hash`** — HAP le définit comme `SHA-512(setupID || deviceID)[0:4]`, avec le
+  deviceID en majuscules au format `XX:XX:XX:XX:XX:XX`. Le Setup ID ne fait que
+  4 caractères alphanumériques, soit 36⁴ = 1 679 616 possibilités : le script l'inverse
+  par force brute en quelques secondes. Ce Setup ID est **gravé en usine et imprimé sur
+  l'étiquette, à côté du code à 8 chiffres**. Il dit donc si on lit la bonne étiquette
+  *avant* de dépenser une tentative.
+
+**Le code de configuration, lui, reste hors d'atteinte** — c'est tout l'objet de SRP.
+Le sel et la clé publique renvoyés en M2 ne permettent aucune vérification hors ligne.
+Le seul recours face à un code refusé est de le relire, ou de décoder le QR de
+l'étiquette (il encode la charge utile `X-HM://`, code compris).
+
+**Lire l'échec au bon endroit.** `aiohomekit` traduit fidèlement la table 4-5 de la
+spec, donc l'exception nomme la cause :
+
+| Exception | Ce que dit l'ampoule |
+|---|---|
+| `AuthenticationError` à l'étape M4 | **code faux** — rien d'autre |
+| `UnavailableError` | déjà appairée, sortir d'abord de Maison |
+| `BackoffError` / `MaxTriesError` | trop d'échecs, elle temporise |
+| `MaxPeersError` | plus de place pour un contrôleur |
+
+Ne pas confondre `AuthenticationError` avec un problème de réseau ou de reset : M1 et M2
+ont réussi, l'ampoule a renvoyé son sel et sa clé publique. Seul le code est en cause.
+
+Après plusieurs échecs, l'ampoule peut cesser d'émettre en BLE. Un **cycle
+d'alimentation** (éteindre, rallumer) suffit à la remettre en annonce — pas besoin de
+refaire les cinq coupures du reset.
+
+---
+
+## 8. Pièges rencontrés — tous coûteux, tous réels
 
 **Le reset régénère le Device ID HAP.** Trois valeurs différentes en trois resets pour
 la même ampoule. → Toujours `--name`, jamais `--device-id`.
@@ -236,12 +288,12 @@ aboutissent. Origine non élucidée.
 
 ---
 
-## 8. État actuel
+## 9. État actuel
 
 | Ampoule | Alias | État |
 |---|---|---|
 | Nanoleaf A19 26N3 | `a19-26n3` | appairée, pilotable, projecteur DMX 40-43 |
-| Nanoleaf A19 1W1D | — | à appairer (code à 8 chiffres requis) |
+| Nanoleaf A19 1W1D | — | non appairée. Setup ID confirmé `1W1D` par `scan_ble.py` ; les codes essayés (`98881473`, `98801473`, `98861473`) sont refusés en M4. Relire l'étiquette portant `1W1D`. |
 | Nanoleaf A19 6IX7 | — | à appairer (code à 8 chiffres requis) |
 
 **Reste à faire** : le sidecar tourne en avant-plan, lancé à la main. Lui écrire un
