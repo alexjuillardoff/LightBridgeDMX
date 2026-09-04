@@ -23,12 +23,30 @@ const SIDECAR_URL = process.env.THREAD_SIDECAR_URL ?? "http://127.0.0.1:5056";
 
 /** Gabarit du projecteur cree pour une ampoule : 4 canaux, dimmer puis RVB.
  *  Volontairement fixe : ces ampoules n'ont pas d'autre geometrie. */
+// Les Nanoleaf A19 exposent une temperature de couleur en plus du RVB : sans un
+// canal dedie, la facade DMX ne sait pas la piloter et le blanc chaud n'est
+// atteignable que depuis Maison. Meme decoupage que les projecteurs poses a la
+// main (cf. "Lampe Canape", 33-37).
 const BULB_CHANNELS = [
   { channel: 1, capability: "intensity" as const, name: "Dimmer" },
   { channel: 2, capability: "r" as const, name: "Rouge" },
   { channel: 3, capability: "g" as const, name: "Vert" },
-  { channel: 4, capability: "b" as const, name: "Bleu" }
+  { channel: 4, capability: "b" as const, name: "Bleu" },
+  { channel: 5, capability: "colorTemp" as const, name: "Temp. couleur" }
 ];
+
+/** Numero DMX absolu du canal de temperature de couleur, ou undefined.
+ *
+ *  On cree nos projecteurs avec BULB_CHANNELS, donc le canal est toujours la.
+ *  Mais un RATTACHEMENT vise un projecteur existant, qui peut n'avoir que du
+ *  RVB : y poser un ctChannel deduit de l'adresse ecrirait alors dans le
+ *  projecteur d'a cote. On lit donc la capacite reelle plutot que de compter.
+ */
+const ctChannelOf = (fixture: Fixture | null, address: number): number | undefined => {
+  if (!fixture) return address + 4;
+  const ct = fixture.channels.find((c) => c.capability === "colorTemp");
+  return ct ? fixture.address + ct.channel - 1 : undefined;
+};
 
 export const registerThreadLightRoutes = (
   app: FastifyInstance,
@@ -136,7 +154,8 @@ export const registerThreadLightRoutes = (
               briChannel: address,
               rChannel: address + 1,
               gChannel: address + 2,
-              bChannel: address + 3
+              bChannel: address + 3,
+              ctChannel: ctChannelOf(existingFixture, address)
             }
       });
 
