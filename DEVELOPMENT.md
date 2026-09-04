@@ -961,6 +961,17 @@ Régler une interface au-delà ne l'accélère pas : sur une sortie bit-bangée 
 
 `DMX_FPS` doit rester **aligné sur la fréquence de trame réglée dans QLC+**. Le moteur d'effets trame ses valeurs : émettre à 60 ce qu'un maillon aval consomme à 40 revient à échantillonner le motif au lieu de l'intégrer, ce qui annule le tramage.
 
+#### La granularité d'un fondu est une limite matérielle, pas logicielle
+
+Constaté le 2026-09-04 sur les PAR 56 Lava et Café : un fondu profond montre des paliers visibles, **et QLC+ les montre à l'identique en pilotant directement**. Le test croisé (même PAR, même XLR, même interface, source différente) clôt la question — inutile de re-chercher dans le moteur d'effets.
+
+Ces deux PAR n'ont **pas de canal d'intensité** : on les gradue en faisant varier leur RGB, et leur électronique applique sa propre courbe et sa propre résolution de PWM. Aucune correction en amont n'ajoute des niveaux qu'ils ne savent pas rendre.
+
+Deux fausses pistes explorées à cette occasion, à ne pas refaire :
+
+- **La courbe de gradation** (`curve: "square"`) est théoriquement correcte — la luminosité perçue suit une racine cubique — mais **nuisible en 8 bits** : elle écrase le bas du fondu dans une poignée de valeurs (…4, 2, 1, 0) où chaque cran double la luminance. Elle rend le résultat pire, pas meilleur. Défaut : `linear`.
+- **Le tramage temporel** (`dither`) suppose que l'œil intègre le motif. Dans la chaîne Art-Net → QLC+, un maillon ré-échantillonne le flux sur sa propre horloge et le motif ressort en battement lent. Défaut : `false`. Il reste valide sur un chemin direct dont on maîtrise la cadence — le streaming UDP d'un bandeau, dont l'émission est désormais calée sur l'horloge DMX.
+
 #### QLC+ n'est pas une couche inutile
 
 Il ne pilote rien — mais il produit le **timing temps réel** de la trame DMX (BREAK, MAB, 44 µs/octet) dans un thread dédié, via libFTDI. C'est ce que le backend ne peut pas faire : en sortie directe (`DMX_OUTPUT=enttec`), ce timing vit dans la boucle d'événements de Node, partagée avec HomeKit, le WebSocket, les effets et le GC. Chaque pause décale le BREAK et corrompt une trame.

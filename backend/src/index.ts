@@ -168,10 +168,28 @@ const scheduleUniverseSnapshot = (values: number[]) => {
 };
 
 // ----- Cablage des evenements vers la diffusion (broadcast) WebSocket -----
-// A chaque tick (battement) DMX : on diffuse l'etat des canaux aux clients et on programme
-// une eventuelle sauvegarde de l'univers.
+//
+// La diffusion de l'univers est VOLONTAIREMENT plus lente que la sortie DMX.
+//
+// Pourquoi : `state` porte les 512 canaux, et chaque diffusion les serialise en JSON
+// pour chaque client connecte. Fait a chaque trame, ce travail tombe dans le chemin
+// critique de la boucle de sortie — juste apres l'envoi, donc au moment ou l'on
+// prepare l'echeance de la trame suivante. Mesure avec un onglet ouvert : des
+// intervalles de 19 a 28 ms pour une cible de 25, soit ±16 % d'irregularite. Un
+// fondu envoye a intervalles inegaux parait saccade meme quand ses valeurs sont
+// justes — c'est l'oeil qui integre la vitesse, pas seulement les niveaux.
+//
+// 20 Hz est amplement suffisant pour des barres de niveau a l'ecran, alors que la
+// regularite de la trame, elle, se voit sur le mur.
+const UI_BROADCAST_INTERVAL_MS = 50;
+let lastBroadcastAt = 0;
+
 dmx.on("tick", (state) => {
-  websocket.broadcast({ type: "universe_tick", data: state });
+  const now = Date.now();
+  if (now - lastBroadcastAt >= UI_BROADCAST_INTERVAL_MS) {
+    lastBroadcastAt = now;
+    websocket.broadcast({ type: "universe_tick", data: state });
+  }
   scheduleUniverseSnapshot(state.values);
 });
 

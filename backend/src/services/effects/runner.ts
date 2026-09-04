@@ -182,7 +182,8 @@ export class EffectRunner {
           this.writeCell(out, run, run.cells[ci], line, frame.values[ci]);
         }
       }
-      flushBlocks(this.dmx, ditherTo8bit(out, run.carry), `effect:${run.id}`);
+      const bytes = run.effect.dither ? ditherTo8bit(out, run.carry) : roundTo8bit(out);
+      flushBlocks(this.dmx, bytes, `effect:${run.id}`);
     }
   }
 
@@ -424,6 +425,15 @@ function ditherTo8bit(values: Map<number, number>, carry: Map<number, number>): 
     // mouvement en sens inverse partirait avec plusieurs crans de retard.
     carry.set(channel, clampCarry(target - rounded));
     out.set(channel, rounded);
+  }
+  return out;
+}
+
+/** Conversion simple en octets, sans tramage. */
+function roundTo8bit(values: Map<number, number>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const [channel, exact] of values) {
+    out.set(channel, exact < 0 ? 0 : exact > 255 ? 255 : Math.round(exact));
   }
   return out;
 }

@@ -788,20 +788,32 @@ export const DmxEffectSchema = z.object({
    *  fondu de couleur qui en tient lieu sur une cellule RGB). Pas aux attributs de
    *  position ni de teinte, qui n'ont rien de photometrique.
    *
-   *  Pourquoi : la luminosite percue suit a peu pres une racine cubique de la valeur
-   *  DMX. Un fondu lineaire consacre donc pres de la moitie de sa variation VISIBLE
-   *  aux vingt premieres valeurs, franchies en une fraction de seconde — ce qui se
-   *  voit comme un escalier en bas de course, quelle que soit la cadence de sortie.
+   *  La luminosite percue suit a peu pres une racine cubique de la valeur DMX, ce qui
+   *  plaide pour une correction. MAIS en 8 bits la theorie se retourne : une loi
+   *  carree ecrase le bas du fondu dans une poignee de valeurs (…4, 2, 1, 0) ou
+   *  chaque cran est un DOUBLEMENT de luminance. On echange une progression inegale
+   *  contre des marches bien pires. Essaye sur les PAR du salon le 2026-09-04 :
+   *  nettement moins fluide qu'en lineaire.
    *
-   *  - "square" (defaut) : v², la loi carree des gradateurs de theatre. Bon compromis.
-   *  - "cube"   : v³, perception quasi lineaire, mais ecrase fortement le bas.
-   *  - "linear" : aucune correction, pour un canal qui n'est pas une intensite ou un
-   *               appareil qui applique deja sa propre courbe.
+   *  - "linear" (defaut) : aucune correction. Le meilleur compromis sur 8 bits, et le
+   *                        bon choix pour un appareil qui applique deja sa courbe.
+   *  - "square" : v². Reservee aux canaux d'intensite VRAIS (gradateur dedie) ou 16 bits,
+   *               ou le bas de course a assez de resolution pour la supporter.
+   *  - "cube"   : v³, perception quasi lineaire, encore plus exigeante en resolution. */
+  curve: z.enum(["linear", "square", "cube"]).default("linear"),
+  /** Tramage temporel : alterner deux entiers voisins pour rendre une valeur
+   *  fractionnaire (189 et 190 pour 189,5), soit ~10 bits perçus sur 8 bits reels.
    *
-   *  La courbe se combine au tramage temporel : en etalant le bas de course sur
-   *  beaucoup plus de trames, elle fait passer le signal sous un cran par trame, et
-   *  c'est seulement la que le tramage peut creer les niveaux intermediaires. */
-  curve: z.enum(["linear", "square", "cube"]).default("square"),
+   *  CONDITION DE VALIDITE : aucun maillon en aval ne doit re-echantillonner le flux.
+   *  Le tramage suppose que l'OEIL integre le motif. Si un intermediaire le rythme sur
+   *  sa propre horloge — QLC+ reemettant notre Art-Net a sa cadence, non synchronisee —
+   *  il echantillonne le motif au lieu de l'integrer, et l'alternance ressort en
+   *  battement lent : un scintillement, soit l'inverse du but recherche.
+   *
+   *  D'ou le defaut a `false` : dans la chaine LightBridge -> Art-Net -> QLC+ -> Open
+   *  DMX, cette condition n'est PAS remplie. A n'activer que sur un chemin direct,
+   *  ou l'on maitrise la cadence de bout en bout (le streaming UDP d'un bandeau). */
+  dither: z.boolean().default(false),
   matricks: EffectMatricksSchema.optional(),
   /** Distribution de la phase par la GEOMETRIE plutot que par le rang de cellule.
    *  N'a de sens que sur des cellules dont on connait la position 3D — aujourd'hui
@@ -1724,10 +1736,9 @@ export function maToDmxEffect(ma: EffectMa): DmxEffect {
     speed: ma.speed,
     rate: 1,
     direction: ma.direction ?? "forward",
-    // Les presets ont ete regles a l'oreille sur un chemin LINEAIRE. On les convertit
-    // malgre tout en loi carree : c'est elle qui rend un fondu regulier a l'oeil, et
-    // un preset qui « escaliere » n'est pas fidele a son reglage, il est juste ancien.
-    curve: "square",
+    curve: "linear",
+    // Chaine Art-Net -> QLC+ : un maillon reechantillonne, le tramage y nuirait.
+    dither: false,
     matricks: ma.matricks,
     spatial: ma.spatial,
     sides: ma.sides,

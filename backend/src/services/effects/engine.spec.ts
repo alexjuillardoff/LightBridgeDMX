@@ -9,6 +9,7 @@ const effect = (line: Partial<EffectLine>, rest: Partial<DmxEffect> = {}): DmxEf
   direction: "forward",
   // Courbe neutre : ces tests portent sur la forme d'onde, pas sur la photometrie.
   curve: "linear",
+  dither: false,
   lines: [
     {
       attribute: "dimmer",
@@ -144,6 +145,7 @@ describe("evaluateDmxEffect", () => {
       rate: 1,
       direction: "forward",
       curve: "linear",
+      dither: false,
       lines: [
         { attribute: "pan", form: "sin", mode: "relative", low: 0, high: 100, phaseFrom: 0, phaseTo: 0, width: 50 },
         { attribute: "tilt", form: "sin", mode: "relative", low: 0, high: 100, phaseFrom: 90, phaseTo: 90, width: 50 }

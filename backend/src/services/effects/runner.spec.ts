@@ -56,6 +56,7 @@ const dimmerEffect = (over = {}) => ({
   // Courbe neutre : ces tests verifient l'ecriture des canaux et le tramage, pas la
   // photometrie. Une loi carree y rendrait chaque valeur attendue illisible.
   curve: "linear" as const,
+  dither: false as boolean,
   lines: [
     {
       attribute: "dimmer" as const,
@@ -175,7 +176,7 @@ describe("tramage temporel", () => {
     // high = 50 % -> 127,5 exactement : la fraction vaut un demi-cran, le cas le
     // plus defavorable, et celui ou le tramage se voit le mieux.
     await runner.run(
-      dimmerEffect({ lines: [{ ...dimmerEffect().lines[0], low: 50, high: 50 }] }),
+      dimmerEffect({ dither: true, lines: [{ ...dimmerEffect().lines[0], low: 50, high: 50 }] }),
       ["par-1"]
     );
 
@@ -191,6 +192,25 @@ describe("tramage temporel", () => {
     const moyenne = seen.reduce((a, b) => a + b, 0) / seen.length;
     expect(moyenne).toBeGreaterThan(127.3);
     expect(moyenne).toBeLessThan(127.7);
+    runner.stop();
+  });
+
+  it("reste inerte quand il est desactive — le defaut, chaine Art-Net oblige", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [par], () => []);
+
+    // Meme 127,5 que ci-dessus, mais sans tramage : la sortie doit etre figee.
+    await runner.run(
+      dimmerEffect({ lines: [{ ...dimmerEffect().lines[0], low: 50, high: 50 }] }),
+      ["par-1"]
+    );
+    const seen: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      frame();
+      seen.push(universe[9]);
+    }
+    expect(new Set(seen).size).toBe(1);
     runner.stop();
   });
 
