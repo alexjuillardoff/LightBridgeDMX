@@ -131,9 +131,13 @@ reset matériel. Gitignoré. **En faire une copie hors du dépôt.**
 
 ### 4.1 Démarrer le sidecar
 
-    ./.venv/bin/python sidecar.py          # écoute sur 127.0.0.1:5056
+Il tourne en service launchd, `~/Library/LaunchAgents/com.lightbridgedmx.thread-sidecar.plist`
+(démarrage à la session, `KeepAlive`, journal dans `logs/sidecar.out.log`) :
 
-Vérifier : `curl -s localhost:5056/lights`. Il résout les `iid` **par type de
+    launchctl kickstart -k gui/501/com.lightbridgedmx.thread-sidecar   # relancer
+    ./.venv/bin/python sidecar.py          # à la main, service arrêté (bootout) d'abord
+
+Il écoute sur 127.0.0.1:5056. Vérifier : `curl -s localhost:5056/lights`. Il résout les `iid` **par type de
 caractéristique**, jamais en dur — ils varient d'un modèle et d'un firmware à l'autre.
 
 ### 4.2 Déclarer la lampe dans LightBridge
@@ -331,9 +335,26 @@ température de couleur.
 
 **Le sidecar ne relit `pairings.json` qu'au démarrage.** Une ampoule fraîchement
 appairée lui reste donc invisible — et `POST /thread/adopt` répond « alias inconnu du
-sidecar » — tant qu'il n'a pas été relancé.
+sidecar » — tant qu'il n'a pas été relancé (`launchctl kickstart -k
+gui/501/com.lightbridgedmx.thread-sidecar`). S'il est arrêté, la lampe passe
+`reachable: false` sans rien casser d'autre.
 
-**Reste à faire** : le sidecar tourne en avant-plan, lancé à la main. Lui écrire un
-service launchd sur le modèle des trois autres (`~/Library/LaunchAgents/`) pour qu'il
-démarre à la session. S'il est arrêté, la lampe passe `reachable: false` sans rien
-casser d'autre.
+### Chien de garde : le sidecar se relance seul
+
+Le 2026-09-15, après onze jours de service, les trois ampoules ont échoué en boucle
+(`failed to connect`, rafales de `Retransmission`) — elles ne répondaient plus dans
+Maison. Pourtant `ping6` répondait, `dns-sd -L` montrait `sf=0` (toujours appairées),
+l'adresse n'avait pas bougé, et aiohomekit retentait bien la vérification de paire à
+chaque appel. L'état fautif était **interne au processus** : un simple redémarrage a
+tout rétabli en deux secondes.
+
+Le sidecar reproduit donc ce remède : si **toutes** les ampoules échouent depuis
+2 minutes (`--watchdog`) **et** qu'au moins une répond au ping, il se termine (code 75)
+et launchd le relance. Une seule ampoule débranchée ne déclenche rien ; une panne de
+maillage ou de courant non plus (aucun ping). Une ampoule hors tension au démarrage
+n'est plus oubliée : elle est retentée à chaque tour de relecture.
+
+Autre effet de bord corrigé : le backend pousse toutes les 250 ms et abandonne après 4 s.
+Pendant une reconnexion lente, les écritures s'empilaient derrière le verrou et étaient
+rejouées une à une. Elles sont désormais **fusionnées** : seules les dernières valeurs
+partent.

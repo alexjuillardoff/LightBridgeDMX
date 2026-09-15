@@ -113,7 +113,7 @@ de lampe (`backend/src/services/smart-lights/homekit-thread-client.ts`).
 | Fichier | Rôle |
 |---------|------|
 | `pair_bulb.py` | Appairage BLE + provisionnement Thread + bascule CoAP. Ponctuel, exige le Bluetooth |
-| `sidecar.py` | Service permanent. Résout les `iid` par type de caractéristique, sérialise les écritures par ampoule. **Aucun Bluetooth** |
+| `sidecar.py` | Service permanent (launchd `com.lightbridgedmx.thread-sidecar`). Résout les `iid` par type de caractéristique, sérialise et fusionne les écritures par ampoule, se relance seul si toutes ses sessions HAP meurent. **Aucun Bluetooth** |
 | `pairings.json` | Clés long-terme des appairages. **Irremplaçables** (perte = reset matériel), gitignorées |
 | `README.md` | Procédure complète et les sept pièges |
 
@@ -194,7 +194,8 @@ l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes
 - LaunchAgents :
   - `~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` → `pnpm -C backend dev` avec `DMX_OUTPUT=artnet ARTNET_HOST=<ip-qlc>  ARTNET_UNIVERSE=0 DMX_FPS=30 DATABASE_URL=file:<chemin-absolu-du-repo>/backend/data/lightbridge.db`.
   - `~/Library/LaunchAgents/com.lightbridgedmx.frontend.dev.plist` → `pnpm -C frontend dev`.
-- Logs : `logs/backend-dev.{out,err}.log`, `logs/frontend-dev.{out,err}.log`.
+  - `~/Library/LaunchAgents/com.lightbridgedmx.thread-sidecar.plist` → `tools/homekit-thread/.venv/bin/python sidecar.py` (ampoules Thread ; `KeepAlive` requis par son chien de garde).
+- Logs : `logs/backend-dev.{out,err}.log`, `logs/frontend-dev.{out,err}.log`, `logs/sidecar.out.log`.
 - Commandes utiles : `launchctl kickstart -k gui/501/com.lightbridgedmx.backend.dev`, `launchctl bootout gui/501 ~/Library/LaunchAgents/com.lightbridgedmx.backend.dev.plist` (idem frontend), `lsof -i :5000|:5173` pour vérifier l'écoute.
 
 ## Exposition réseau (reverse proxy)

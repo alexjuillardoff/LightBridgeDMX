@@ -24,6 +24,7 @@ import logging
 import os
 import pathlib
 import sys
+import time
 
 # Doit preceder tout import aiocoap : sur macOS, aiocoap n'active pas `udp6` et
 # retombe sur un transport incapable de se lier a "::", ce qu'exige aiohomekit.
@@ -71,6 +72,26 @@ class Light:
         # Une seule ecriture a la fois par ampoule : Thread est un medium partage
         # et lent, empiler les requetes ne fait qu'allonger la file.
         self.lock = asyncio.Lock()
+        # Ecritures en attente du verrou, fusionnees. Le backend pousse toutes les
+        # 250 ms et abandonne apres 4 s : quand une ecriture traine (reconnexion,
+        # 8 s et plus), les requetes s'empilaient et etaient rejouees une a une,
+        # couleurs perimees comprises. Desormais seules les dernieres valeurs partent.
+        self.pending: dict[str, object] = {}
+        # Debut de la serie d'echecs en cours (None si le dernier echange a reussi).
+        # Lu par le chien de garde du Sidecar.
+        self.failing_since: float | None = None
+
+    def _mark(self, ok: bool) -> None:
+        self.state["reachable"] = ok
+        if ok:
+            self.failing_since = None
+        elif self.failing_since is None:
+            self.failing_since = time.monotonic()
+
+    @property
+    def host(self) -> str:
+        """Adresse IPv6 courante, telle qu'aiohomekit la suit via zeroconf."""
+        return self.pairing.connection.address.rsplit(":", 1)[0].strip("[]")
 
     async def resolve(self) -> bool:
         """Lit la base d'accessoires et retient les iid des caracteristiques utiles."""
@@ -109,16 +130,27 @@ class Light:
                 res = await self.pairing.get_characteristics(pairs)
             except Exception as err:
                 logger.debug("%s : refresh echoue (%s)", self.alias, err)
-                self.state["reachable"] = False
+                self._mark(False)
                 return
         rev = {iid: key for key, iid in self.iids.items()}
         for (_aid, iid), val in res.items():
             if iid in rev and "value" in val:
                 self.state[rev[iid]] = val["value"]
-        self.state["reachable"] = True
+        self._mark(True)
 
     async def apply(self, patch: dict) -> dict:
         """Ecrit les caracteristiques fournies. Renvoie l'etat mis a jour."""
+        self.pending.update(patch)
+        async with self.lock:
+            # Un appel arrive pendant l'attente a pu emporter ce patch avec le sien.
+            if not self.pending:
+                return dict(self.state)
+            merged, self.pending = self.pending, {}
+            await self._write(merged)
+        return dict(self.state)
+
+    async def _write(self, patch: dict) -> None:
+        """Envoie un patch a l'ampoule. Appele verrou tenu."""
         writes = []
         for key in ("on", "brightness", "hue", "sat", "ct"):
             if key not in patch or key not in self.iids:
@@ -139,15 +171,13 @@ class Light:
             writes.append((self.aid, self.iids[key], value))
             self.state[key] = value
         if not writes:
-            return dict(self.state)
-        async with self.lock:
-            try:
-                await self.pairing.put_characteristics(writes)
-                self.state["reachable"] = True
-            except Exception as err:
-                logger.warning("%s : ecriture echouee (%s)", self.alias, err)
-                self.state["reachable"] = False
-        return dict(self.state)
+            return
+        try:
+            await self.pairing.put_characteristics(writes)
+            self._mark(True)
+        except Exception as err:
+            logger.warning("%s : ecriture echouee (%s)", self.alias, err)
+            self._mark(False)
 
     def snapshot(self) -> dict:
         return {"alias": self.alias, "name": self.name, **self.state}
@@ -157,6 +187,9 @@ class Sidecar:
     def __init__(self, store: pathlib.Path):
         self.store = store
         self.lights: dict[str, Light] = {}
+        # Appairees mais illisibles au demarrage (ampoule hors tension, typiquement) :
+        # retentees a chaque tour de refresh plutot qu'oubliees jusqu'au prochain lancement.
+        self.unresolved: dict[str, Light] = {}
         self.controller: Controller | None = None
 
     async def start(self, stack) -> None:
@@ -175,13 +208,17 @@ class Sidecar:
         await asyncio.sleep(5)
 
         for alias, pairing in controller.aliases.items():
-            light = Light(alias, pairing)
+            self.unresolved[alias] = Light(alias, pairing)
+        await self.resolve_pending()
+        logger.info("%d ampoule(s) prete(s)", len(self.lights))
+
+    async def resolve_pending(self) -> None:
+        for alias, light in list(self.unresolved.items()):
             if await light.resolve():
                 await light.refresh()
-                self.lights[alias] = light
+                self.lights[alias] = self.unresolved.pop(alias)
             else:
-                logger.warning("%s ignoree (caracteristiques non resolues)", alias)
-        logger.info("%d ampoule(s) prete(s)", len(self.lights))
+                logger.warning("%s en attente (caracteristiques non resolues)", alias)
 
     async def refresh_loop(self, interval: float) -> None:
         """Relit periodiquement l'etat, pour suivre un changement venu d'ailleurs."""
@@ -189,6 +226,61 @@ class Sidecar:
             await asyncio.sleep(interval)
             for light in self.lights.values():
                 await light.refresh()
+            if self.unresolved:
+                await self.resolve_pending()
+
+    async def watchdog(self, grace: float) -> None:
+        """Termine le processus quand ses sessions HAP sont irrecuperables.
+
+        Le 2026-09-15, apres onze jours de service, toutes les ampoules ont echoue en
+        boucle (« failed to connect ») pendant que le ping6 repondait, qu'elles
+        restaient appairees et que leur adresse n'avait pas bouge. aiohomekit retentait
+        pourtant la verification de paire a chaque appel : l'etat fautif etait interne
+        au processus, et seul un redemarrage l'a efface — en deux secondes.
+
+        On reproduit donc ce remede, sous deux conditions pour ne pas boucler a vide :
+        TOUTES les ampoules echouent depuis `grace` secondes (une seule ampoule
+        debranchee ne suffit pas), et au moins l'une d'elles repond au ping (sinon
+        c'est le maillage ou le courant, qu'un redemarrage ne reparerait pas).
+        launchd (KeepAlive) relance ensuite le sidecar.
+        """
+        while True:
+            await asyncio.sleep(30)
+            if not self.lights:
+                continue
+            now = time.monotonic()
+            if not all(l.failing_since is not None and now - l.failing_since > grace
+                       for l in self.lights.values()):
+                continue
+            pings = await asyncio.gather(*(ping(l.host) for l in self.lights.values()))
+            if not any(pings):
+                logger.warning("chien de garde : aucune ampoule ne repond au ping, "
+                               "panne reseau ou courant — pas de redemarrage")
+                continue
+            logger.error("chien de garde : toutes les ampoules echouent depuis plus de "
+                         "%d s alors que le reseau Thread repond — redemarrage du sidecar",
+                         grace)
+            logging.shutdown()
+            # Pas de fermeture propre : elle attendrait des contextes CoAP justement
+            # bloques. Le sidecar n'ecrit rien sur disque, rien a perdre.
+            os._exit(75)
+
+
+async def ping(host: str) -> bool:
+    """Un ping6, borne a 3 s. Vrai si l'hote a repondu."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ping6", "-c", "1", host,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    try:
+        return await asyncio.wait_for(proc.wait(), timeout=3) == 0
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return False
 
 
 # ─── Serveur HTTP minimal ───────────────────────────────────────────────────
@@ -226,7 +318,11 @@ async def handle(sidecar: Sidecar, reader: asyncio.StreamReader, writer: asyncio
         b"Connection: close\r\n\r\n" % (status, len(raw))
     )
     writer.write(raw)
-    await writer.drain()
+    try:
+        await writer.drain()
+    except ConnectionError:
+        # Le backend a abandonne la requete (delai de 4 s) : rien a lui repondre.
+        pass
     writer.close()
 
 
@@ -251,11 +347,15 @@ async def main_async(args) -> int:
     sidecar = Sidecar(pathlib.Path(args.file))
     async with AsyncExitStack() as stack:
         await sidecar.start(stack)
-        if not sidecar.lights:
-            logger.error("aucune ampoule utilisable — arret")
+        if not sidecar.controller.aliases:
+            logger.error("aucune ampoule appairee dans %s — arret", args.file)
             return 1
 
-        asyncio.create_task(sidecar.refresh_loop(args.refresh))
+        # Garder les references : asyncio ne retient les taches que faiblement.
+        tasks = [
+            asyncio.create_task(sidecar.refresh_loop(args.refresh)),
+            asyncio.create_task(sidecar.watchdog(args.watchdog)),
+        ]
         server = await asyncio.start_server(
             lambda r, w: handle(sidecar, r, w), args.host, args.port
         )
@@ -274,6 +374,8 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=5056)
     parser.add_argument("--refresh", type=float, default=30.0,
                         help="periode de relecture de l'etat, en secondes")
+    parser.add_argument("--watchdog", type=float, default=120.0,
+                        help="duree d'echec de toutes les ampoules avant redemarrage, en secondes")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     for noisy in ("zeroconf", "aiocoap", "aiohomekit"):
