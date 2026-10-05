@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import logging
 import os
 import pathlib
+import resource
 import sys
 import time
 
@@ -54,6 +56,13 @@ CHAR_TYPES = {
 # Bornes de repli si l'ampoule ne declare pas sa plage (valeurs du NL45).
 CT_FALLBACK_RANGE = (153, 470)
 
+# Attente maximale du verrou d'ecriture, en secondes. Le backend abandonne au bout de
+# 4 s : au-dela, la requete n'a plus personne a qui repondre, mais sa socket restait
+# ouverte jusqu'a la fin de l'ecriture en cours. Le 2026-10-05, ces sockets en
+# CLOSE_WAIT ont epuise les 256 descripteurs accordes par launchd (« Too many open
+# files ») : le sidecar ne pouvait plus ni accepter de requete, ni lancer un ping.
+WRITE_WAIT = 3.0
+
 
 class Light:
     """Une ampoule appairee, avec ses iid resolus et son verrou d'ecriture."""
@@ -80,11 +89,14 @@ class Light:
         # Debut de la serie d'echecs en cours (None si le dernier echange a reussi).
         # Lu par le chien de garde du Sidecar.
         self.failing_since: float | None = None
+        # Dernier diagnostic du chien de garde, pour ne journaliser que les changements.
+        self.verdict: str | None = None
 
     def _mark(self, ok: bool) -> None:
         self.state["reachable"] = ok
         if ok:
             self.failing_since = None
+            self.verdict = None
         elif self.failing_since is None:
             self.failing_since = time.monotonic()
 
@@ -92,6 +104,66 @@ class Light:
     def host(self) -> str:
         """Adresse IPv6 courante, telle qu'aiohomekit la suit via zeroconf."""
         return self.pairing.connection.address.rsplit(":", 1)[0].strip("[]")
+
+    @property
+    def port(self) -> str:
+        return self.pairing.connection.address.rsplit(":", 1)[1]
+
+    def stuck(self, now: float, grace: float) -> bool:
+        return self.failing_since is not None and now - self.failing_since > grace
+
+    def candidates(self) -> list[str]:
+        """Toutes les adresses connues de l'ampoule, celle en service d'abord.
+
+        aiohomekit ne garde que la DERNIERE adresse annoncee en mDNS. Le 2026-10-05, les
+        ampoules ont brievement porte une adresse dans un second prefixe Thread
+        (fd3c:b774:c3f0:1::/64) que le Mac ne savait pas router ; aiohomekit l'a adoptee
+        et n'en est jamais revenu, alors que l'adresse d'origine repondait toujours.
+        """
+        desc = getattr(self.pairing, "description", None)
+        addrs = [self.host, *(desc.addresses if desc else []),
+                 self.pairing.pairing_data.get("AccessoryIP")]
+        normalized = []
+        for addr in addrs:
+            try:
+                normalized.append(ipaddress.ip_address(addr).compressed)
+            except (TypeError, ValueError):
+                continue
+        return list(dict.fromkeys(normalized))
+
+    async def diagnose(self) -> str:
+        """Pourquoi l'ampoule echoue-t-elle ? Repare sur place ce qui peut l'etre.
+
+        'session' : son adresse repond au ping, l'echec est interne au processus ;
+        'moved'   : son adresse est muette mais une autre repond — on y bascule ;
+        'down'    : aucune ne repond (courant coupe, maillage en panne).
+        """
+        addrs = self.candidates()
+        alive = await asyncio.gather(*(ping(a) for a in addrs))
+        if alive[0]:
+            verdict = "session"
+        elif any(alive):
+            verdict = "moved"
+            target = addrs[alive.index(True)]
+            logger.warning("%s : %s muette, bascule sur %s", self.alias, addrs[0], target)
+            # Le geste d'aiohomekit lui-meme quand zeroconf annonce une nouvelle adresse.
+            self.pairing.connection.address = f"[{target}]:{self.port}"
+            try:
+                await asyncio.wait_for(self.pairing.connection.reconnect_soon(), timeout=5)
+            except asyncio.TimeoutError:
+                # Contexte CoAP bloque a la fermeture : l'abandonner, la prochaine
+                # ecriture en ouvrira un neuf vers la nouvelle adresse.
+                self.pairing.connection.enc_ctx = None
+            # Nouvelle periode de grace : laisser a la nouvelle adresse le temps de servir.
+            self.failing_since = time.monotonic()
+        else:
+            verdict = "down"
+        if verdict != self.verdict and verdict != "moved":
+            logger.warning("%s : en echec, %s (adresses testees : %s)", self.alias,
+                           "joignable au ping" if verdict == "session"
+                           else "aucune adresse ne repond", ", ".join(addrs))
+        self.verdict = verdict
+        return verdict
 
     async def resolve(self) -> bool:
         """Lit la base d'accessoires et retient les iid des caracteristiques utiles."""
@@ -138,15 +210,24 @@ class Light:
                 self.state[rev[iid]] = val["value"]
         self._mark(True)
 
-    async def apply(self, patch: dict) -> dict:
-        """Ecrit les caracteristiques fournies. Renvoie l'etat mis a jour."""
+    async def apply(self, patch: dict) -> dict | None:
+        """Ecrit les caracteristiques fournies. Renvoie l'etat mis a jour, ou None si
+        le verrou n'a pas ete obtenu a temps (WRITE_WAIT)."""
         self.pending.update(patch)
-        async with self.lock:
+        try:
+            await asyncio.wait_for(self.lock.acquire(), timeout=WRITE_WAIT)
+        except asyncio.TimeoutError:
+            # Le patch reste dans `pending` : le prochain appel l'emportera. Le backend
+            # renvoie de toute facon tout ecart non confirme a sa prochaine poussee.
+            return None
+        try:
             # Un appel arrive pendant l'attente a pu emporter ce patch avec le sien.
             if not self.pending:
                 return dict(self.state)
             merged, self.pending = self.pending, {}
             await self._write(merged)
+        finally:
+            self.lock.release()
         return dict(self.state)
 
     async def _write(self, patch: dict) -> None:
@@ -243,19 +324,24 @@ class Sidecar:
         debranchee ne suffit pas), et au moins l'une d'elles repond au ping (sinon
         c'est le maillage ou le courant, qu'un redemarrage ne reparerait pas).
         launchd (KeepAlive) relance ensuite le sidecar.
+
+        Le ping ne vise pas seulement l'adresse en service : le 2026-10-05, celle-ci
+        etait perimee, le ping echouait donc aussi, et le chien de garde concluait a
+        tort a une panne de courant pendant que l'ampoule repondait a son adresse
+        d'origine. Chaque ampoule en echec est d'abord diagnostiquee seule
+        (`Light.diagnose`), ce qui repare aussi le cas d'UNE ampoule egaree.
         """
         while True:
             await asyncio.sleep(30)
-            if not self.lights:
-                continue
             now = time.monotonic()
-            if not all(l.failing_since is not None and now - l.failing_since > grace
-                       for l in self.lights.values()):
+            stuck = [l for l in self.lights.values() if l.stuck(now, grace)]
+            if not stuck:
                 continue
-            pings = await asyncio.gather(*(ping(l.host) for l in self.lights.values()))
-            if not any(pings):
-                logger.warning("chien de garde : aucune ampoule ne repond au ping, "
-                               "panne reseau ou courant — pas de redemarrage")
+            verdicts = await asyncio.gather(*(l.diagnose() for l in stuck))
+            # Une ampoule rebasculee repart avec une periode de grace : `stuck` la
+            # relache, et le redemarrage attend de voir si la bascule suffit.
+            if not (all(l.stuck(now, grace) for l in self.lights.values())
+                    and "session" in verdicts):
                 continue
             logger.error("chien de garde : toutes les ampoules echouent depuis plus de "
                          "%d s alors que le reseau Thread repond — redemarrage du sidecar",
@@ -288,6 +374,14 @@ async def ping(host: str) -> bool:
 # locale ne se justifie pas, et cela garde le sidecar sans dependance nouvelle.
 
 async def handle(sidecar: Sidecar, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    # Fermer la socket quoi qu'il arrive : chaque socket oubliee coute un descripteur.
+    try:
+        await respond(sidecar, reader, writer)
+    finally:
+        writer.close()
+
+
+async def respond(sidecar: Sidecar, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     try:
         line = await asyncio.wait_for(reader.readline(), timeout=10)
         if not line:
@@ -323,7 +417,6 @@ async def handle(sidecar: Sidecar, reader: asyncio.StreamReader, writer: asyncio
     except ConnectionError:
         # Le backend a abandonne la requete (delai de 4 s) : rien a lui repondre.
         pass
-    writer.close()
 
 
 async def route(sidecar: Sidecar, method: str, path: str, body: bytes):
@@ -337,7 +430,10 @@ async def route(sidecar: Sidecar, method: str, path: str, body: bytes):
         if light is None:
             return 404, {"error": f"alias inconnu: {alias}"}
         patch = json.loads(body or b"{}")
-        return 200, {"alias": alias, **await light.apply(patch)}
+        state = await light.apply(patch)
+        if state is None:
+            return 503, {"error": f"{alias} occupee, ecriture reportee"}
+        return 200, {"alias": alias, **state}
     return 404, {"error": "route inconnue"}
 
 
@@ -378,6 +474,12 @@ def main() -> int:
                         help="duree d'echec de toutes les ampoules avant redemarrage, en secondes")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # launchd n'accorde que 256 descripteurs. Chaque tentative CoAP en ouvre un, et
+    # une ampoule qui traine retient les requetes HTTP : marge de securite.
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    want = 4096 if hard == resource.RLIM_INFINITY else min(4096, hard)
+    if soft < want:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
     for noisy in ("zeroconf", "aiocoap", "aiohomekit"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     return asyncio.run(main_async(args))

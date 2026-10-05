@@ -354,6 +354,37 @@ et launchd le relance. Une seule ampoule débranchée ne déclenche rien ; une p
 maillage ou de courant non plus (aucun ping). Une ampoule hors tension au démarrage
 n'est plus oubliée : elle est retentée à chaque tour de relecture.
 
+### Adresse périmée : le chien de garde se croyait aveugle (2026-10-05)
+
+« Lampe Salon » a cessé de répondre à 19 h 11, les deux autres ampoules à 20 h 38. Le
+chien de garde répétait « aucune ampoule ne répond au ping, panne réseau ou courant »,
+alors qu'un `ping6` lancé à la main répondait en 22 ms. En cause : les ampoules avaient
+brièvement annoncé en mDNS une adresse dans un **second préfixe Thread**
+(`fd3c:b774:c3f0:1::/64`), que le Mac ne sait pas router. aiohomekit adopte toujours la
+**dernière** adresse annoncée : il l'a prise et n'en est jamais revenu. Le chien de
+garde pingeait cette même adresse morte, d'où son faux diagnostic.
+
+Pour voir l'adresse réellement visée par le sidecar, inutile de deviner :
+
+    ps -o command -ax | grep "ping6 -c 1"     # pendant un tour du chien de garde
+
+Désormais, chaque ampoule en échec depuis 2 minutes est diagnostiquée **seule**, sur
+toutes ses adresses connues (celle en service, celles annoncées en mDNS, celle de
+`pairings.json`) :
+
+| Verdict | Signe | Remède |
+|---|---|---|
+| adresse périmée | l'adresse en service est muette, une autre répond | bascule sur place (`… muette, bascule sur …`) |
+| session | l'adresse en service répond | redémarrage, si **toutes** les ampoules en sont là |
+| hors service | aucune adresse ne répond | rien : courant ou maillage |
+
+La panne a eu un effet de bord : chaque requête abandonnée par le backend (au bout de
+4 s) gardait sa socket ouverte derrière le verrou d'écriture, jusqu'à épuiser les
+256 descripteurs que launchd accorde (`Too many open files`). Le sidecar ne pouvait plus
+ni répondre au backend, ni même lancer un ping. Une requête n'attend donc plus le verrou
+que 3 s (`503` ensuite, que le backend renvoie à sa poussée suivante), toute socket est
+fermée quoi qu'il arrive, et le sidecar relève sa limite à 4 096 descripteurs.
+
 Autre effet de bord corrigé : le backend pousse toutes les 250 ms et abandonne après 4 s.
 Pendant une reconnexion lente, les écritures s'empilaient derrière le verrou et étaient
 rejouées une à une. Elles sont désormais **fusionnées** : seules les dernières valeurs
