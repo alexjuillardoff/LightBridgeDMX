@@ -959,7 +959,7 @@ Le runner n'a **pas** de minuteur à lui : il s'abonne à `dmx.onBeforeFrame()` 
 
 Un `setInterval(33 ms)` à côté d'une sortie à 30 Hz dérive contre elle. Les deux cadences battent l'une contre l'autre et il sort régulièrement une trame où l'effet n'a pas encore recalculé — donc une valeur répétée. Mesuré sur un fondu sinus : **4 trames répétées sur 90**, soit un à-coup toutes les 0,75 s, parfaitement visible sur un PAR. En se calant sur la boucle de sortie, chaque trame porte une valeur fraîche, calculée une seule fois.
 
-`DMX_FPS` vaut **40**, et le service borne à **44** (`DMX_MAX_FPS`). C'est le seul levier logiciel contre l'escalier d'un fondu : en 8 bits, un sinus pleine échelle en 2 s franchit 255 valeurs en 1 s, soit 13 pas DMX par trame à 30 Hz contre 5-6 à 60 Hz (mesuré). À savoir : une ligne DMX512 **physique** plafonne vers 44 trames/s pour un univers plein — au-delà on émet plus d'Art-Net que la ligne n'en transporte, sans danger mais sans gain garanti.
+`DMX_FPS` vaut **30** (40 jusqu'au 2026-10-12, voir « Marge de trame » plus bas), et le service borne à **44** (`DMX_MAX_FPS`). C'est le seul levier logiciel contre l'escalier d'un fondu : en 8 bits, un sinus pleine échelle en 2 s franchit 255 valeurs en 1 s, soit 13 pas DMX par trame à 30 Hz contre 5-6 à 60 Hz (mesuré). À savoir : une ligne DMX512 **physique** plafonne vers 44 trames/s pour un univers plein — au-delà on émet plus d'Art-Net que la ligne n'en transporte, sans danger mais sans gain garanti.
 
 #### Le plafond de 44 Hz n'est pas négociable
 
@@ -973,6 +973,31 @@ Un `setInterval(33 ms)` à côté d'une sortie à 30 Hz dérive contre elle. Les
 Régler une interface au-delà ne l'accélère pas : sur une sortie bit-bangée (Open DMX / FT232R), **elle cesse d'émettre**. Constaté en production le 2026-09-04 — plus aucun projecteur ne répondait après un passage à 60 Hz, et QLC+ est resté coincé dans cet état jusqu'à un redémarrage complet du processus.
 
 `DMX_FPS` doit rester **aligné sur la fréquence de trame réglée dans QLC+**. Le moteur d'effets trame ses valeurs : émettre à 60 ce qu'un maillon aval consomme à 40 revient à échantillonner le motif au lieu de l'intégrer, ce qui annule le tramage.
+
+#### Marge de trame de l'Open DMX : 30 Hz et 128 canaux
+
+Symptôme : par moments, la lyre part une fraction de seconde puis revient, les PAR clignotent, **sans aucune commande**. Ce n'est ni le backend ni l'Art-Net : c'est une trame DMX incomplète, émise de temps en temps par l'Open DMX.
+
+Mesuré le 2026-10-12 (`sample` du thread `EnttecDMXUSBOpen` de QLC+, 40 Hz, 512 canaux). Sur chaque période de 25 ms :
+
+| Étape | Durée |
+|---|---|
+| BREAK + MAB (transferts de contrôle USB) | ~1,8 ms |
+| `ftdi_write_data` (bloquant) | ~19 ms |
+| Sommeil jusqu'à la trame suivante | ~4 ms |
+
+La trame occupe 22,7 ms sur le câble : il ne reste **aucune marge**. Le moindre retard de macOS ou de l'USB fait partir le BREAK suivant sur une trame inachevée, et les projecteurs lisent des valeurs fausses pendant 25 ms. Le développeur de Beam a observé la même chose à l'analyseur logique sur Mac, QLC+ compris.
+
+Réglage retenu :
+
+- **`UniverseChannels="128"`** dans `qlc-plus/home.qxw` : QLC+ n'envoie que 128 canaux à l'Open DMX. Les projecteurs physiques s'arrêtent au canal 107 ; les canaux 108-258 sont la façade **virtuelle** du bandeau, inutile sur le XLR. La trame passe de 22,7 ms à 5,7 ms.
+- **30 Hz** des deux côtés : `DMX_FPS=30` dans le plist du backend, et dans QLC+ la fréquence de l'interface. Celle-ci ne vit **pas** dans `home.qxw` mais dans les préférences macOS (domaine `net.sf.Q Light Controller Plus`, clé `qlcftdi.freqmap`, indexée par le n° de série du FT232R). Période de 33 ms → ~25 ms de marge.
+
+Piège inverse : un projecteur **physique** adressé au-delà du canal 128 ne recevra rien, sans aucun message (même panne que `UniverseChannels="31"` en mai 2026). En patcher un impose de remonter la valeur.
+
+Si les sauts persistent malgré cette marge, chercher sur la ligne (bouchon 120 Ω sur la sortie du dernier projecteur, câble DMX 110 Ω plutôt qu'un câble micro), puis passer à une interface qui génère son propre timing (DMX USB Pro, ultraDMX Micro, nœud Art-Net).
+
+Ne pas interroger l'API web de QLC+ pour diagnostiquer : en 4.13.1, `getChannelsValues` avec un univers hors limites ne rend jamais le verrou des univers, et **toute la sortie se fige** sur la dernière trame jusqu'au redémarrage de QLC+.
 
 #### La granularité d'un fondu est une limite matérielle, pas logicielle
 

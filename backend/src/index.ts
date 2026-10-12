@@ -36,7 +36,12 @@ const PORT = 5000;
 // moteur d'effets trame ses valeurs (dithering) : emettre a 60 ce qu'un maillon aval
 // consomme a 40 revient a echantillonner le motif au lieu de l'integrer, ce qui
 // annule le tramage et peut faire battre le rendu.
-const DMX_FPS = parseInt(process.env.DMX_FPS ?? "40", 10);
+//
+// 30 et non 40 : a 40 Hz, l'Open DMX n'a plus aucune marge (BREAK/MAB par USB +
+// trame sur le cable remplissent les 25 ms) et emet de temps en temps une trame
+// incomplete — saut bref d'une lyre ou d'un PAR sans commande. Voir DEVELOPMENT.md,
+// « Marge de trame de l'Open DMX ».
+const DMX_FPS = parseInt(process.env.DMX_FPS ?? "30", 10);
 const DMX_PORT = process.env.DMX_PORT;
 const DMX_OUTPUT = (process.env.DMX_OUTPUT ?? "enttec") as "enttec" | "artnet";
 const ARTNET_HOST = process.env.ARTNET_HOST;
