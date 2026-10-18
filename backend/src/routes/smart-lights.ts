@@ -8,7 +8,6 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   buildZoneRgbChannels,
-  Fixture,
   SmartLight,
   SmartLightEffectConfigSchema,
   SmartLightInputSchema,
@@ -17,38 +16,16 @@ import {
   SmartLightZoneLayoutSchema,
   SmartLightZonePaletteSchema
 } from "@lightbridgedmx/shared";
+import { facadeIds, lastRealChannel, placeFacade } from "../services/facade-patch";
 import { NanoleafApiError, NanoleafClient } from "../services/smart-lights/nanoleaf-client";
 import { discoverNanoleaf } from "../services/smart-lights/discovery";
+import { relocateFacades } from "./helpers";
 import { ErrorHandler, RouteContext } from "./types";
 
 /** Nombre de zones par defaut quand l'appareil ne sait pas le dire.
  *  Le NL72K3 (Lightstrip Essentials) expose 50 zones adressables en extControl ;
  *  son firmware n'a pas d'endpoint panelLayout pour le confirmer. */
 const DEFAULT_ZONE_COUNT = 50;
-
-/** Cherche le premier bloc de `size` canaux DMX consecutifs libres (1-512), en
- *  ignorant eventuellement un projecteur (celui qu'on est en train de redimensionner).
- *  Renvoie l'adresse de depart, ou null si l'univers est trop encombre. */
-const findFreeChannelBlock = (fixtures: Fixture[], size: number, ignoreId?: string): number | null => {
-  const used = new Set<number>();
-  for (const fixture of fixtures) {
-    if (fixture.id === ignoreId) continue;
-    for (const ch of fixture.channels) used.add(fixture.address + ch.channel - 1);
-  }
-  for (let start = 1; start + size - 1 <= 512; start++) {
-    let free = true;
-    for (let c = start; c < start + size; c++) {
-      if (used.has(c)) {
-        // Rien a tester avant ce canal occupe : on redemarre juste apres.
-        start = c;
-        free = false;
-        break;
-      }
-    }
-    if (free) return start;
-  }
-  return null;
-};
 
 // Enregistre toutes les routes /api/smart-lights sur l'instance Fastify.
 // ctx donne acces au store (persistance) et au service smartLights (runtime),
@@ -96,8 +73,13 @@ export const registerSmartLightRoutes = (
     try {
       const parsed = SmartLightInputSchema.partial().parse(request.body);
       const id = (request.params as { id: string }).id;
-      const light = await ctx.store.updateSmartLight(id, parsed);
+      let light = await ctx.store.updateSmartLight(id, parsed);
       await ctx.smartLights.register(light);
+      // Un nouveau miroir peut faire d'un vrai projecteur la facade de cette lampe :
+      // il va alors se ranger derriere les vrais (et le miroir le suit).
+      if (parsed.dmxMirror !== undefined && (await relocateFacades(ctx)).length) {
+        light = (await ctx.store.getSmartLight(id)) ?? light;
+      }
       // Le pont relit les lampes : nom et exposition viennent de la facade DMX.
       ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
       ctx.broadcast({ type: "smart_light_updated", data: light });
@@ -278,7 +260,8 @@ export const registerSmartLightRoutes = (
    * sheet, scenes, presets, Art-Net entrant) peint le bandeau zone par zone.
    *
    * Le corps est entierement optionnel : sans adresse, on alloue automatiquement le
-   * premier bloc libre ; sans zoneCount, on prend celui du streaming (50 par defaut).
+   * premier bloc libre derriere les vrais projecteurs ; sans zoneCount, on prend
+   * celui du streaming (50 par defaut).
    */
   app.post("/api/smart-lights/:id/dmx-fixture", async (request, reply) => {
     try {
@@ -305,21 +288,26 @@ export const registerSmartLightRoutes = (
       const existingId = light.dmxMirror?.zones?.fixtureId;
       const existingFixture = existingId ? await ctx.store.getFixture(existingId) : undefined;
 
+      // Une facade n'a rien de physique : elle se range derriere les vrais
+      // projecteurs (voir services/facade-patch). Elle garde son adresse actuelle
+      // tant que le bloc y tient encore, sinon elle va a la premiere place libre.
       const fixtures = await ctx.store.listFixtures();
-      const startChannel =
-        parsed.startChannel ??
-        // On garde l'adresse actuelle si le bloc n'a pas grossi, sinon on realloue.
-        (existingFixture && existingFixture.address + size - 1 <= 512
-          ? existingFixture.address
-          : findFreeChannelBlock(fixtures, size, existingFixture?.id));
-      if (startChannel === null || startChannel === undefined) {
-        return reply
-          .code(409)
-          .send({ message: `Aucun bloc de ${size} canaux DMX libres dans l'univers` });
+      const facades = facadeIds(await ctx.store.listSmartLights(), fixtures);
+      const startChannel = placeFacade(fixtures, facades, {
+        size,
+        universe,
+        preferred: parsed.startChannel ?? existingFixture?.address,
+        ignoreId: existingFixture?.id
+      });
+      if (startChannel === null) {
+        return reply.code(409).send({
+          message: `Aucun bloc de ${size} canaux DMX libres après le dernier vrai projecteur`
+        });
       }
-      if (startChannel + size - 1 > 512) {
-        return reply.code(400).send({
-          message: `${zoneCount} zones demandent ${size} canaux : l'adresse ${startChannel} depasse le canal 512`
+      if (parsed.startChannel !== undefined && startChannel !== parsed.startChannel) {
+        const last = lastRealChannel(fixtures, facades, universe);
+        return reply.code(409).send({
+          message: `Le canal ${parsed.startChannel} ne convient pas : une façade de ${size} canaux se place après le dernier vrai projecteur (canal ${last}), sans chevaucher une autre façade ni dépasser le canal 512`
         });
       }
 

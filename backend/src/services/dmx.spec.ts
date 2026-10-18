@@ -64,3 +64,32 @@ describe("DmxService — auteur des ecritures", () => {
     expect(dmx.hasForeignWriteSince(10, 3, EFFECT, dmx.writeSequence())).toBe(false);
   });
 });
+
+describe("DmxService — recopie de blocs (deplacement d'une facade)", () => {
+  it("recopie les valeurs ET leur auteur a la nouvelle adresse", () => {
+    const dmx = service();
+    dmx.applyWrite({ address: 33, values: [200, 10, 20, 30, 40] }, EFFECT);
+    const seq = dmx.writeSequence();
+    dmx.copyBlocks([{ from: 33, to: 259, count: 5 }]);
+
+    expect(dmx.getUniverseSnapshot().slice(258, 263)).toEqual([200, 10, 20, 30, 40]);
+    // L'effet reconnait toujours son bloc : la recopie n'est pas une commande etrangere.
+    expect(dmx.isBlockOwnedBy(259, 5, EFFECT)).toBe(true);
+    expect(dmx.hasForeignWriteSince(259, 5, EFFECT, seq)).toBe(false);
+    // L'ancienne place n'est pas videe : sa lampe la lit encore.
+    expect(dmx.getUniverseSnapshot()[32]).toBe(200);
+  });
+
+  it("lit tout avant d'ecrire : des blocs qui se recouvrent ne s'ecrasent pas", () => {
+    const dmx = service();
+    dmx.applyWrite({ address: 10, values: [1, 2, 3, 4] });
+    dmx.copyBlocks([
+      { from: 10, to: 12, count: 2 },
+      { from: 12, to: 20, count: 2 }
+    ]);
+    const values = dmx.getUniverseSnapshot();
+    expect([values[11], values[12]]).toEqual([1, 2]);
+    // Le second bloc emporte les valeurs d'AVANT la premiere recopie.
+    expect([values[19], values[20]]).toEqual([3, 4]);
+  });
+});

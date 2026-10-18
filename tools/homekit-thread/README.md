@@ -70,7 +70,7 @@ déboguer. Au quotidien, passer par **`#patch` → volet Inventaire réseau → 
    pendant qu'elle cherche. Cette étape ne peut pas être automatisée davantage — elle
    exige le Bluetooth, et macOS ne l'accorde jamais à un service sans interface.
 2. **Patcher** — l'ampoule apparaît dans « prêtes à patcher ». Un clic déclare la
-   lampe, trouve une adresse DMX libre, crée le projecteur, pose le miroir et
+   lampe, lui trouve une adresse DMX derrière les vrais projecteurs, crée le projecteur, pose le miroir et
    l'expose dans HomeKit. Le menu déroulant permet de **rattacher** la lampe à un
    projecteur existant plutôt que d'en créer un second.
 
@@ -179,6 +179,11 @@ Puis ajouter à la lampe :
                   "rChannel": 41, "gChannel": 42, "bChannel": 43}
 
 Elle hérite alors de la console, des scènes et des presets.
+
+Le projecteur devient ainsi la **façade** de la lampe : s'il est placé entre deux vrais
+projecteurs (comme l'adresse 40 de l'exemple), le backend le range aussitôt derrière le
+dernier vrai canal DMX, et le miroir suit. Inutile donc de chercher une adresse : celle
+qu'on donne n'est qu'un point de départ.
 
 **Arbitrage entre sources** : le miroir ne s'applique qu'au **changement** des canaux
 DMX. Bouger un fader reprend la main ; tant que le DMX ne bouge pas, Maison et l'onglet
@@ -325,9 +330,9 @@ aboutissent. Origine non élucidée.
 
 | Ampoule | Alias | État |
 |---|---|---|
-| Nanoleaf A19 26N3 | `a19-26n3` | « Lampe Salon » — projecteur « Lampe Canapé », DMX 33-37 |
-| Nanoleaf A19 1W1D | `a19-1w1d` | « Plafonnier Canapé » — DMX 38-42 |
-| Nanoleaf A19 6IX7 | `a19-6ix7` | « Lampe 6IX7 » — DMX 43-47 |
+| Nanoleaf A19 26N3 | `a19-26n3` | « Lampe Salon » — projecteur « Lampe Canapé », DMX 259-263 |
+| Nanoleaf A19 1W1D | `a19-1w1d` | « Plafonnier Canapé » — DMX 264-268 |
+| Nanoleaf A19 6IX7 | `a19-6ix7` | « Lampe 6IX7 » — projecteur « Plafonnier Cuisine », DMX 269-273 |
 
 Les trois sont appairées, joignables en CoAP/Thread et pilotables depuis la console,
 les scènes, les presets et l'app Maison. Cinq canaux chacune : Dimmer, R, V, B,

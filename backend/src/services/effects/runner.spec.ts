@@ -312,3 +312,40 @@ describe("tramage temporel", () => {
     runner.stop();
   });
 });
+
+describe("repatch pendant un effet", () => {
+  it("l'effet suit son projecteur a sa nouvelle adresse, et y rend les canaux a l'arret", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    universe[9] = 77; // valeur d'avant lancement, a l'adresse 10
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [par], () => []);
+    const run = await runner.run(dimmerEffect(), ["par-1"]);
+    frame();
+    expect(universe[9]).toBe(255);
+
+    // Le projecteur passe de 10 a 110 ; la valeur d'avant voyage avec lui.
+    universe[109] = 77;
+    universe[9] = 0;
+    runner.followRepatch(new Map([["par-1", 100]]));
+    frame();
+    expect(universe[109]).toBe(255);
+    // L'ancienne adresse n'est plus ecrite : elle peut etre celle d'un vrai projecteur.
+    expect(universe[9]).toBe(0);
+
+    runner.stopRun(run!.id);
+    expect(universe[109]).toBe(77);
+    expect(universe[9]).toBe(0);
+    runner.stop();
+  });
+
+  it("ignore les effets qui ne touchent pas aux projecteurs deplaces", async () => {
+    const { dmx, universe, frame } = fakeDmx();
+    const runner = new EffectRunner(logger, dmx);
+    runner.start(async () => [par], () => []);
+    await runner.run(dimmerEffect(), ["par-1"]);
+    runner.followRepatch(new Map([["autre", 50]]));
+    frame();
+    expect(universe[9]).toBe(255);
+    runner.stop();
+  });
+});

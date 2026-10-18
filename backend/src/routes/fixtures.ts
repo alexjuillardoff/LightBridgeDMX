@@ -4,7 +4,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { FixtureSchema } from "@lightbridgedmx/shared";
-import { createFixtureAndSync, realignSmartLightMirrors } from "./helpers";
+import {
+  assertFacadesStayPut,
+  createFixtureAndSync,
+  currentFacadeIds,
+  realignSmartLightMirrors,
+  relocateFacades
+} from "./helpers";
 import { ErrorHandler, RouteContext } from "./types";
 
 // Enregistre les endpoints /api/fixtures sur l'instance Fastify.
@@ -59,6 +65,15 @@ export const registerFixtureRoutes = (app: FastifyInstance, ctx: RouteContext, h
       const { room, ...fields } = parsed;
       const patch = "room" in parsed ? { ...fields, room: room ?? undefined } : fields;
       const id = (request.params as { id: string }).id;
+      // Une facade ne se deplace pas a la main ; un vrai projecteur, si — et il
+      // pousse alors les facades qu'il viendrait recouvrir.
+      const facades = await currentFacadeIds(ctx);
+      assertFacadesStayPut(await ctx.store.listFixtures(), facades, [{ ...patch, id }]);
+      if (!facades.has(id)) {
+        await relocateFacades(ctx, (fixtures) =>
+          fixtures.map((f) => (f.id === id ? { ...f, ...patch, id } : f))
+        );
+      }
       // Etat AVANT modification : c'est lui qui dit quels canaux le projecteur
       // liberait, donc quels miroirs de lampes doivent suivre le deplacement.
       const before = await ctx.store.getFixture(id);
@@ -81,6 +96,14 @@ export const registerFixtureRoutes = (app: FastifyInstance, ctx: RouteContext, h
   app.post("/api/fixtures/repatch", async (request, reply) => {
     try {
       const { moves } = repatchSchema.parse(request.body);
+      assertFacadesStayPut(await ctx.store.listFixtures(), await currentFacadeIds(ctx), moves);
+      const movesById = new Map(moves.map((move) => [move.id, move]));
+      await relocateFacades(ctx, (fixtures) =>
+        fixtures.map((f) => {
+          const move = movesById.get(f.id);
+          return move ? { ...f, address: move.address, universe: move.universe ?? f.universe } : f;
+        })
+      );
       const beforeAll = new Map((await ctx.store.listFixtures()).map((f) => [f.id, f]));
       const updated = await ctx.store.repatchFixtures(moves);
       await realignSmartLightMirrors(

@@ -300,6 +300,10 @@ interface SmartLight {
 > `realignSmartLightMirrors()` (`routes/helpers.ts`) décale du même delta les canaux du miroir tombant
 > dans l'ancienne empreinte du projecteur, sur `PUT /:id` comme sur `/repatch`. Le miroir par zone, lui,
 > porte déjà `fixtureId` : on suit ce lien plutôt que les canaux.
+>
+> L'adresse d'une façade ne se règle plus à la main (409) : elle est attribuée automatiquement derrière
+> les vrais projecteurs, et un vrai projecteur patché par-dessus la pousse. Voir
+> [Placement automatique des façades](#placement-automatique-des-façades).
 | `DELETE` | `/api/fixtures/:id` | — | Supprime un projecteur |
 | `POST` | `/api/fixtures/import/qxf-library` | `{ path, mode?, address, universe, name? }` | Importe depuis la librairie QXF |
 
@@ -363,7 +367,7 @@ manuelles à deux clics. Voir `tools/homekit-thread/README.md` pour la procédur
 | Méthode | Endpoint | Corps | Description |
 |---------|----------|-------|-------------|
 | `GET` | `/api/smart-lights/thread/candidates` | — | Ampoules appairées côté sidecar mais pas encore déclarées : la liste « prêtes à patcher ». Renvoie `{ sidecarUp, candidates[], message? }` — `sidecarUp: false` plutôt qu'une liste vide trompeuse si le sidecar est arrêté |
-| `POST` | `/api/smart-lights/thread/adopt` | `{ alias, name?, room?, patchDmx?, fixtureId?, universe? }` | Déclare la lampe **et** la patche : adresse DMX libre trouvée par `store.findFreeAddress()`, projecteur 4 canaux créé (`homekit.enabled: false`), miroir posé, accessoire HomeKit exposé. `fixtureId` rattache à un projecteur **existant** au lieu d'en créer un second. Transactionnel : la lampe est retirée si la création du projecteur échoue |
+| `POST` | `/api/smart-lights/thread/adopt` | `{ alias, name?, room?, patchDmx?, fixtureId?, universe? }` | Déclare la lampe **et** la patche : adresse DMX placée derrière les vrais projecteurs par `placeFacade()`, projecteur 5 canaux créé (`homekit.enabled: false`), miroir posé, accessoire HomeKit exposé. `fixtureId` rattache à un projecteur **existant** au lieu d'en créer un second ; devenu façade, il se range derrière les vrais projecteurs. Transactionnel : la lampe est retirée si la création du projecteur échoue |
 | `POST` | `/api/smart-lights/thread/pair` | `{ name, pin, alias?, timeoutSec? }` | Lance l'appairage. **Ouvre Terminal.app via AppleScript** : l'appairage exige le Bluetooth, que macOS n'accorde jamais à un processus sans interface. Requiert `THREAD_DATASET`. Détaché — la requête n'attend pas les 2-4 min de la procédure |
 
 ### Prise Meross
@@ -587,6 +591,37 @@ canaux servent de prise en main depuis le pupitre. L'app Maison ne doit en voir 
   mutuellement, les synchroniser séparément laissait des trous selon l'ordre des appels (au démarrage,
   les projecteurs sont connus avant les lampes).
 
+### Placement automatique des façades
+
+Une façade n'existe pas sur le câble XLR : rien ne l'attend au bout. Les **vrais** projecteurs gardent
+donc l'adresse qu'on leur donne, et les façades se rangent **après le dernier vrai canal utilisé**
+(`services/facade-patch.ts`).
+
+- **Qui est façade** : `facadeIds()`, soit tout projecteur que `findFacadeFixture()` rattache à une lampe.
+  Le reste compte comme vrai projecteur.
+- **On ne décale que ce qui gêne** (`planFacadeMoves()`) : une façade déjà derrière le dernier vrai canal,
+  sans chevaucher une autre, garde son adresse. Celle qui s'est glissée dans un trou entre deux vrais
+  projecteurs, ou qu'un projecteur qu'on vient de patcher rattrape, part à la première place libre
+  derrière. S'il n'y a plus de place : `FacadeRoomError` (409), et rien n'est écrit.
+- **Quand** : au démarrage, avant la première trame ; à la création, la modification ou le repatch d'un
+  **vrai** projecteur (les façades s'écartent *avant* qu'il soit écrit) ; à la création d'une façade
+  (`placeFacade()`) ; quand un miroir fait d'un projecteur existant la façade d'une lampe.
+- **Une façade ne se déplace pas à la main** : un `PUT /api/fixtures/:id` ou un `/repatch` qui change son
+  adresse renvoie 409.
+- **Le déplacement emporte tout** (`relocateFacades()`, `routes/helpers.ts`), dans cet ordre :
+  1. la base (`repatchFixtures`, validée d'un bloc) ;
+  2. dans la même trame, les valeurs DMX **avec leur auteur** (`DmxService.copyBlocks`) et les effets en
+     cours (`EffectRunner.followRepatch` : la phase continue) ;
+  3. les miroirs des lampes (`realignMirror` : canaux uniformes, `startChannel` **et** `dimmerChannel` du
+     bandeau) ;
+  4. enfin, le vidage des anciennes places. Dans l'autre ordre, la lampe lirait un bloc vide le temps
+     d'une trame : du noir.
+- Les scènes stockent des valeurs relatives au projecteur et relisent son adresse au rappel : elles
+  suivent sans rien faire.
+
+Effet de bord utile : avec `UniverseChannels="128"` dans QLC+, une façade placée au-delà du canal 128
+ne part même plus sur le XLR.
+
 ---
 
 ## Service Smart Lights (`backend/src/services/smart-lights/`)
@@ -725,7 +760,7 @@ La trame occupe 22,7 ms sur le câble : il ne reste **aucune marge**. Le moindre
 
 Réglage retenu :
 
-- **`UniverseChannels="128"`** dans `qlc-plus/home.qxw` : QLC+ n'envoie que 128 canaux à l'Open DMX. Les projecteurs physiques s'arrêtent au canal 107 ; les canaux 108-258 sont la façade **virtuelle** du bandeau, inutile sur le XLR. La trame passe de 22,7 ms à 5,7 ms.
+- **`UniverseChannels="128"`** dans `qlc-plus/home.qxw` : QLC+ n'envoie que 128 canaux à l'Open DMX. Les projecteurs physiques s'arrêtent au canal 107 ; au-delà, tout est façade **virtuelle** (108-258 le bandeau, 259-273 les ampoules Thread), inutile sur le XLR. La trame passe de 22,7 ms à 5,7 ms.
 - **30 Hz** des deux côtés : `DMX_FPS=30` dans le plist du backend, et dans QLC+ la fréquence de l'interface. Celle-ci ne vit **pas** dans `home.qxw` mais dans les préférences macOS (domaine `net.sf.Q Light Controller Plus`, clé `qlcftdi.freqmap`, indexée par le n° de série du FT232R). Période de 33 ms → ~25 ms de marge.
 
 Piège inverse : un projecteur **physique** adressé au-delà du canal 128 ne recevra rien, sans aucun message (même panne que `UniverseChannels="31"` en mai 2026). En patcher un impose de remonter la valeur.

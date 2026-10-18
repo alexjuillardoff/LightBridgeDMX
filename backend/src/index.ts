@@ -8,6 +8,7 @@ import "dotenv/config";
 import path from "node:path";
 import Fastify from "fastify";
 import { registerRoutes } from "./routes";
+import { relocateFacades } from "./routes/helpers";
 import { createErrorHandler } from "./routes/errors";
 import { DmxService } from "./services/dmx";
 import { HomeKitBridge } from "./services/homekit";
@@ -239,6 +240,27 @@ const start = async () => {
       }
     } catch (err) {
       app.log.warn({ err }, "Failed to load universe snapshot, starting from zero");
+    }
+    // Les facades des lampes connectees se rangent derriere les vrais projecteurs.
+    // C'est le moment ou ca ne coute rien : l'univers restaure n'est pas encore
+    // emis et aucune lampe ne lit son miroir, donc les valeurs suivent sans qu'une
+    // seule trame ne parte entre deux etats.
+    try {
+      const relocated = await relocateFacades({ store, dmx });
+      if (relocated.length) {
+        app.log.info(
+          {
+            moves: relocated.map(({ before, after }) => `${after.name}: ${before.address} -> ${after.address}`)
+          },
+          "Facades DMX rangees apres les vrais projecteurs"
+        );
+        // Instantane aussitot : un arret brutal avant la prochaine sauvegarde
+        // laisserait sinon les valeurs a l'ancienne adresse des facades.
+        lastSavedValues = dmx.getUniverseSnapshot();
+        await store.saveUniverseSnapshot(lastSavedValues);
+      }
+    } catch (err) {
+      app.log.warn({ err }, "Facades DMX non rangees : le patch reste tel quel");
     }
     await dmx.start();
     const fixtures = await store.listFixtures();

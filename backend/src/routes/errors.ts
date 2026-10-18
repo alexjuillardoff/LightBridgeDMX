@@ -4,6 +4,7 @@
 // reste devient un 500 generique pour ne pas fuiter de details internes.
 import type { FastifyBaseLogger, FastifyReply } from "fastify";
 import { z } from "zod";
+import { FacadeRoomError } from "../services/facade-patch";
 import { QxfError } from "../services/qxf";
 import { StoreError } from "../state/store";
 
@@ -14,6 +15,12 @@ export const createErrorHandler = (logger: FastifyBaseLogger) => {
     // Erreur du store (couche SQLite/Prisma) : porte deja son propre code HTTP.
     if (err instanceof StoreError) {
       reply.code(err.statusCode).send({ message: err.message });
+      return;
+    }
+    // Plus de place pour ranger une facade derriere les vrais projecteurs : la
+    // modification demandee est refusee, comme un conflit d'adresse.
+    if (err instanceof FacadeRoomError) {
+      reply.code(409).send({ message: err.message });
       return;
     }
     // Erreur du service QXF (bibliotheque de projecteurs) : idem, code HTTP fourni.

@@ -14,7 +14,9 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Fixture, SmartLight } from "@lightbridgedmx/shared";
+import { facadeIds, placeFacade } from "../services/facade-patch";
 import { listSidecarLights } from "../services/smart-lights/homekit-thread-client";
+import { relocateFacades } from "./helpers";
 import { ErrorHandler, RouteContext } from "./types";
 
 /** Emplacement du sidecar et de son script d'appairage. */
@@ -26,7 +28,7 @@ const SIDECAR_URL = process.env.THREAD_SIDECAR_URL ?? "http://127.0.0.1:5056";
 // Les Nanoleaf A19 exposent une temperature de couleur en plus du RVB : sans un
 // canal dedie, la facade DMX ne sait pas la piloter et le blanc chaud n'est
 // atteignable que depuis Maison. Meme decoupage que les projecteurs poses a la
-// main (cf. "Lampe Canape", 33-37).
+// main (cf. "Lampe Canape").
 const BULB_CHANNELS = [
   { channel: 1, capability: "intensity" as const, name: "Dimmer" },
   { channel: 2, capability: "r" as const, name: "Rouge" },
@@ -133,10 +135,16 @@ export const registerThreadLightRoutes = (
         }
         address = existingFixture.address;
       } else if (wantPatch) {
-        address = await ctx.store.findFreeAddress(BULB_CHANNELS.length, universe);
+        // L'ampoule n'est pas sur le cable XLR : sa facade se range derriere les
+        // vrais projecteurs, jamais dans un trou entre deux d'entre eux.
+        const all = await ctx.store.listFixtures();
+        address = placeFacade(all, facadeIds(await ctx.store.listSmartLights(), all), {
+          size: BULB_CHANNELS.length,
+          universe
+        });
         if (address === null) {
           return reply.code(409).send({
-            message: `Aucun bloc de ${BULB_CHANNELS.length} canaux libres dans l'univers ${universe}.`
+            message: `Aucun bloc de ${BULB_CHANNELS.length} canaux libres après le dernier vrai projecteur dans l'univers ${universe}.`
           });
         }
       }
@@ -183,13 +191,27 @@ export const registerThreadLightRoutes = (
       // miroir DMX et expose l'accessoire HomeKit.
       await ctx.smartLights.register(light);
       ctx.smartLights.emit("light_updated", light);
-      if (fixture) {
+
+      // Un projecteur rattache (fixtureId) etait jusqu'ici un vrai projecteur, place
+      // ou on voulait : devenu facade, il va se ranger derriere les vrais.
+      let placed = { light, fixture, address };
+      const relocated = await relocateFacades(ctx);
+      const moved = fixture ? relocated.find(({ after }) => after.id === fixture?.id) : undefined;
+      if (moved) {
+        placed = {
+          light: (await ctx.store.getSmartLight(light.id)) ?? light,
+          fixture: moved.after,
+          address: moved.after.address
+        };
+      }
+
+      if (fixture && !relocated.length) {
         await ctx.homekit.syncFixtures(await ctx.store.listFixtures()).catch(() => {});
       }
       ctx.homekit.syncSmartLights(ctx.smartLights.listWithState());
 
-      ctx.broadcast({ type: "smart_light_updated", data: light });
-      reply.send({ light, fixture, address });
+      ctx.broadcast({ type: "smart_light_updated", data: placed.light });
+      reply.send(placed);
     } catch (err) {
       handleError(err, reply);
     }

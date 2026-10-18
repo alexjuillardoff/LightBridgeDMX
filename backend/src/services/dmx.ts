@@ -178,6 +178,33 @@ export class DmxService extends EventEmitter {
     this.channelSource[channel - 1] = source;
   }
 
+  /** Recopie des blocs de canaux a une autre adresse, AVEC leur auteur.
+   *
+   *  Sert a deplacer une facade de lampe connectee : la lampe retrouve exactement
+   *  ce qu'elle affichait, et un effet qui possedait le bloc le possede toujours a
+   *  sa nouvelle adresse. Une recopie signee d'un autre nom passerait pour une
+   *  commande exterieure (voir hasForeignWriteSince). Tout est lu avant d'ecrire :
+   *  des blocs qui se recouvrent se recopient sans s'ecraser. Les canaux d'origine
+   *  ne sont pas vides — c'est a l'appelant de le faire, une fois que plus
+   *  personne ne les lit. */
+  copyBlocks(blocks: Array<{ from: number; to: number; count: number }>) {
+    const reads = blocks.map(({ from, count }) =>
+      Array.from({ length: count }, (_, i) => {
+        const idx = from + i - 1;
+        return { value: this.universe[idx] ?? 0, seq: this.channelSeq[idx] ?? 0, source: this.channelSource[idx] };
+      })
+    );
+    blocks.forEach(({ to }, b) => {
+      reads[b].forEach((cell, i) => {
+        const idx = to + i - 1;
+        if (idx < 0 || idx >= this.universe.length) return;
+        this.universe[idx] = cell.value;
+        this.channelSeq[idx] = cell.seq;
+        this.channelSource[idx] = cell.source;
+      });
+    });
+  }
+
   /** Numero de la derniere ecriture effectuee, tous canaux confondus. A memoriser
    *  juste apres avoir ecrit pour pouvoir demander ensuite « quelqu'un a-t-il ecrit
    *  apres moi ? » (voir hasForeignWriteSince). */

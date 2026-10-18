@@ -433,7 +433,7 @@ malgré tout un `PUT` depuis l'extérieur : il rétablit l'extControl dans les 1
 | | Nanoleaf IML 735 (NL72K3) | Lampe Salon (NL45) |
 |---|---|---|
 | Transport | HTTP + **streaming UDP**, 50 zones, ~30 Hz | HAP/CoAP sur Thread, ~5 écritures/s |
-| Façade DMX | **ch. 108-257** — 3 canaux RVB par zone | ch. 33-37 — dimmer, RVB, température |
+| Façade DMX | **ch. 108-257** — 3 canaux RVB par zone | ch. 259-263 — dimmer, RVB, température |
 | HomeKit | via le pont, une ampoule | via le pont, une ampoule |
 | Dans l'app Maison en direct | non | non |
 
@@ -441,6 +441,10 @@ La façade **par zone** est ce qui rend l'UDP rapide réellement exploitable : e
 même langage que le streaming — des couleurs RVB par zone, sans conversion intermédiaire.
 Une façade uniforme à 5 canaux aurait gâché la capacité du strip. À l'inverse, l'ampoule
 Thread plafonne à quelques écritures par seconde : une façade simple lui suffit largement.
+
+Les façades se rangent **automatiquement après le dernier vrai projecteur DMX** : elles ne
+viennent jamais se glisser entre deux appareils physiques. Patcher un vrai projecteur par-dessus
+une façade la décale plus loin, sans que la lampe perde sa couleur ni son effet en cours.
 
 ### Vue d'ensemble du flux
 
@@ -490,7 +494,7 @@ zone 2 → adresse+3 (R), +4 (G), +5 (B)
 
 À partir de là le strip se pilote comme n'importe quel projecteur : écritures dans l'univers (`POST /api/universe`), scènes, presets, effets, Art-Net entrant depuis QLC+.
 
-- Sans `startChannel` dans le corps, le backend alloue automatiquement le premier bloc de canaux libre.
+- Sans `startChannel` dans le corps, le backend alloue automatiquement le premier bloc de canaux libre après le dernier vrai projecteur.
 - **Le streaming UDP doit être actif** : les frames par zone partent par ce chemin.
 - Le pilotage local (couleur par zone, couleur globale, HomeKit) et le DMX cohabitent en **LTP** : le dernier qui bouge gagne. Dès qu'un canal du bloc change, le DMX prend la main ; dès qu'une commande locale arrive, il la rend.
 - `DELETE /api/smart-lights/:id/dmx-fixture` supprime le projecteur généré et débranche le mirror.

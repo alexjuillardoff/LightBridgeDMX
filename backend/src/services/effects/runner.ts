@@ -159,6 +159,38 @@ export class EffectRunner {
     return toRunning(run);
   }
 
+  /**
+   * Fait suivre les effets en cours quand des projecteurs changent d'adresse.
+   *
+   * Les cellules d'un effet portent des canaux ABSOLUS, figes au lancement. Sans
+   * ce report, un effet sur une facade decalee continuerait d'ecrire a l'ancienne
+   * adresse — peut-etre deja celle d'un vrai projecteur. On decale du meme delta
+   * les cellules, la photo d'avant lancement et le report de tramage ; t0 ne
+   * bouge pas, donc la phase continue sans a-coup.
+   *
+   * `deltas` : id du projecteur -> decalage d'adresse.
+   */
+  followRepatch(deltas: Map<string, number>): void {
+    for (const run of this.runs.values()) {
+      const remap = new Map<number, number>();
+      run.cells = run.cells.map((cell) => {
+        const delta = deltas.get(cell.fixtureId);
+        if (!delta) return cell;
+        const channels: EffectCell["channels"] = {};
+        for (const [attr, ch] of Object.entries(cell.channels) as Array<[keyof EffectCell["channels"], number | undefined]>) {
+          if (ch === undefined) continue;
+          channels[attr] = ch + delta;
+          remap.set(ch, ch + delta);
+        }
+        return { ...cell, channels };
+      });
+      if (!remap.size) continue;
+      run.base = new Map([...run.base].map(([ch, value]) => [remap.get(ch) ?? ch, value]));
+      run.carry = new Map([...run.carry].map(([ch, value]) => [remap.get(ch) ?? ch, value]));
+      this.logger.info({ id: run.id, channels: remap.size }, "Effet repatche avec ses projecteurs");
+    }
+  }
+
   /** Arrete un effet et rend ses canaux a leur valeur d'avant. */
   stopRun(id: string): boolean {
     const run = this.runs.get(id);
