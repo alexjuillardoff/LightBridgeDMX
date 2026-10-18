@@ -5,6 +5,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+// Thème grandMA3 (tokens, reset, classes de base) : chargé avant toute fenêtre.
+import "./theme.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

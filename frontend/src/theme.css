@@ -1,0 +1,725 @@
+/* ============================================================================
+   theme.css — thème « grandMA3 onPC » de LightBridgeDMX
+   ----------------------------------------------------------------------------
+   Tokens (couleurs mesurées sur la capture de référence, cahier des charges §1.2),
+   reset, police, échelle rem et classes de base réutilisables par toutes les
+   fenêtres (.ma-btn, .ma-tile, .ma-sheet, .ma-titlebar, .ma-field, .ma-fader,
+   .ma-knob, .ma-overlay / .ma-dialog, .ma-menu, .ma-toast, .ma-val--*).
+
+   Règles : tout en rem (1 rem = 16 px × --ui-scale), pas de px hormis les
+   bordures de 1 px. Les fenêtres ajoutent leur propre style.css préfixé .w-<kind>-.
+   ========================================================================== */
+
+:root {
+  /* Échelle de l'interface : 1 = fenêtre de 1920 px de large. */
+  --ui-scale: 1;
+
+  /* --- Fonds --- */
+  --c-bg: #000000;              /* fond de l'écran et de l'encoder bar */
+  --c-grid-dot: #2a2a30;        /* points de la grille de l'écran */
+  --c-face: #26262c;            /* face des boutons, fond de la command line */
+  --c-face-active: #53535e;     /* bouton actif / sélectionné */
+  --c-face-hover: #35353a;      /* bouton survolé */
+  --c-face-deep: #151519;       /* fond de la view bar, tuile vide */
+  --c-face-dark: #1a1a1e;       /* cellule « valeur par défaut », fond des dialogues */
+  --c-win-bg: #0d0d0f;          /* corps des fenêtres */
+  --c-win-alt: #121214;         /* lignes alternées des sheets */
+  --c-title: #35353a;           /* barre de titre des fenêtres */
+
+  /* --- Bords --- */
+  --c-sep: #0a0a0b;             /* séparateurs noirs entre boutons */
+  --c-edge: #303036;            /* liseré léger des boutons */
+  --c-border: #3a3a42;          /* bordure des fenêtres, champs, tuile « étiquette » */
+  --c-cell-border: #2a2a2e;     /* bordure des cellules de sheet */
+
+  /* --- Textes --- */
+  --c-text: #e6e6ea;
+  --c-text-2: #9a9aa0;          /* texte secondaire (Link Values, Align, Readout…) */
+  --c-text-num: #7d7d82;        /* numéros de tuiles */
+  --c-text-dim: #6a6a70;        /* désactivé / verrouillé */
+  --c-icon: #868688;
+
+  /* --- Jaune MA --- */
+  --c-yellow: #e2c644;          /* texte actif, [Fixture] */
+  --c-yellow-prompt: #ecec4e;   /* prompt de la command line */
+  --c-yellow-led: #ccb13a;      /* voyants */
+
+  /* --- Couches (soulignés / cellules) --- */
+  --c-layer-abs: #731d18;       /* Absolute, Values and Timings, encodeur actif */
+  --c-layer-rel: #8d415d;       /* Relative */
+  --c-layer-fade: #377e22;      /* Fade */
+  --c-layer-delay: #a75e21;     /* Delay */
+  --c-layer-phaser: #6c397c;    /* Phaser Overall / Steps */
+
+  /* --- Molettes --- */
+  --c-knob-ring: #dddddf;
+  --c-knob-center: #87878e;
+  --c-knob-dot: #55555c;
+  --c-screen-knob: #6e6e6f;
+  --c-screen-knob-bg: #0a0a0b;
+
+  /* --- Icônes d'état --- */
+  --c-mail: #e08a2b;
+  --c-net-off: #a7261d;
+  --c-net-on: #3fa34d;
+  --c-globe: #3fa34d;
+  --c-ok: #3fa34d;
+  --c-err: #d2433f;
+
+  /* --- Couleurs système MA3 (sheets) --- */
+  --c-sel-bg: #3a3a42;          /* projecteur sélectionné : jaune sur ce gris */
+  --c-val-default-bg: #1a1a1e;
+  --c-val-default: #b4b4ba;
+  --c-prog-active: #b0282a;     /* valeur active dans le programmer : blanc sur rouge */
+  --c-prog-inactive: #d2433f;   /* valeur du programmer inactive : texte rouge */
+
+  /* --- Géométrie du shell --- */
+  --w-controlbar: 3.25rem;
+  --w-viewbar: 6.5rem;
+  --h-cmdline: 3.5rem;
+  --h-encbar: 15.5rem;
+  --h-viewbtn: 6.75rem;
+  --grid-dot-step: 6.75rem;
+  --radius: 0.3rem;
+  --gap: 0.15rem;               /* bande noire entre deux boutons */
+
+  --font: "Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+}
+
+/* ---------------------------------------------------------------------------
+   Reset et base
+   ------------------------------------------------------------------------- */
+html {
+  font-size: calc(16px * var(--ui-scale));
+  -webkit-text-size-adjust: 100%;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font);
+  font-size: 0.875rem;
+  line-height: 1.2;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+button:disabled { cursor: default; }
+input, textarea, select { font: inherit; color: inherit; }
+input, textarea { user-select: text; -webkit-user-select: text; }
+a { color: var(--c-yellow); }
+h1, h2, h3, h4, p { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+svg { display: block; }
+code, kbd { font-family: var(--font-mono); font-size: 0.85em; }
+kbd {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--c-border);
+  border-bottom-width: 2px;
+  border-radius: 0.2rem;
+  background: var(--c-face);
+  color: var(--c-text);
+  line-height: 1.3;
+}
+
+/* Barres de défilement fines et sombres (Firefox + WebKit). */
+* { scrollbar-width: thin; scrollbar-color: #3a3a42 #0d0d0f; }
+::-webkit-scrollbar { width: 0.5rem; height: 0.5rem; }
+::-webkit-scrollbar-track { background: #0d0d0f; }
+::-webkit-scrollbar-thumb { background: #3a3a42; border-radius: 0.25rem; border: 1px solid #0d0d0f; }
+::-webkit-scrollbar-thumb:hover { background: #4a4a54; }
+::-webkit-scrollbar-corner { background: #0d0d0f; }
+
+:focus { outline: none; }
+:focus-visible { outline: 1px solid var(--c-yellow); outline-offset: -1px; }
+
+/* Icônes SVG inline : calées sur la taille de police du conteneur. */
+.ma-icon { width: 1em; height: 1em; flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------------------
+   .ma-btn — bouton MA3 (face grise, coins arrondis, fine bande noire autour)
+   ------------------------------------------------------------------------- */
+.ma-btn {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  background: var(--c-face);
+  color: var(--c-text);
+  border: 1px solid var(--c-edge);
+  border-radius: var(--radius);
+  font-size: 1rem;
+  line-height: 1.1;
+  text-align: center;
+  white-space: pre-line;
+  user-select: none;
+  cursor: pointer;
+  transition: background-color 60ms linear;
+}
+.ma-btn:hover { background: var(--c-face-hover); }
+.ma-btn:active { background: var(--c-face-active); }
+.ma-btn--active, .ma-btn[aria-pressed="true"] { background: var(--c-face-active); color: var(--c-yellow); }
+.ma-btn--active:hover, .ma-btn[aria-pressed="true"]:hover { background: #5d5d69; }
+.ma-btn--disabled, .ma-btn:disabled { color: var(--c-text-dim); cursor: default; }
+.ma-btn--disabled:hover, .ma-btn:disabled:hover { background: var(--c-face); }
+.ma-btn--dark { background: var(--c-face-deep); }
+.ma-btn--dark:hover { background: #1f1f24; }
+.ma-btn--danger { background: #4a1612; }
+.ma-btn--danger:hover { background: #5e1c17; }
+.ma-btn--danger.ma-btn--active, .ma-btn--danger[aria-pressed="true"] { background: var(--c-prog-active); color: #fff; }
+.ma-btn--ok.ma-btn--active, .ma-btn--ok[aria-pressed="true"] { background: #2f6a1f; color: #fff; }
+.ma-btn--small { min-height: 1.6rem; font-size: 0.8125rem; padding: 0.15rem 0.5rem; }
+.ma-btn--wide { width: 100%; }
+
+/* Numéro en haut à gauche (1 Dimmer, 2 Position…). */
+.ma-btn__num {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1;
+  color: var(--c-text);
+}
+.ma-btn--active .ma-btn__num { color: var(--c-yellow); }
+
+/* Petite étiquette grise en haut à gauche (Link Values, Align, Readout). */
+.ma-btn__small {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--c-text-2);
+}
+
+/* Point indicateur en haut à droite : cercle creux, ou plein jaune (--on). */
+.ma-btn__dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  border: 1px solid #8c8c92;
+}
+.ma-btn__dot--on { border-color: var(--c-yellow-led); }
+.ma-btn__dot--on::after {
+  content: "";
+  position: absolute;
+  inset: 0.1rem;
+  border-radius: 50%;
+  background: var(--c-yellow-led);
+}
+
+/* Trois points « ⋯ » en haut à droite : ouvre un overlay / une fenêtre. */
+.ma-btn__dots {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.35rem;
+  display: flex;
+  gap: 0.12rem;
+}
+.ma-btn__dots i { display: block; width: 0.2rem; height: 0.2rem; background: #b4b4ba; }
+
+/* Chevron « ▾ » en haut à droite : menu déroulant. */
+.ma-btn__caret {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 0;
+  height: 0;
+  border-left: 0.3rem solid transparent;
+  border-right: 0.3rem solid transparent;
+  border-top: 0.38rem solid #9a9aa0;
+}
+
+/* Mini interrupteur (Sync, Single Step, Grand Master) : jaune quand il est enclenché. */
+.ma-btn__toggle {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.35rem;
+  width: 0.95rem;
+  height: 0.5rem;
+  border: 1px solid #7a7a80;
+  background: #1c1c20;
+}
+.ma-btn__toggle::after {
+  content: "";
+  position: absolute;
+  top: 0.05rem;
+  bottom: 0.05rem;
+  right: 0.05rem;
+  width: 0.25rem;
+  background: #d0d0d4;
+}
+.ma-btn__toggle--on { background: var(--c-yellow-led); border-color: #e6cf4a; }
+.ma-btn__toggle--on::after { background: #3a3414; }
+.ma-btn__toggle--empty { background: transparent; border-color: #d0d0d4; }
+.ma-btn__toggle--empty::after { display: none; }
+
+/* Couche : bande colorée en haut (Absolute, Relative, Fade, Delay, Phaser…). */
+.ma-btn--layer { box-shadow: inset 0 0.22rem 0 var(--layer, var(--c-border)); }
+
+/* ---------------------------------------------------------------------------
+   .ma-tile — tuile de pool (Groups, Presets, Executors…)
+   ------------------------------------------------------------------------- */
+.ma-pool {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 6rem);
+  grid-auto-rows: 3.5rem;
+  gap: var(--gap);
+  padding: var(--gap);
+  align-content: start;
+}
+.ma-tile {
+  position: relative;
+  width: 6rem;
+  height: 3.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.85rem 0.3rem 0.3rem;
+  background: var(--c-face);
+  color: var(--c-text);
+  border: 1px solid var(--c-edge);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  line-height: 1.1;
+  text-align: center;
+  overflow: hidden;
+  cursor: pointer;
+}
+.ma-tile:hover { background: var(--c-face-hover); }
+.ma-tile--empty { background: var(--c-face-deep); color: var(--c-text-num); }
+.ma-tile--empty:hover { background: #1b1b20; }
+.ma-tile--label { background: var(--c-sel-bg); font-weight: 500; cursor: default; }
+.ma-tile--label:hover { background: var(--c-sel-bg); }
+.ma-tile--selected { box-shadow: inset 0 0 0 2px var(--c-yellow); }
+.ma-tile--active { background: #2f6a1f; }
+.ma-tile--locked { color: var(--c-text-dim); }
+.ma-tile__num {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.3rem;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--c-text-num);
+}
+.ma-tile__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ma-tile__sub { font-size: 0.65rem; color: var(--c-text-2); }
+.ma-tile__swatch {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+
+/* ---------------------------------------------------------------------------
+   .ma-sheet — tableau (Fixture Sheet, DMX Sheet, Patch)
+   ------------------------------------------------------------------------- */
+.ma-sheet-wrap { position: relative; overflow: auto; height: 100%; width: 100%; }
+.ma-sheet {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
+  min-width: 100%;
+}
+.ma-sheet th, .ma-sheet td {
+  padding: 0.2rem 0.45rem;
+  border-right: 1px solid var(--c-cell-border);
+  border-bottom: 1px solid var(--c-cell-border);
+  white-space: nowrap;
+  text-align: left;
+  vertical-align: middle;
+  height: 1.6rem;
+}
+.ma-sheet th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--c-face);
+  color: var(--c-text);
+  font-weight: 500;
+}
+.ma-sheet td { background: var(--c-win-bg); color: var(--c-text); }
+.ma-sheet tbody tr:nth-child(even) td { background: var(--c-win-alt); }
+.ma-sheet th:first-child, .ma-sheet td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-left: 0;
+}
+.ma-sheet th:first-child { z-index: 3; }
+.ma-sheet tbody tr:hover td { background: #17171b; }
+.ma-sheet--dense th, .ma-sheet--dense td { padding: 0.1rem 0.3rem; height: 1.35rem; font-size: 0.75rem; }
+
+/* Couleurs système MA3 pour les cellules. */
+.ma-val--default { background: var(--c-val-default-bg) !important; color: var(--c-val-default) !important; }
+.ma-val--active { background: var(--c-prog-active) !important; color: #fff !important; }
+.ma-val--inactive { background: var(--c-sel-bg) !important; color: var(--c-prog-inactive) !important; }
+.ma-val--relative { background: var(--c-layer-rel) !important; color: #fff !important; }
+.ma-val--fade { background: var(--c-layer-fade) !important; color: #fff !important; }
+.ma-val--delay { background: var(--c-layer-delay) !important; color: #fff !important; }
+.ma-val--phaser { background: var(--c-layer-phaser) !important; color: #fff !important; }
+.ma-val--locked { color: var(--c-text-dim) !important; text-decoration: line-through; }
+.ma-val--selected { background: var(--c-sel-bg) !important; color: var(--c-yellow) !important; }
+.ma-val--name { color: #fff; }
+
+/* ---------------------------------------------------------------------------
+   .ma-titlebar — barre de titre d'une fenêtre MA3
+   ------------------------------------------------------------------------- */
+.ma-titlebar {
+  display: flex;
+  align-items: center;
+  height: 1.75rem;
+  flex: 0 0 1.75rem;
+  background: var(--c-title);
+  color: #fff;
+  font-size: 0.875rem;
+  gap: 0.2rem;
+  padding-right: 0.1rem;
+  touch-action: none;
+}
+.ma-titlebar__ma {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  color: #d8d8dc;
+  font-weight: 700;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  border-right: 1px solid #0a0a0b;
+}
+.ma-titlebar__ma:hover { color: var(--c-yellow); }
+.ma-titlebar__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 0.45rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+}
+.ma-titlebar__title:active { cursor: grabbing; }
+.ma-titlebar__extras { display: flex; align-items: center; gap: 0.15rem; flex: 0 0 auto; }
+.ma-titlebar__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 1.4rem;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  background: var(--c-face);
+  color: var(--c-text);
+  border: 1px solid var(--c-edge);
+  border-radius: 0.2rem;
+  white-space: nowrap;
+}
+.ma-titlebar__btn:hover { background: var(--c-face-hover); }
+.ma-titlebar__btn--active, .ma-titlebar__btn[aria-pressed="true"] { background: var(--c-face-active); color: var(--c-yellow); }
+.ma-titlebar__btn--armed { background: var(--c-yellow); color: #111; }
+.ma-titlebar__info { font-size: 0.75rem; color: var(--c-text-2); padding: 0 0.4rem; white-space: nowrap; }
+.ma-titlebar__close {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 1rem;
+}
+.ma-titlebar__close:hover { background: #4a4a55; }
+
+/* ---------------------------------------------------------------------------
+   .ma-field / .ma-input — formulaires
+   ------------------------------------------------------------------------- */
+.ma-field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: var(--c-text-2); min-width: 0; }
+.ma-field--row { flex-direction: row; align-items: center; gap: 0.5rem; }
+.ma-field__label { font-size: 0.75rem; color: var(--c-text-2); }
+.ma-input, .ma-select, .ma-textarea {
+  background: #0d0d0f;
+  border: 1px solid var(--c-border);
+  border-radius: 0.2rem;
+  color: var(--c-text);
+  padding: 0.3rem 0.45rem;
+  min-height: 1.9rem;
+  font-size: 0.875rem;
+  min-width: 0;
+}
+.ma-input:focus, .ma-select:focus, .ma-textarea:focus { outline: none; border-color: var(--c-text); }
+.ma-input::placeholder { color: var(--c-text-dim); }
+.ma-input--mono { font-family: var(--font-mono); }
+.ma-select { appearance: none; -webkit-appearance: none; padding-right: 1.4rem; }
+.ma-check { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+.ma-check input { accent-color: var(--c-yellow); width: 1rem; height: 1rem; margin: 0; }
+
+/* ---------------------------------------------------------------------------
+   .ma-fader — fader vertical (par défaut) ou horizontal (--h)
+   ------------------------------------------------------------------------- */
+.ma-fader {
+  position: relative;
+  width: 2.25rem;
+  height: 100%;
+  min-height: 5rem;
+  background: #0a0a0b;
+  border: 1px solid var(--c-border);
+  border-radius: 0.2rem;
+  touch-action: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+.ma-fader__fill { position: absolute; left: 0; right: 0; bottom: 0; background: #4a4a55; border-radius: 0 0 0.15rem 0.15rem; }
+.ma-fader__knob {
+  position: absolute;
+  left: -0.15rem;
+  right: -0.15rem;
+  height: 1.1rem;
+  background: linear-gradient(#d8d8dc, #a8a8ae);
+  border: 1px solid #1a1a1e;
+  border-radius: 0.15rem;
+  transform: translateY(50%);
+  box-shadow: 0 0 0 1px #0a0a0b;
+}
+.ma-fader__knob::after {
+  content: "";
+  position: absolute;
+  left: 0.2rem;
+  right: 0.2rem;
+  top: 50%;
+  height: 1px;
+  background: #3a3a42;
+}
+.ma-fader--h { width: 100%; height: 1.4rem; min-height: 0; min-width: 4rem; }
+.ma-fader--h .ma-fader__fill { top: 0; bottom: 0; right: auto; left: 0; border-radius: 0.15rem 0 0 0.15rem; }
+.ma-fader--h .ma-fader__knob {
+  top: -0.15rem;
+  bottom: -0.15rem;
+  left: auto;
+  right: auto;
+  width: 0.8rem;
+  height: auto;
+  transform: translateX(-50%);
+}
+.ma-fader--h .ma-fader__knob::after { left: 50%; right: auto; top: 0.2rem; bottom: 0.2rem; width: 1px; height: auto; }
+.ma-fader--disabled { opacity: 0.45; cursor: default; }
+.ma-fader--gm .ma-fader__fill { background: #3a3a42; }
+.ma-fader--exec .ma-fader__fill { background: #2f6a1f; }
+
+/* ---------------------------------------------------------------------------
+   .ma-knob — molette d'encodeur (anneau clair, centre gris, 4 points)
+   ------------------------------------------------------------------------- */
+.ma-knob {
+  position: relative;
+  width: 3rem;
+  height: 3rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--c-knob-ring);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  cursor: ns-resize;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+.ma-knob__center { position: relative; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--c-knob-center); }
+.ma-knob__dot { position: absolute; width: 0.28rem; height: 0.28rem; border-radius: 50%; background: var(--c-knob-dot); }
+.ma-knob__dot:nth-child(1) { top: 0.2rem; left: 50%; transform: translateX(-50%); }
+.ma-knob__dot:nth-child(2) { right: 0.2rem; top: 50%; transform: translateY(-50%); }
+.ma-knob__dot:nth-child(3) { bottom: 0.2rem; left: 50%; transform: translateX(-50%); }
+.ma-knob__dot:nth-child(4) { left: 0.2rem; top: 50%; transform: translateY(-50%); }
+.ma-knob:active, .ma-knob--dragging { background: #ffffff; }
+.ma-knob--disabled { background: #7e7e84; cursor: default; }
+.ma-knob--disabled .ma-knob__center { background: #55555c; }
+.ma-knob--disabled .ma-knob__dot { background: #3c3c42; }
+.ma-knob--small { width: 2.25rem; height: 2.25rem; }
+.ma-knob--small .ma-knob__center { width: 1.3rem; height: 1.3rem; }
+.ma-knob--small .ma-knob__dot { width: 0.2rem; height: 0.2rem; }
+.ma-knob--small .ma-knob__dot:nth-child(1) { top: 0.15rem; }
+.ma-knob--small .ma-knob__dot:nth-child(2) { right: 0.15rem; }
+.ma-knob--small .ma-knob__dot:nth-child(3) { bottom: 0.15rem; }
+.ma-knob--small .ma-knob__dot:nth-child(4) { left: 0.15rem; }
+
+/* ---------------------------------------------------------------------------
+   .ma-overlay / .ma-dialog — overlays et dialogues
+   ------------------------------------------------------------------------- */
+.ma-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.ma-overlay--top { align-items: flex-start; padding-top: 3rem; }
+.ma-overlay--bottom { align-items: flex-end; padding-bottom: var(--h-encbar); }
+.ma-overlay--clear { background: transparent; }
+.ma-dialog {
+  display: flex;
+  flex-direction: column;
+  min-width: 18rem;
+  max-width: min(64rem, 100%);
+  max-height: 100%;
+  background: var(--c-face-dark);
+  border: 1px solid var(--c-border);
+  border-radius: 0.25rem;
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.75);
+  overflow: hidden;
+}
+.ma-dialog--full {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}
+.ma-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ma-dialog__footer {
+  display: flex;
+  gap: var(--gap);
+  justify-content: flex-end;
+  padding: 0.4rem;
+  border-top: 1px solid var(--c-cell-border);
+  background: var(--c-win-bg);
+}
+.ma-dialog__footer .ma-btn { min-width: 6rem; }
+.ma-dialog__section { font-size: 0.75rem; color: var(--c-text-2); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.4rem; }
+.ma-dialog__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr)); gap: var(--gap); }
+.ma-dialog__text { color: var(--c-text-2); font-size: 0.8125rem; line-height: 1.4; }
+
+/* ---------------------------------------------------------------------------
+   .ma-menu — menu contextuel
+   ------------------------------------------------------------------------- */
+.ma-menu {
+  position: fixed;
+  z-index: 150;
+  min-width: 11rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.2rem;
+  background: var(--c-face);
+  border: 1px solid var(--c-border);
+  border-radius: 0.25rem;
+  box-shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, 0.75);
+}
+.ma-menu__title { padding: 0.3rem 0.7rem 0.2rem; font-size: 0.7rem; color: var(--c-text-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.ma-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.2rem;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+.ma-menu__item:hover { background: var(--c-face-hover); }
+.ma-menu__item--danger { color: #e06a62; }
+.ma-menu__item--disabled { color: var(--c-text-dim); cursor: default; }
+.ma-menu__item--disabled:hover { background: transparent; }
+.ma-menu__sep { height: 1px; background: var(--c-border); margin: 0.15rem 0.3rem; }
+
+/* ---------------------------------------------------------------------------
+   .ma-toast — messages (4 s)
+   ------------------------------------------------------------------------- */
+.ma-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--h-encbar) + 1rem);
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  pointer-events: none;
+  max-width: min(40rem, 90vw);
+}
+.ma-toast {
+  padding: 0.5rem 0.9rem;
+  background: var(--c-face);
+  border: 1px solid var(--c-border);
+  border-left: 0.25rem solid #9a9aa0;
+  border-radius: 0.25rem;
+  color: var(--c-text);
+  font-size: 0.875rem;
+  box-shadow: 0 0.3rem 1rem rgba(0, 0, 0, 0.7);
+  animation: ma-toast-in 150ms ease-out;
+}
+.ma-toast--ok { border-left-color: var(--c-ok); }
+.ma-toast--error { border-left-color: var(--c-err); }
+.ma-toast--warn { border-left-color: var(--c-mail); }
+@keyframes ma-toast-in {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Utilitaires
+   ------------------------------------------------------------------------- */
+.ma-row { display: flex; align-items: center; gap: var(--gap); min-width: 0; }
+.ma-col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+.ma-grow { flex: 1 1 auto; min-width: 0; }
+.ma-muted { color: var(--c-text-2); }
+.ma-dim { color: var(--c-text-dim); }
+.ma-yellow { color: var(--c-yellow); }
+.ma-ok { color: var(--c-ok); }
+.ma-err { color: var(--c-err); }
+.ma-mono { font-family: var(--font-mono); }
+.ma-nowrap { white-space: nowrap; }
+.ma-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ma-fill { width: 100%; height: 100%; min-height: 0; }
+.ma-scroll { overflow: auto; min-height: 0; }
+.ma-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--c-text-dim); font-size: 0.875rem; text-align: center; padding: 1rem; }
+.ma-lock { color: var(--c-text-dim); font-size: 0.8em; vertical-align: middle; }
+.ma-led { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #3a3a42; }
+.ma-led--on { background: var(--c-yellow-led); box-shadow: 0 0 0.3rem var(--c-yellow-led); }
+.ma-led--green { background: var(--c-ok); }
+.ma-led--red { background: var(--c-err); }
+.ma-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

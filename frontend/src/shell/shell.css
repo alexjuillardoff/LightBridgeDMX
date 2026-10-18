@@ -1,0 +1,701 @@
+/* ============================================================================
+   shell.css — mise en page du chrome grandMA3 onPC (control bar, écran, view bar,
+   command line, encoder bar, fenêtres, overlays du shell). Tokens dans theme.css.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Grille générale
+   ------------------------------------------------------------------------- */
+.sh-root {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  width: 100%;
+  height: 100%;
+  background: var(--c-bg);
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+   Control bar (gauche)
+   ------------------------------------------------------------------------- */
+.sh-cb {
+  grid-column: 1;
+  grid-row: 1;
+  width: var(--w-controlbar);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  background: #000;
+  padding-right: var(--gap);
+  overflow: hidden;
+}
+.sh-cb__btn {
+  position: relative;
+  flex: 0 0 var(--w-controlbar);
+  height: var(--w-controlbar);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-face);
+  border: 1px solid var(--c-edge);
+  border-radius: var(--radius);
+  color: #d4d4d8;
+  font-size: 1.7rem;
+}
+.sh-cb__btn:hover { background: var(--c-face-hover); }
+.sh-cb__btn:active { background: var(--c-face-active); }
+.sh-cb__btn.is-active { background: #2f2f36; }
+.sh-cb__gap {
+  flex: 0 0 1.9rem;
+  background: var(--c-face);
+  border: 1px solid var(--c-edge);
+  border-radius: var(--radius);
+}
+.sh-cb__help { font-size: 1.7rem; line-height: 1; font-weight: 400; }
+.sh-cb__flag {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 0.8rem;
+  height: 0.45rem;
+  border: 1px solid #c8c8cc;
+}
+.sh-cb__at {
+  flex: 1 1 auto;
+  min-height: 5rem;
+  flex-direction: column;
+  gap: 0.6rem;
+  font-size: 1.5rem;
+}
+.sh-cb__at-text { font-size: 1.05rem; color: var(--c-text); line-height: 1; }
+
+/* ---------------------------------------------------------------------------
+   View bar (droite)
+   ------------------------------------------------------------------------- */
+.sh-vb {
+  grid-column: 3;
+  grid-row: 1;
+  width: var(--w-viewbar);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  background: #000;
+  padding-left: var(--gap);
+  overflow: hidden;
+}
+.sh-vb__btn {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-face-deep);
+  border: 1px solid #1c1c21;
+  border-radius: var(--radius);
+  color: var(--c-text);
+  font-size: 1rem;
+  touch-action: none;
+}
+.sh-vb__btn:hover { background: #1b1b20; }
+.sh-vb__btn.is-assigned { background: var(--c-face); border-color: var(--c-edge); }
+.sh-vb__btn.is-assigned:hover { background: var(--c-face-hover); }
+.sh-vb__btn:active { background: var(--c-face-active); }
+.sh-vb__btn.is-current { box-shadow: inset 2px 0 0 var(--c-yellow); }
+.sh-vb__num {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.35rem;
+  font-size: 0.8rem;
+  line-height: 1;
+  color: #5e5e64;
+}
+.sh-vb__btn.is-assigned .sh-vb__num { color: var(--c-text); }
+.sh-vb__eye {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.35rem;
+  font-size: 1.15rem;
+  color: #e6e6ea;
+  display: flex;
+}
+.sh-vb__name {
+  max-width: 100%;
+  padding: 0 0.3rem;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Écran (zone utilisateur)
+   ------------------------------------------------------------------------- */
+.sh-screen {
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
+  overflow: hidden;
+  background-color: #000;
+  background-image: radial-gradient(circle, var(--c-grid-dot) 0.09rem, transparent 0.12rem);
+  background-size: var(--grid-dot-step) var(--grid-dot-step);
+  background-position: calc(var(--grid-dot-step) / 2) calc(var(--grid-dot-step) / 2);
+}
+
+/* ---------------------------------------------------------------------------
+   Fenêtre
+   ------------------------------------------------------------------------- */
+.sh-win {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--c-win-bg);
+  border: 1px solid var(--c-border);
+  overflow: hidden;
+}
+.sh-win__title { cursor: grab; }
+.sh-win__title:active { cursor: grabbing; }
+.sh-win__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sh-win__body > * { flex: 1 1 auto; min-height: 0; }
+.sh-win__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1rem;
+  height: 1rem;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 55%, #6a6a74 55%);
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------------------------
+   Command line
+   ------------------------------------------------------------------------- */
+.sh-cmd {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: var(--h-cmdline);
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 0.125rem var(--gap) 0.125rem 0;
+  background: #000;
+  min-width: 0;
+}
+.sh-cmd__sq {
+  position: relative;
+  flex: 0 0 var(--w-controlbar);
+  width: var(--w-controlbar);
+  height: 3.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-face);
+  border: 1px solid var(--c-edge);
+  border-radius: var(--radius);
+  color: #d4d4d8;
+  font-size: 1.5rem;
+}
+.sh-cmd__sq small { font-size: 0.6rem; line-height: 1; margin-top: 0.15rem; color: var(--c-text); }
+button.sh-cmd__sq:hover { background: var(--c-face-hover); }
+button.sh-cmd__sq:active { background: var(--c-face-active); }
+.sh-cmd__ma { flex-direction: row; gap: 0.15rem; }
+.sh-cmd__ma span {
+  width: 1.25rem;
+  height: 1.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #9a9aa0;
+  color: #0c0c0e;
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1;
+}
+.sh-cmd__box {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 3.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0.35rem;
+  padding: 0 0.6rem;
+  background: #1e1e23;
+  border: 2px solid #4a4a52;
+  border-radius: 0.2rem;
+  font-size: 1.05rem;
+  cursor: text;
+}
+.sh-cmd__box.is-focused { border-color: var(--c-text); }
+.sh-cmd__kbd { display: flex; font-size: 1.6rem; color: #d4d4d8; flex: 0 0 auto; }
+.sh-cmd__prompt { white-space: nowrap; color: var(--c-text); flex: 0 0 auto; }
+.sh-cmd__kw { color: var(--c-yellow-prompt); }
+.sh-cmd__feedback { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; flex: 0 1 auto; }
+.sh-cmd__feedback.is-ok { color: var(--c-ok); }
+.sh-cmd__feedback.is-err { color: var(--c-err); }
+.sh-cmd__input {
+  flex: 1 1 auto;
+  min-width: 3rem;
+  height: 100%;
+  background: transparent;
+  border: 0;
+  outline: none;
+  padding: 0;
+  color: var(--c-text);
+  font-size: 1.05rem;
+  caret-color: var(--c-yellow-prompt);
+}
+.sh-cmd__icons { display: flex; gap: var(--gap); flex: 0 0 auto; }
+.sh-cmd__status { color: #d4d4d8; }
+.sh-cmd__globe { color: #5a5a60; }
+.sh-cmd__globe.is-on { color: var(--c-globe); }
+.sh-cmd__spacer { background: var(--c-face); }
+.sh-cmd__mail { color: var(--c-mail); }
+.sh-cmd__mail small { color: var(--c-mail); }
+.sh-cmd__net { color: var(--c-net-off); }
+.sh-cmd__net.is-open { color: var(--c-net-on); }
+.sh-cmd__net.is-connecting { color: var(--c-mail); }
+.sh-cmd__shcuts { font-size: 1.35rem; }
+.sh-cmd__shcuts small { color: var(--c-text-2); }
+.sh-cmd__shcuts.is-on { color: var(--c-yellow); }
+.sh-cmd__shcuts.is-on small { color: var(--c-yellow); }
+
+/* ---------------------------------------------------------------------------
+   Encoder bar
+   ------------------------------------------------------------------------- */
+.sh-encbar {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  height: var(--h-encbar);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--w-viewbar);
+  gap: var(--gap);
+  background: #000;
+  padding: var(--gap) var(--gap) var(--gap) 0;
+  overflow: hidden;
+  min-width: 0;
+}
+.sh-encbar__main { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; min-height: 0; }
+.sh-encbar__row { display: flex; gap: var(--gap); min-width: 0; overflow: hidden; }
+.sh-encbar__row1, .sh-encbar__row2 { flex: 0 0 3.5rem; height: 3.5rem; }
+.sh-encbar__row3 { flex: 1 1 auto; min-height: 0; }
+.sh-encbar__row > .ma-btn { height: 100%; font-size: 1.05rem; }
+
+/* colonne gauche : Sync / Single Step / Align / Readout */
+.sh-encbar__side { flex: 0 0 var(--w-viewbar); width: var(--w-viewbar); }
+.sh-encbar__col { display: flex; flex-direction: column; gap: 0.25rem; flex: 0 0 var(--w-viewbar); width: var(--w-viewbar); min-height: 0; }
+.sh-encbar__side--half { flex: 1 1 0; min-height: 0; width: 100%; justify-content: flex-end; padding-bottom: 0.35rem; }
+
+/* rangée 1 */
+.sh-encbar__group { flex: 1 1 0; min-width: 3.5rem; }
+.sh-encbar__tool { flex: 0 0 5.5rem; padding: 0.25rem 0.3rem; font-size: 1rem; }
+.sh-encbar__tool--time { flex-basis: 6.4rem; }
+.sh-encbar__selmark { position: absolute; top: 0.3rem; left: 0.35rem; display: flex; gap: 0.1rem; }
+.sh-encbar__selmark i { display: block; width: 0.38rem; height: 0.38rem; border: 1px solid #8c8c92; }
+.sh-encbar__selmark i:last-child { background: #b4b4ba; border-color: #b4b4ba; }
+
+/* rangée 2 */
+.sh-encbar__page { flex: 0 0 8.6rem; }
+.sh-encbar__link { flex: 0 0 13.9rem; padding-top: 1rem; }
+.sh-encbar__linkval { display: block; }
+.sh-encbar__lgroup { flex: 1 1 11rem; }
+.sh-encbar__chevron {
+  flex: 0 0 1.6rem;
+  align-self: center;
+  height: 2.4rem;
+  background: #3a3a42;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+.sh-encbar__layer { flex: 1 1 8.2rem; }
+.sh-encbar__steps { display: flex; gap: var(--gap); flex: 0 0 auto; height: 100%; }
+.sh-encbar__step { flex: 0 0 3.25rem; width: 3.25rem; height: 100%; font-size: 1.7rem; color: #e6e6ea; }
+.sh-encbar__step--num { font-size: 1.1rem; }
+.sh-encbar__step-slash { position: absolute; top: 0.05rem; right: 0.1rem; font-size: 1rem; color: #b4b4ba; display: flex; }
+
+/* rangée 3 : encodeurs */
+.sh-enc {
+  display: flex;
+  flex: 0 1 20.8rem;
+  min-width: 10rem;
+  height: 100%;
+  min-height: 0;
+  gap: var(--gap);
+}
+.sh-enc__strip {
+  position: relative;
+  flex: 0 0 4.4rem;
+  background: #1c1c21;
+  border: 1px solid #26262c;
+  border-radius: var(--radius);
+}
+.sh-enc__main {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.sh-enc__main[role="button"] { cursor: pointer; }
+.sh-enc__top {
+  flex: 1 1 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  background: var(--c-face);
+  padding: 0 0.5rem 0 3.6rem;
+  min-height: 0;
+}
+.sh-enc__label { font-size: 1.05rem; color: var(--c-text); white-space: nowrap; }
+.sh-enc__value { font-size: 1.1rem; color: #fff; min-height: 1.25rem; white-space: nowrap; }
+.sh-enc__bottom { flex: 1 1 50%; background: #121214; }
+.sh-enc__main .ma-knob { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); }
+.sh-enc.is-active .sh-enc__top { background: var(--c-layer-abs); }
+.sh-enc.is-disabled .sh-enc__label, .sh-enc.is-disabled .sh-enc__value { color: var(--c-text-2); }
+.sh-enc.is-empty .sh-enc__top { background: #1f1f24; }
+.sh-enc--compact { flex-basis: 14rem; min-width: 8rem; }
+.sh-enc--compact .sh-enc__strip { flex-basis: 2.5rem; }
+.sh-enc--compact .sh-enc__top { padding-left: 2.8rem; }
+.sh-enc--compact .sh-enc__label { font-size: 0.85rem; }
+.sh-enc--compact .sh-enc__value { font-size: 0.9rem; min-height: 1rem; }
+.sh-enc--compact .sh-enc__main .ma-knob { left: 0.4rem; }
+
+/* encodeurs d'écran (décoratifs) */
+.sh-screenenc {
+  margin-left: auto;
+  flex: 0 0 19.4rem;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.sh-screenenc__row {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #141417;
+  border-radius: var(--radius);
+}
+.sh-screenenc__knob {
+  position: absolute;
+  left: 0.9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  background: #2b2b2f;
+}
+.sh-screenenc__knob::after {
+  content: "";
+  position: absolute;
+  inset: 0.6rem;
+  border-radius: 50%;
+  background: var(--c-screen-knob);
+}
+.sh-screenenc__text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 1.2rem;
+  color: #8a8a90;
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+
+/* colonne Grand Master */
+.sh-gm { display: flex; flex-direction: column; gap: 0.25rem; width: var(--w-viewbar); min-height: 0; }
+.sh-gm__head { flex: 0 0 3.5rem; height: 3.5rem; font-size: 1.05rem; line-height: 1.05; }
+.sh-gm__col {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-face);
+  border: 1px solid #6a6a70;
+  border-radius: 0.2rem;
+  overflow: hidden;
+  touch-action: none;
+  cursor: ns-resize;
+}
+.sh-gm__value {
+  flex: 0 0 2.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #35353a;
+  color: var(--c-text);
+  font-size: 1.05rem;
+}
+.sh-gm__col.is-blackout .sh-gm__value { background: var(--c-prog-active); color: #fff; }
+.sh-gm__body { position: relative; flex: 1 1 auto; background: #1a1a1e; }
+.sh-gm__fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--c-face); }
+
+/* command wing bar */
+.sh-wing { display: flex; gap: var(--gap); height: 100%; min-width: 0; min-height: 0; }
+.sh-wing__execs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: var(--gap);
+}
+.sh-wing__exec {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.35rem;
+  background: var(--c-face);
+  border: 1px solid var(--c-edge);
+  border-radius: var(--radius);
+}
+.sh-wing__exec.is-empty { background: var(--c-face-deep); }
+.sh-wing__exec.is-active { border-color: var(--c-ok); }
+.sh-wing__exec-head { display: flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; min-width: 0; }
+.sh-wing__exec-num { color: var(--c-text-num); }
+.sh-wing__exec-name { flex: 1 1 auto; min-width: 0; }
+.sh-wing__exec-btns { display: flex; gap: var(--gap); margin-top: auto; }
+.sh-wing__exec-btns .ma-btn { flex: 1 1 0; min-width: 0; padding-left: 0.2rem; padding-right: 0.2rem; }
+.sh-wing__encs { flex: 0 0 15rem; display: flex; flex-direction: column; gap: var(--gap); min-height: 0; }
+.sh-wing__encs .sh-enc { flex: 1 1 0; height: auto; min-height: 0; }
+
+/* ---------------------------------------------------------------------------
+   Overlays du shell
+   ------------------------------------------------------------------------- */
+/* Add Window */
+.sh-addwin__layout { display: flex; gap: 0.5rem; min-height: 20rem; }
+.sh-addwin__cats { display: flex; flex-direction: column; gap: var(--gap); flex: 0 0 9rem; }
+.sh-addwin__cat { height: 3rem; font-size: 0.95rem; }
+.sh-addwin__tiles {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  grid-auto-rows: 5rem;
+  gap: var(--gap);
+  align-content: start;
+  min-width: 0;
+}
+.sh-addwin__tile { gap: 0.4rem; font-size: 0.9rem; }
+.sh-addwin__tile .ma-icon { font-size: 1.6rem; color: #b4b4ba; }
+
+/* Menu principal */
+.sh-menu__tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: 0.5rem; }
+.sh-menu__tile { height: 8rem; gap: 0.3rem; }
+.sh-menu__icon { font-size: 2rem; color: #c8c8cc; display: flex; }
+.sh-menu__label { font-size: 1.1rem; }
+.sh-menu__sub { font-size: 0.75rem; color: var(--c-text-2); }
+.sh-menu__panel {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  max-width: 48rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--c-win-bg);
+  border: 1px solid var(--c-border);
+}
+.sh-menu__panel h3 { font-size: 1rem; font-weight: 500; }
+.sh-menu__panel .ma-btn { gap: 0.4rem; flex-direction: row; }
+
+/* Command Section (clavier virtuel) */
+.sh-cs__line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.6rem;
+  padding: 0 0.6rem;
+  background: #1e1e23;
+  border: 2px solid var(--c-text);
+  border-radius: 0.2rem;
+  font-size: 1.05rem;
+  overflow: hidden;
+}
+.sh-cs__text { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.sh-cs__cursor { width: 1px; height: 1.2rem; background: var(--c-yellow-prompt); animation: sh-blink 1s steps(2) infinite; }
+@keyframes sh-blink { to { opacity: 0; } }
+.sh-cs__layout { display: flex; gap: 0.5rem; }
+.sh-cs__keywords { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+.sh-cs__numpad { flex: 0 0 11rem; display: flex; flex-direction: column; gap: var(--gap); }
+.sh-cs__row { display: flex; gap: var(--gap); }
+.sh-cs__key { flex: 1 1 0; height: 3.2rem; font-size: 1rem; min-width: 0; }
+.sh-cs__key--wide { flex-grow: 2; }
+.sh-cs__key.is-store { color: var(--c-yellow); }
+.sh-cs__key.is-go { background: #2f6a1f; }
+.sh-cs__key.is-go:hover { background: #3a7f27; }
+.sh-cs__key.is-danger { background: #4a1612; }
+.sh-cs__key.is-danger:hover { background: #5e1c17; }
+.sh-cs__key.is-please { background: var(--c-face-active); color: var(--c-yellow); }
+
+/* Special Masters */
+.sh-masters { display: flex; flex-direction: column; gap: 1rem; }
+.sh-masters__item { display: flex; flex-direction: column; gap: 0.4rem; }
+.sh-masters__item.is-disabled { opacity: 0.7; }
+.sh-masters__head { display: flex; justify-content: space-between; font-size: 1rem; }
+.sh-masters__note { font-size: 0.8rem; }
+
+/* Master Controls */
+.sh-mc { display: flex; gap: 1.2rem; }
+.sh-mc__gm { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+.sh-mc__gmhead { font-size: 0.9rem; color: var(--c-text-2); }
+.sh-mc__gmvalue { font-size: 1.4rem; padding: 0 0.5rem; }
+.sh-mc__gmvalue.is-blackout { background: var(--c-prog-active); color: #fff; }
+.sh-mc__fader { height: 14rem; }
+.sh-mc__btns { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--gap); }
+.sh-mc__btn { height: 3.2rem; }
+
+/* Playback Controls */
+.sh-pc { display: flex; flex-direction: column; gap: var(--gap); }
+.sh-pc__row {
+  display: grid;
+  grid-template-columns: 2rem 9rem minmax(6rem, 1fr) 3rem auto auto;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.2rem 0.4rem;
+  background: var(--c-win-bg);
+  border: 1px solid var(--c-cell-border);
+}
+.sh-pc__row.is-active { border-color: var(--c-ok); }
+.sh-pc__row.is-empty { color: var(--c-text-dim); }
+.sh-pc__num { color: var(--c-text-num); }
+.sh-pc__level { text-align: right; font-size: 0.8rem; }
+
+/* Displays */
+.sh-displays { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--gap); }
+.sh-displays__tile { height: 5rem; gap: 0.3rem; font-size: 0.9rem; }
+.sh-displays__tile .ma-icon { font-size: 1.8rem; }
+
+/* At */
+.sh-at { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--gap); }
+.sh-at .ma-btn { height: 3.5rem; }
+
+/* Message Center */
+.sh-msgs { display: flex; flex-direction: column; gap: 1px; }
+.sh-msgs__row {
+  display: grid;
+  grid-template-columns: 5.5rem 4rem minmax(0, 1fr);
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--c-win-bg);
+  font-size: 0.8125rem;
+}
+.sh-msgs__time, .sh-msgs__level { color: var(--c-text-2); }
+.sh-msgs__row.is-warn .sh-msgs__level { color: var(--c-mail); }
+.sh-msgs__row.is-error .sh-msgs__level { color: var(--c-err); }
+.sh-msgs__text { white-space: pre-wrap; word-break: break-word; }
+
+/* Historique */
+.sh-history { display: flex; flex-direction: column; gap: 1px; }
+.sh-history__item { width: 100%; text-align: left; padding: 0.4rem 0.6rem; background: var(--c-win-bg); }
+.sh-history__item:hover { background: var(--c-face-hover); }
+.sh-history__prompt { color: var(--c-yellow-prompt); }
+
+/* Calculator */
+.sh-calc__display {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 0.4rem 0.6rem;
+  background: #0d0d0f;
+  border: 1px solid var(--c-border);
+}
+.sh-calc__current { font-size: 0.8rem; }
+.sh-calc__text { font-size: 1.5rem; font-family: var(--font-mono); min-height: 1.8rem; }
+.sh-calc__quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--gap); }
+.sh-calc__pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); }
+.sh-calc__key { height: 3rem; font-size: 1.1rem; }
+.sh-calc__please { grid-column: 1 / -1; }
+
+/* Selection */
+.sh-sel { display: flex; flex-direction: column; gap: 1px; max-height: 50vh; overflow: auto; }
+.sh-sel__row {
+  display: grid;
+  grid-template-columns: 1.5rem 2.5rem minmax(0, 1fr) auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.2rem 0.4rem;
+  background: var(--c-win-bg);
+}
+.sh-sel__order { color: var(--c-text-num); }
+.sh-sel__fid { color: var(--c-yellow); }
+
+/* ---------------------------------------------------------------------------
+   Responsive : sous 900 px, on resserre (les barres latérales sont masquées par Shell.tsx)
+   ------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .sh-cmd__status, .sh-cmd__spacer { display: none; }
+  .sh-encbar__tool--time { display: none; }
+  .sh-screenenc { display: none; }
+  .sh-encbar__link { flex-basis: 8rem; }
+}
+
+/* ---------------------------------------------------------------------------
+   Bandeau d'erreur applicatif (App.tsx) : chargement incomplet, backend injoignable.
+   Discret : une bande en haut de l'écran, sous les overlays, au-dessus des fenêtres.
+   ------------------------------------------------------------------------- */
+.sh-apperror {
+  position: fixed;
+  top: 0.35rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: min(60rem, calc(100vw - var(--w-controlbar) - var(--w-viewbar) - 2rem));
+  padding: 0.35rem 0.5rem 0.35rem 0.75rem;
+  background: #2a1513;
+  border: 1px solid var(--c-err);
+  border-radius: var(--radius);
+  color: var(--c-text);
+  font-size: 0.8125rem;
+  box-shadow: 0 0.3rem 1rem rgba(0, 0, 0, 0.7);
+}
+.sh-apperror__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-apperror__btn {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.6rem;
+  background: var(--c-face);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  color: var(--c-text);
+  font-size: 0.8125rem;
+}
+.sh-apperror__btn:hover { background: var(--c-face-hover); }
+.sh-apperror__close {
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-text-2);
+  font-size: 0.9rem;
+}
+.sh-apperror__close:hover { color: var(--c-text); }
+
+/* Encoder bar masquée : les toasts et les overlays « bottom » se calent sur le bas de l'écran. */
+.sh-root--no-encbar { --h-encbar: 0rem; }
