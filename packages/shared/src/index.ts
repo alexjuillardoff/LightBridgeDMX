@@ -1,7 +1,7 @@
 // Package partage @lightbridgedmx/shared : source unique de verite des types.
 //
 // Ce fichier rassemble tous les schemas Zod (et les types TypeScript qu'ils
-// produisent) utilises a la fois par le backend Fastify et le frontend React.
+// produisent) utilises a la fois par le backend Fastify et le frontend.
 // Chaque schema sert deux roles : valider les entrees API (corps de requete,
 // presets...) et fournir un type partage cote client et serveur.
 //
@@ -9,8 +9,8 @@
 // DMX, lampes connectees (smart lights, Nanoleaf),
 // effets position-aware, disposition (layout) 3D des zones, evenements
 // WebSocket, et le parsing des fichiers QXF (bibliotheque de projecteurs).
-// Il contient aussi quelques helpers purs pour construire des layouts 3D,
-// partages tels quels entre backend et frontend.
+// Il contient aussi quelques helpers purs (canaux d'un bandeau, layout 3D par
+// chemin, conversions de temperature de couleur, math des effets).
 import { z } from "zod";
 
 // Liste de toutes les capabilities (roles de canal) reconnues.
@@ -213,7 +213,7 @@ export const MerossConsumptionSchema = z.object({
 
 export type MerossConsumption = z.infer<typeof MerossConsumptionSchema>;
 
-// Etat de la prise renvoye par l'API (lecture seule, pour l'UI Reglages).
+// Etat de la prise renvoye par l'API (lecture seule).
 export const MerossStatusSchema = z.object({
   enabled: z.boolean(),                 // drapeau de config (interrupteur logiciel)
   active: z.boolean(),                  // reellement operationnel (enabled + host + key)
@@ -423,7 +423,7 @@ export const kelvinToDmx = (kelvin: number): number =>
  *  Necessaire des qu'une lampe recoit sa couleur en RGB et non en consigne de
  *  blanc : c'est le cas du streaming extControl d'un bandeau Nanoleaf, dont la
  *  trame ne transporte que du R/G/B. Sans cette conversion, une temperature de
- *  couleur demandee (HomeKit, onglet Lampes, canal DMX de blanc) ne trouve aucun
+ *  couleur demandee (HomeKit, API REST, canal DMX de blanc) ne trouve aucun
  *  chemin jusqu'a l'appareil : elle change l'etat sans changer une seule LED.
  *
  *  La luminosite n'est PAS appliquee ici — on renvoie la teinte du blanc a pleine
@@ -502,12 +502,11 @@ export const SmartLightZoneLayoutSchema = z.object({
   mode: z.enum(["linked", "unlinked"]).default("linked").optional(),
   segments: z.array(ZoneSegmentSchema).min(1).max(500),
   /** Indices (commencant a 0) des zones SPARE (LED non cablee) — presentes dans le protocole de
-   *  streaming mais sans LED physique derriere. Le moteur d'effets (EffectEngine) les force en noir ;
-   *  l'editeur 3D masque leurs segments ; l'outil de peinture les affiche hachurees.
+   *  streaming mais sans LED physique derriere. Le moteur d'effets (EffectEngine) les force en noir.
    *  Cas typique sur NL72K3 quand le bandeau a moins de 50 LED. */
   spareZones: z.array(z.number().int().min(0).max(999)).optional(),
   /** Etiquettes logiques optionnelles pour les cotes (sides) (ex. "back", "left", "front", "right")
-   *  avec leur plage de zones. Utilisees par le preset en U et comme repere pour l'utilisateur. */
+   *  avec leur plage de zones. Visees par le champ `sides` des effets, et repere pour l'utilisateur. */
   sides: z
     .array(
       z.object({
@@ -887,419 +886,17 @@ export const RunningEffectSchema = z.object({
 });
 export type RunningEffect = z.infer<typeof RunningEffectSchema>;
 
-// ─── Pool d'effets predefinis ───────────────────────────────────────────────
-// Equivalent du pool d'effets d'un grandMA2 : des points de depart nommes, prets
-// a jouer, que l'on retouche ensuite avec les reglages. Ils vivent ici (package
-// partage) pour que l'UI les propose et que le backend puisse les rejouer sans
-// que la liste soit dupliquee des deux cotes.
-// Regles de reglage utilisees ci-dessous, valables pour tout le pool :
-//   • phaseFrom 0 -> phaseTo 360  = un cycle complet reparti sur le bandeau
-//     (l'effet DEFILE) ; phaseFrom = phaseTo = toutes les zones a l'unisson.
-//   • speed est en BPM : 60 BPM = un cycle par seconde.
-//   • ATTENTION en distribution SPATIALE : une phase etalee sur exactement 360°
-//     replie la zone la plus lointaine sur la valeur de la plus proche (360° = 0°).
-//     En distribution par rang ce n'est pas genant (la derniere zone n'atteint
-//     jamais tout a fait 360°), mais dans l'espace les extremes sont atteints —
-//     et sur un bandeau en boucle, ce sont les 17 zones du plafond qui se
-//     retrouveraient en phase avec les 17 zones du sol. D'ou :
-//       - effets DIRECTIONNELS (axis, radial) : etaler sur ~300°, pas 360° ;
-//       - effets ANGULAIRES : 360° est au contraire correct, l'azimut est
-//         cyclique par nature (un tour complet revient au point de depart) ;
-//       - DEGRADE FIXE dans l'espace : forme `triangle` sur 180°, qui donne
-//         exactement v = position, sans repli (voir le preset "Coucher de soleil").
-
-export interface SmartLightEffectPreset {
-  /** Identifiant stable (anglais), utilisable dans une URL ou une commande. */
-  id: string;
-  /** Famille affichee dans le pool : distribution par rang de zone (comme sur un
-   *  pupitre), distribution 3D generique, ou effet taille pour la geometrie relevee
-   *  d'un meuble precis. */
-  group: "pupitre" | "3d" | "meuble";
-  /** Nom affiche dans le pool. */
-  label: string;
-  /** Une ligne d'explication : ce que l'on voit sur le bandeau. */
-  hint: string;
-  config: SmartLightEffectConfig;
-}
-
-const WARM = { r: 255, g: 170, b: 80 };
-const CYAN = { r: 0, g: 200, b: 255 };
-const WHITE = { r: 255, g: 255, b: 255 };
-const BLACK = { r: 0, g: 0, b: 0 };
-
-export const SMART_LIGHT_EFFECT_PRESETS: SmartLightEffectPreset[] = [
-  {
-    id: "dimmer-soft",
-    group: "pupitre",
-    label: "Dimmer soft",
-    hint: "Sinus doux qui remonte le bandeau — l'effet de base d'un pupitre.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 30,
-      low: 5, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
-      color: WARM, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "chaser",
-    group: "pupitre",
-    label: "Chaser",
-    hint: "Creneau etroit + phase repartie : une tete qui court le long du bandeau.",
-    config: {
-      kind: "ma", form: "pwm", target: "dimmer", speed: 90,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 12,
-      color: CYAN, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "sweep",
-    group: "pupitre",
-    label: "Balayage",
-    hint: "Rampe montante : une lueur qui glisse sans coupure, plus douce que le chaser.",
-    config: {
-      kind: "ma", form: "rampUp", target: "dimmer", speed: 45,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
-      color: { r: 120, g: 60, b: 255 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "rainbow",
-    group: "pupitre",
-    label: "Arc-en-ciel",
-    hint: "La forme balaie la teinte : tout le spectre etale sur le bandeau, qui tourne.",
-    config: {
-      kind: "ma", form: "rampUp", target: "hue", speed: 20,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
-      hueFrom: 0, hueTo: 360, saturation: 100, brightness: 100
-    }
-  },
-  {
-    id: "pulse",
-    group: "pupitre",
-    label: "Pulse",
-    hint: "Toutes les zones a l'unisson (phase 0 -> 0) : le bandeau respire d'un bloc.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 40,
-      low: 12, high: 100, phaseFrom: 0, phaseTo: 0, width: 50,
-      color: WARM, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "strobe",
-    group: "pupitre",
-    label: "Strobe",
-    hint: "Creneau tres court a l'unisson. Prudence : flashs a 6 Hz.",
-    config: {
-      kind: "ma", form: "pwm", target: "dimmer", speed: 360,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 0, width: 8,
-      color: WHITE, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "sparkle",
-    group: "pupitre",
-    label: "Scintillement",
-    hint: "Forme random : chaque zone s'allume a son propre rythme, en pointille.",
-    config: {
-      kind: "ma", form: "random", target: "dimmer", speed: 150,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 30,
-      attack: 25, decay: 75, seed: 7,
-      color: WHITE, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "embers",
-    group: "pupitre",
-    label: "Braises",
-    hint: "Random lent par blocs de 3 zones, du rouge sombre a l'orange : un feu qui couve.",
-    config: {
-      kind: "ma", form: "random", target: "color", speed: 55,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 100,
-      attack: 50, decay: 50, seed: 3, matricks: { blocks: 3 },
-      color: { r: 90, g: 12, b: 0 }, colorTo: { r: 255, g: 130, b: 20 },
-      brightness: 100
-    }
-  },
-  {
-    id: "color-wave",
-    group: "pupitre",
-    label: "Vague couleur",
-    hint: "Deux cycles de couleur sur la longueur (phase 0 -> 720), a intensite constante.",
-    config: {
-      kind: "ma", form: "sin", target: "color", speed: 25,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 720, width: 50,
-      color: { r: 20, g: 40, b: 255 }, colorTo: { r: 255, g: 0, b: 160 },
-      brightness: 100
-    }
-  },
-  {
-    id: "theatre",
-    group: "pupitre",
-    label: "Théâtre",
-    hint: "Creneau au tiers, motif repete 8 fois (groups) : le chenillard des marquises.",
-    config: {
-      kind: "ma", form: "pwm", target: "dimmer", speed: 100,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 33,
-      matricks: { groups: 8 },
-      color: { r: 255, g: 210, b: 140 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "wings",
-    group: "pupitre",
-    label: "Ailes",
-    hint: "Bandeau plie en deux (wings) : l'effet part du centre vers les extremites.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 40,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
-      matricks: { wings: 2 },
-      color: { r: 0, g: 255, b: 180 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  // ── Effets 3D : la phase suit la position reelle des zones ─────────────────
-  // Ils ne dependent d'aucune forme particuliere : ils lisent le layout 3D de la
-  // lampe. Sans layout, le moteur retombe sur une ligne droite et ils ressemblent
-  // aux effets de pupitre.
-  // Rappel de reglage : en distribution spatiale, on etale sur ~300° et non 360°,
-  // sinon la zone la plus lointaine se replie sur la valeur de la plus proche.
-  {
-    id: "vertical-wave",
-    group: "3d",
-    label: "Vague verticale",
-    hint: "3D — suit la hauteur réelle : tout ce qui est à la même altitude s'allume ensemble, quel que soit l'ordre du ruban.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 24,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
-      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
-      color: { r: 120, g: 180, b: 255 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "sweep-x",
-    group: "3d",
-    label: "Traversée G→D",
-    hint: "3D — balaie de gauche à droite : les tronçons opposés s'allument ensemble au même X.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 20,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
-      spatial: { mode: "axis", direction: { x: 1, y: 0, z: 0 } },
-      color: WARM, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "sweep-z",
-    group: "3d",
-    label: "Traversée AR→AV",
-    hint: "3D — voyage de l'arrière vers l'avant : ce qui est en profondeur défile en parallèle.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 20,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
-      spatial: { mode: "axis", direction: { x: 0, y: 0, z: 1 } },
-      color: CYAN, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "ripple",
-    group: "3d",
-    label: "Onde radiale",
-    hint: "3D — une onde qui part d'un point et gagne les extrémités, par distance réelle.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 30,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 540, width: 50,
-      spatial: { mode: "radial", origin: { x: 0, y: 0.1, z: 0.2 } },
-      color: { r: 0, g: 220, b: 200 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "rainbow-3d",
-    group: "3d",
-    label: "Arc-en-ciel 3D",
-    hint: "3D — le spectre plaqué sur la hauteur, et non sur l'ordre du ruban. La teinte étant cyclique, le tour complet passe inaperçu.",
-    config: {
-      kind: "ma", form: "rampUp", target: "hue", speed: 12,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
-      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
-      hueFrom: 0, hueTo: 360, saturation: 100, brightness: 100
-    }
-  },
-  {
-    id: "rain",
-    group: "3d",
-    label: "Pluie",
-    hint: "3D — créneau court distribué en hauteur, du haut vers le bas : des gouttes qui tombent.",
-    config: {
-      kind: "ma", form: "pwm", target: "dimmer", speed: 45,
-      low: 0, high: 100, phaseFrom: 330, phaseTo: 0, width: 15,
-      attack: 10, decay: 60,
-      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
-      color: { r: 180, g: 220, b: 255 }, bgColor: BLACK, brightness: 100
-    }
-  },
-
-  // ── Effets taillés pour le meuble TV ───────────────────────────────────────
-  // Ils s'appuient sur le relevé fait à la main (peinture zone par zone) : le ruban
-  // part du contrôleur (amorce cachée), longe les trois niches de la droite vers la
-  // gauche, descend à gauche, puis fait le tour du bas — arrière→avant, façade,
-  // avant→arrière. Les zones cachées entre les niches sont marquées spare.
-  // Les sections nommées viennent de `zoneLayout.sides` : nicheRight, nicheMiddle,
-  // nicheLeft, leftDown, baseBackToFront, baseFront, baseFrontToBack. Sur une lampe
-  // qui n'a pas ces sections, l'effet joue simplement sur tout le ruban.
-  {
-    id: "lighthouse",
-    group: "meuble",
-    label: "Phare",
-    hint: "Meuble — un faisceau qui fait le tour du meuble en 5 s : les niches quand il pointe vers l'arrière, la façade quand il revient.",
-    config: {
-      kind: "ma", form: "pwm", target: "dimmer", speed: 12,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 12,
-      attack: 15, decay: 45,
-      spatial: { mode: "angular", origin: { x: 0, y: 0.1, z: 0.2 } },
-      color: { r: 255, g: 220, b: 170 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "radar",
-    group: "meuble",
-    label: "Radar",
-    hint: "Meuble — même rotation, mais avec une traîne : la lumière décroît derrière le balayage.",
-    config: {
-      kind: "ma", form: "rampDown", target: "dimmer", speed: 20,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
-      spatial: { mode: "angular", origin: { x: 0, y: 0.1, z: 0.2 } },
-      color: { r: 40, g: 255, b: 140 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "vortex",
-    group: "meuble",
-    label: "Tourbillon",
-    hint: "Meuble — le spectre entier plaqué sur le tour du meuble, qui tourne lentement.",
-    config: {
-      kind: "ma", form: "rampUp", target: "hue", speed: 10,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 50,
-      spatial: { mode: "angular", origin: { x: 0, y: 0.1, z: 0.2 } },
-      hueFrom: 0, hueTo: 360, saturation: 95, brightness: 100
-    }
-  },
-  {
-    id: "two-levels",
-    group: "meuble",
-    label: "Haut / bas",
-    hint: "Meuble — le ruban n'a que deux hauteurs : les niches et le bandeau bas s'échangent la lumière.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 26,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 180, width: 50,
-      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
-      color: { r: 255, g: 150, b: 60 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "two-tone",
-    group: "meuble",
-    label: "Bicolore",
-    hint: "Meuble — rien ne bouge : ambre sur le bandeau bas, bleu dans les niches. Triangle sur 180°, le dégradé spatial exact.",
-    config: {
-      kind: "ma", form: "triangle", target: "color", speed: 0,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 180, width: 50,
-      spatial: { mode: "axis", direction: { x: 0, y: 1, z: 0 } },
-      color: { r: 255, g: 130, b: 40 }, colorTo: { r: 40, g: 90, b: 255 },
-      brightness: 100
-    }
-  },
-  {
-    id: "niches-on",
-    group: "meuble",
-    label: "Niches allumées",
-    hint: "Meuble — les trois niches en lumière chaude fixe, le reste éteint. L'éclairage d'usage.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 0,
-      low: 100, high: 100, phaseFrom: 0, phaseTo: 0, width: 50,
-      sides: ["nicheRight", "nicheMiddle", "nicheLeft"],
-      color: { r: 255, g: 185, b: 110 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "niche-wave",
-    group: "meuble",
-    label: "Vague des niches",
-    hint: "Meuble — les niches seules, parcourues de droite à gauche. Le bandeau bas reste noir.",
-    config: {
-      kind: "ma", form: "sin", target: "dimmer", speed: 30,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 50,
-      sides: ["nicheRight", "nicheMiddle", "nicheLeft"],
-      spatial: { mode: "axis", direction: { x: -1, y: 0, z: 0 } },
-      color: { r: 255, g: 190, b: 120 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "niche-by-niche",
-    group: "meuble",
-    label: "Niche par niche",
-    hint: "Meuble — le motif se répète trois fois sur la largeur : les niches s'allument à tour de rôle.",
-    config: {
-      kind: "ma", form: "pwm", target: "dimmer", speed: 45,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 300, width: 34,
-      attack: 20, decay: 40,
-      matricks: { groups: 3 },
-      sides: ["nicheRight", "nicheMiddle", "nicheLeft"],
-      spatial: { mode: "axis", direction: { x: -1, y: 0, z: 0 } },
-      color: { r: 120, g: 200, b: 255 }, bgColor: BLACK, brightness: 100
-    }
-  },
-  {
-    id: "base-loop",
-    group: "meuble",
-    label: "Tour du bas",
-    hint: "Meuble — le bandeau bas seul : une lueur qui fait le tour de la base, niches éteintes.",
-    config: {
-      kind: "ma", form: "pwm", target: "dimmer", speed: 25,
-      low: 0, high: 100, phaseFrom: 0, phaseTo: 360, width: 18,
-      attack: 25, decay: 55,
-      sides: ["leftDown", "baseBackToFront", "baseFront", "baseFrontToBack"],
-      spatial: { mode: "angular", origin: { x: 0, y: 0, z: 0.2 } },
-      color: { r: 255, g: 140, b: 40 }, bgColor: BLACK, brightness: 100
-    }
-  }
-];
-
-/** Retrouve un preset du pool par son id. */
-export function findSmartLightEffectPreset(id: string): SmartLightEffectPreset | undefined {
-  return SMART_LIGHT_EFFECT_PRESETS.find((p) => p.id === id);
-}
-
-// ─── Constructeurs de layout (helpers purs, partages backend & frontend) ─────
-// Fonctions sans effet de bord qui generent une disposition (layout) 3D de zones.
-// Memes resultats cote backend et cote frontend, d'ou leur place dans le package
-// partage.
-
-// Interpolation lineaire (lerp) entre deux points 3D : a quand t=0, b quand t=1.
-function _lerpPoint(a: Point3D, b: Point3D, t: number): Point3D {
-  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
-}
-
-/** Bandeau lineaire le long de l'axe X, de -0.5 a +0.5. Layout par defaut quand aucun n'est defini. */
-export function buildLinearLayout(zoneCount: number): SmartLightZoneLayout {
-  const segments: ZoneSegment[] = [];
-  for (let i = 0; i < zoneCount; i++) {
-    const t0 = i / zoneCount;
-    const t1 = (i + 1) / zoneCount;
-    segments.push({
-      start: { x: t0 - 0.5, y: 0, z: 0 },
-      end: { x: t1 - 0.5, y: 0, z: 0 }
-    });
-  }
-  return { mode: "linked", segments };
-}
+// ─── Constructeur de layout (helper pur) ────────────────────────────────────
+// Fonction sans effet de bord qui genere une disposition (layout) 3D de zones.
 
 /**
  * Construit un layout a partir du CHEMIN REEL du ruban : une suite de troncons
  * (legs), chacun avec son nombre de zones et ses deux extremites en 3D. Les zones
  * d'un troncon se repartissent regulierement de `from` a `to`.
  *
- * C'est le constructeur generique dont les presets de forme (U, boucle de piece)
- * sont des cas particuliers. Il sert quand la geometrie n'est PAS une forme type
- * mais un releve : on peint les zones une par une, on note ou chacune se trouve,
- * et on decrit le parcours obtenu. Un meuble avec des niches, une rampe d'escalier
- * ou un plan de travail n'entrent dans aucun preset — ce constructeur les accepte.
+ * Il sert a traduire un releve : on peint les zones une par une, on note ou
+ * chacune se trouve, et on decrit le parcours obtenu. Un meuble avec des niches,
+ * une rampe d'escalier ou un plan de travail s'y decrivent aussi bien qu'une piece.
  *
  * Un troncon nomme (`label`) devient une SECTION du layout (`sides`), que les effets
  * savent viser (champ `sides` de l'effet parametrique). Un troncon sans nom occupe
@@ -1359,191 +956,6 @@ function lerpPoint3D(a: Point3D, b: Point3D, t: number): Point3D {
     y: a.y + (b.y - a.y) * t,
     z: a.z + (b.z - a.z) * t
   };
-}
-
-/**
- * Construit un layout en U autour des 4 cotes d'une piece rectangulaire.
- *
- * Entree : nombre de zones actives par cote (back / left / front / right) + dimensions.
- * Repere : X = gauche↔droite (cotes back/front), Z = fond↔avant (cotes left/right), Y = sol.
- *
- * Le bandeau est trace **dans le sens antihoraire vu de dessus**, en entrant par le coin
- * arriere-droit, et en parcourant : back-right → back-left → front-left → front-right →
- * back-right. Cela correspond au cas courant d'un bandeau enroule autour d'une piece avec le
- * controleur dans le coin arriere-droit et le bout inutilise (spare) du bandeau pendouillant
- * pres du depart.
- *
- * Total actif = back + left + front + right. Les zones restantes (totalZones - actif)
- * deviennent automatiquement des zones spare, placees soit au debut (par defaut — le bandeau
- * entre avec des LED spare pres du controleur), soit a la fin (avec `spareAtStart: false`).
- */
-export function buildUShapeLayout(opts: {
-  totalZones: number;
-  backZones: number;
-  leftZones: number;
-  frontZones: number;
-  rightZones: number;
-  width?: number;        // longueur des cotes back/front (defaut 4 m)
-  depth?: number;        // longueur des cotes left/right (defaut 3 m)
-  height?: number;       // position Y du bandeau (defaut 0)
-  spareAtStart?: boolean; // defaut true — segments spare aux indices 0..k-1
-}): SmartLightZoneLayout {
-  const w = opts.width ?? 4;
-  const d = opts.depth ?? 3;
-  const y = opts.height ?? 0;
-  const halfW = w / 2;
-  const spareAtStart = opts.spareAtStart ?? true;
-  const activeTotal = opts.backZones + opts.leftZones + opts.frontZones + opts.rightZones;
-  const spareCount = Math.max(0, opts.totalZones - activeTotal);
-
-  const segments: ZoneSegment[] = [];
-  const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
-  const spareZones: number[] = [];
-
-  // Ajoute n zones spare, repliees dans un coin cache (legerement decalees en Z
-  // pour ne pas se superposer). Memorise leurs indices dans spareZones.
-  const pushSpares = (n: number): void => {
-    for (let i = 0; i < n; i++) {
-      const idx = segments.length;
-      segments.push({
-        start: { x: -halfW - 0.2, y, z: -0.2 - i * 0.02 },
-        end:   { x: -halfW - 0.2, y, z: -0.2 - (i + 1) * 0.02 }
-      });
-      spareZones.push(idx);
-    }
-  };
-
-  // Ajoute un cote (side) : repartit n zones le long du segment start→end et
-  // enregistre la plage de zones sous l'etiquette (label) donnee.
-  const pushSide = (
-    label: string,
-    n: number,
-    color: string,
-    start: Point3D,
-    end: Point3D
-  ): void => {
-    if (n <= 0) return;
-    const startIdx = segments.length;
-    for (let i = 0; i < n; i++) {
-      const t0 = i / n;
-      const t1 = (i + 1) / n;
-      segments.push({
-        start: _lerpPoint(start, end, t0),
-        end: _lerpPoint(start, end, t1)
-      });
-    }
-    sides.push({ label, zoneStart: startIdx, zoneEnd: segments.length - 1, color });
-  };
-
-  if (spareAtStart) pushSpares(spareCount);
-
-  // Sens antihoraire vu de dessus, en entrant par le coin arriere-droit :
-  //   back  : x=+halfW, z=0  →  x=-halfW, z=0
-  //   left  : x=-halfW, z=0  →  x=-halfW, z=d
-  //   front : x=-halfW, z=d  →  x=+halfW, z=d
-  //   right : x=+halfW, z=d  →  x=+halfW, z=0
-  pushSide("back",  opts.backZones,  "#ffeb3b", { x: +halfW, y, z: 0 }, { x: -halfW, y, z: 0 });
-  pushSide("left",  opts.leftZones,  "#4caf50", { x: -halfW, y, z: 0 }, { x: -halfW, y, z: d });
-  pushSide("front", opts.frontZones, "#2196f3", { x: -halfW, y, z: d }, { x: +halfW, y, z: d });
-  pushSide("right", opts.rightZones, "#f44336", { x: +halfW, y, z: d }, { x: +halfW, y, z: 0 });
-
-  if (!spareAtStart) pushSpares(spareCount);
-
-  return { mode: "linked", segments, spareZones, sides };
-}
-
-/**
- * Construit un layout "room loop" — le bandeau fait le tour d'une piece avec des
- * sections verticales, formant un chemin 3D ferme. Sections, dans l'ordre du bandeau :
- *
- *   1. backRightFloor    — amorce au sol dans le coin arriere-droit (entree du controleur)
- *   2. backRightUp       — montee verticale a l'arriere-droit (sol → plafond)
- *   3. topRightToLeft    — haut du mur arriere, de droite a gauche
- *   4. backLeftDown      — descente verticale a l'arriere-gauche (plafond → sol)
- *   5. leftFloorBToF     — mur gauche au sol, de l'arriere vers l'avant
- *   6. frontFloorLToR    — mur avant au sol, de gauche a droite
- *   7. rightFloorFToB    — mur droit au sol, de l'avant vers l'arriere (ferme la boucle)
- *
- * Repere : X=gauche↔droite (-halfW..+halfW), Y=bas↔haut (0..height), Z=arriere↔avant (0..depth).
- *
- * Chaque section a un nombre de zones configurable ; la somme doit valoir totalZones — tout
- * manque devient des segments spare a la fin du bandeau. Le total actif est verifie automatiquement.
- */
-export function buildRoomLoopLayout(opts: {
-  backRightFloorZones: number;
-  backRightUpZones: number;
-  topRightToLeftZones: number;
-  backLeftDownZones: number;
-  leftFloorBToFZones: number;
-  frontFloorLToRZones: number;
-  rightFloorFToBZones: number;
-  totalZones?: number;
-  width?: number;   // etendue X (defaut 4 m)
-  depth?: number;   // etendue Z (defaut 3 m)
-  height?: number;  // plafond Y (defaut 2.5 m)
-  /** Longueur horizontale de l'amorce depuis le coin — sert juste a donner une vraie position a la section d'amorce. */
-  leadInLength?: number; // defaut 0.5 m
-}): SmartLightZoneLayout {
-  const W = opts.width ?? 4;
-  const D = opts.depth ?? 3;
-  const H = opts.height ?? 2.5;
-  const lead = opts.leadInLength ?? 0.5;
-  const halfW = W / 2;
-
-  const activeTotal =
-    opts.backRightFloorZones + opts.backRightUpZones + opts.topRightToLeftZones +
-    opts.backLeftDownZones + opts.leftFloorBToFZones + opts.frontFloorLToRZones +
-    opts.rightFloorFToBZones;
-  const total = opts.totalZones ?? activeTotal;
-  const spareCount = Math.max(0, total - activeTotal);
-
-  const segments: ZoneSegment[] = [];
-  const sides: NonNullable<SmartLightZoneLayout["sides"]> = [];
-  const spareZones: number[] = [];
-
-  // Ajoute une section : repartit n zones le long du segment start→end et
-  // enregistre sa plage sous l'etiquette (label) donnee.
-  const pushSection = (
-    label: string, n: number, color: string,
-    start: Point3D, end: Point3D
-  ): void => {
-    if (n <= 0) return;
-    const startIdx = segments.length;
-    for (let i = 0; i < n; i++) {
-      segments.push({
-        start: _lerpPoint(start, end, i / n),
-        end: _lerpPoint(start, end, (i + 1) / n)
-      });
-    }
-    sides.push({ label, zoneStart: startIdx, zoneEnd: segments.length - 1, color });
-  };
-
-  pushSection("backRightFloor",  opts.backRightFloorZones,  "#c800ff",
-    { x: +halfW, y: 0, z: lead }, { x: +halfW, y: 0, z: 0 });
-  pushSection("backRightUp",     opts.backRightUpZones,     "#ff6400",
-    { x: +halfW, y: 0, z: 0 },    { x: +halfW, y: H, z: 0 });
-  pushSection("topRightToLeft",  opts.topRightToLeftZones,  "#00ff00",
-    { x: +halfW, y: H, z: 0 },    { x: -halfW, y: H, z: 0 });
-  pushSection("backLeftDown",    opts.backLeftDownZones,    "#00c8ff",
-    { x: -halfW, y: H, z: 0 },    { x: -halfW, y: 0, z: 0 });
-  pushSection("leftFloorBToF",   opts.leftFloorBToFZones,   "#ff0000",
-    { x: -halfW, y: 0, z: 0 },    { x: -halfW, y: 0, z: D });
-  pushSection("frontFloorLToR",  opts.frontFloorLToRZones,  "#0000ff",
-    { x: -halfW, y: 0, z: D },    { x: +halfW, y: 0, z: D });
-  pushSection("rightFloorFToB",  opts.rightFloorFToBZones,  "#ffff00",
-    { x: +halfW, y: 0, z: D },    { x: +halfW, y: 0, z: 0 });
-
-  // Place les zones spare a la fin, dans un coin cache.
-  for (let i = 0; i < spareCount; i++) {
-    const idx = segments.length;
-    segments.push({
-      start: { x: -halfW - 0.2, y: 0, z: -0.3 - i * 0.02 },
-      end:   { x: -halfW - 0.2, y: 0, z: -0.3 - (i + 1) * 0.02 }
-    });
-    spareZones.push(idx);
-  }
-
-  return { mode: "linked", segments, spareZones, sides };
 }
 
 // Une lampe connectee (smart light) complete, telle que persistee.
@@ -1696,8 +1108,8 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("scene_activated"), data: SceneSchema }),
   z.object({ type: z.literal("log"), data: LogEventSchema }),
   z.object({ type: z.literal("smart_light_updated"), data: SmartLightSchema }),
-  // Liste des effets en cours. Diffusee a chaque lancement/arret pour que toutes
-  // les fenetres du pupitre montrent le meme etat de jeu.
+  // Liste des effets en cours. Diffusee a chaque lancement/arret pour que tous
+  // les clients connectes montrent le meme etat de jeu.
   z.object({
     type: z.literal("effects_updated"),
     data: z.object({ running: z.array(RunningEffectSchema) })
@@ -1744,90 +1156,9 @@ export const QxfLibraryFixtureSchema = QxfParseResultSchema.extend({
 
 export type QxfLibraryFixture = z.infer<typeof QxfLibraryFixtureSchema>;
 
-// ─── Pont ancien pool -> effets DMX ─────────────────────────────────────────
-//
-// Les 23 presets du pool ont ete regles a l'oreille sur le bandeau du salon : leurs
-// phases, largeurs et origines spatiales valent mieux qu'une reecriture. On garde
-// donc `EffectMa` comme FORMAT D'ECRITURE des presets, et on le convertit a la
-// volee vers le modele generique joue par le moteur DMX.
-//
-// La conversion est totale sauf sur un point : `brightness`, le multiplicateur
-// global d'intensite de l'ancien modele, disparait. Ce n'est pas une perte — c'est
-// desormais le role du canal de dimmer master de la facade DMX (voir
-// SmartLightDmxZoneMirror.dimmerChannel), qui le fait pour TOUS les effets au lieu
-// d'un seul, et depuis un fader du pupitre au lieu d'un champ de config.
-// (Tous les presets du pool valent 100, la conversion est donc sans perte.)
-
-/** Convertit un effet de l'ancien modele (une forme, une cible) vers le modele
- *  generique a lignes. Un effet `ma` donne exactement une ligne. */
-export function maToDmxEffect(ma: EffectMa): DmxEffect {
-  return {
-    speed: ma.speed,
-    rate: 1,
-    direction: ma.direction ?? "forward",
-    curve: "linear",
-    // Chaine Art-Net -> QLC+ : un maillon reechantillonne, le tramage y nuirait.
-    dither: false,
-    matricks: ma.matricks,
-    spatial: ma.spatial,
-    sides: ma.sides,
-    lines: [
-      {
-        // Les cibles de l'ancien modele (dimmer / color / hue) sont exactement
-        // trois des attributs du nouveau : la traduction est l'identite.
-        attribute: ma.target,
-        form: ma.form,
-        mode: "absolute",
-        low: ma.low,
-        high: ma.high,
-        phaseFrom: ma.phaseFrom,
-        phaseTo: ma.phaseTo,
-        width: ma.width,
-        attack: ma.attack,
-        decay: ma.decay,
-        seed: ma.seed
-      }
-    ],
-    color: ma.color,
-    bgColor: ma.bgColor,
-    colorTo: ma.colorTo,
-    hueFrom: ma.hueFrom,
-    hueTo: ma.hueTo,
-    saturation: ma.saturation
-  };
-}
-
-/** Un preset du pool, pret a etre joue sur une selection. */
-export interface DmxEffectPreset {
-  id: string;
-  group: "pupitre" | "3d" | "meuble";
-  label: string;
-  hint: string;
-  effect: DmxEffect;
-  /** true si le preset s'appuie sur la geometrie 3D d'un bandeau : le proposer sur
-   *  une selection de PAR n'aurait pas de sens, la distribution spatiale y est
-   *  ignoree faute de coordonnees dans le patch. */
-  needsGeometry: boolean;
-}
-
-/** Le pool, exprime dans le modele generique. Derive du pool historique pour qu'il
- *  n'y ait qu'une seule liste a maintenir. */
-export const DMX_EFFECT_PRESETS: DmxEffectPreset[] = SMART_LIGHT_EFFECT_PRESETS.filter(
-  (p): p is SmartLightEffectPreset & { config: EffectMa } => p.config.kind === "ma"
-).map((p) => ({
-  id: p.id,
-  group: p.group,
-  label: p.label,
-  hint: p.hint,
-  // Le nom voyage avec l'effet : c'est lui qui s'affiche dans la liste des effets
-  // en cours, ou l'on ne sait plus de quelle tuile du pool ils sont partis.
-  effect: { ...maToDmxEffect(p.config), name: p.label },
-  needsGeometry: p.config.spatial !== undefined || p.config.sides !== undefined
-}));
-
 // ─── Moteur d'effets ────────────────────────────────────────────────────────
 // La math des effets et la resolution des cellules vivent dans ce package, pas
-// cote backend : le runner DMX et l'apercu de la fenetre Effets doivent calculer
+// cote backend : le runner DMX et un apercu cote interface doivent calculer
 // EXACTEMENT la meme chose, sinon l'apercu ment sur ce que le plateau va faire.
 export * from "./effect-cells";
 export * from "./effect-engine";

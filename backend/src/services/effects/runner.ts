@@ -261,7 +261,7 @@ export class EffectRunner {
 
     // Pas de canal dedie. Trois cas se resolvent quand meme sur le trio R/G/B —
     // et c'est ce qui permet a un effet ecrit pour une lyre de jouer sur un ruban.
-    // La table de correspondance est partagee avec l'apercu de la fenetre Effets.
+    // La table de correspondance est partagee (effectLineColor) avec un apercu cote interface.
     if (cell.channels.red === undefined) return;
 
     // La courbe n'a de sens que sur le fondu d'intensite ; un balayage de teinte

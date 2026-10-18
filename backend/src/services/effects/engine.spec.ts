@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // Le moteur teste ici vit dans le package partage (packages/shared/src/effect-engine.ts) :
-// la fenetre Effets s'en sert pour son apercu. Ses tests restent dans la suite du
+// une interface peut s'en servir pour son apercu. Ses tests restent dans la suite du
 // backend, qui est le seul paquet du depot equipe de Vitest.
 import type { DmxEffect, EffectLine } from "@lightbridgedmx/shared";
 import { evaluateDmxEffect, formValue, matricksPosition } from "@lightbridgedmx/shared";

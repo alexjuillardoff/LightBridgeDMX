@@ -181,7 +181,7 @@ const fromHapDevice = (d: MdnsDevice, homekitName: string | null): DeviceInvento
   const reason = isOurs
     ? "C'est le pont exposé par LightBridge lui-même — il publie les projecteurs DMX vers l'app Maison."
     : isMeross
-      ? "Prise Meross détectée. LightBridge sait piloter ce modèle, mais ne gère qu'une seule prise à la fois — celle configurée dans Réglages."
+      ? "Prise Meross détectée. LightBridge sait piloter ce modèle, mais ne gère qu'une seule prise à la fois — celle configurée dans LightBridge."
       : "Accessoire HomeKit tiers — LightBridge expose un pont HomeKit, il n'est pas contrôleur HomeKit et ne peut donc pas piloter les accessoires des autres.";
 
   return {

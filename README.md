@@ -1,6 +1,6 @@
 # LightBridgeDMX
 
-Hub d'éclairage qui unifie **DMX512** scénique, **Apple HomeKit** et **smart lights WiFi** (Nanoleaf et au-delà). Tableau de bord React pour contrôler tout depuis le navigateur, painter de zones, éditeur 3D de la disposition des LED strips et moteur d'effets position-aware (chase / wave / gradient).
+Hub d'éclairage qui unifie **DMX512** scénique, **Apple HomeKit** et **smart lights WiFi** (Nanoleaf et au-delà). API REST + WebSocket pour tout piloter, et moteur d'effets façon grandMA joué sur une sélection de projecteurs. Le tableau de bord web est en reconstruction.
 
 ---
 
@@ -48,9 +48,9 @@ Tu as des projecteurs DMX (PAR LED, lyres, dimmers…) que tu veux contrôler de
 - Créer des ambiances lumineuses pilotables par Siri ("Hey Siri, allume la scène concert")
 - Visualiser et ajuster les canaux DMX depuis un navigateur web sur n'importe quel appareil
 - Importer des définitions de projecteurs depuis la bibliothèque QLC+ (plus de 3000 modèles)
-- **Piloter une Nanoleaf Lightstrip Essentials (NL72K3) en temps réel** : sliders couleur, painter par zone, effets dynamiques (chase / wave / gradient), édition 3D de la disposition physique
+- **Piloter une Nanoleaf Lightstrip Essentials (NL72K3) en temps réel** : couleur par zone en streaming UDP, effets du moteur DMX, disposition 3D physique des zones
 - **Mixer mondes DMX et WiFi dans une même scène** : un projecteur Stairville DMX et un strip Nanoleaf prennent la même couleur grâce au mirror DMX bidirectionnel
-- **Allumer/éteindre une prise Meross automatiquement** : la prise se met sous tension dès qu'un projecteur surveillé change en DMX, et se coupe après un blackout complet prolongé (5 min) — configurable dans la vue Setup
+- **Allumer/éteindre une prise Meross automatiquement** : la prise se met sous tension dès qu'un projecteur surveillé change en DMX, et se coupe après un blackout complet prolongé (5 min) — configurable par l'API (`PUT /api/meross`)
 
 ---
 
@@ -98,7 +98,7 @@ iPhone/iPad (App Maison)
 
 4. **Pont HomeKit** : Utilise la bibliothèque `hap-nodejs` pour créer un pont domotique. Chaque projecteur RGB devient une ampoule dans l'app Maison. Chaque lyre devient un accessory avec des contrôles pan/tilt/couleur/gobo. Les changements sont appliqués en temps réel sur les canaux DMX correspondants.
 
-5. **Frontend React** : Tableau de bord web avec actualisation en temps réel via WebSocket. Permet de voir les 512 canaux avec des sliders, d'importer des projecteurs depuis la bibliothèque QXF, et de surveiller l'état du pont HomeKit.
+5. **Frontend** : tableau de bord web servi par Vite et alimenté en temps réel par le WebSocket. **En reconstruction** : seul le socle est en place.
 
 ---
 
@@ -322,7 +322,7 @@ L'accès est **restreint au réseau local** : le proxy ne répond qu'aux apparei
 1. Démarre le backend avec `HOMEKIT_ENABLED=true`
 2. Ouvre l'app **Maison** sur ton iPhone/iPad
 3. Appuie sur **"+"** → **"Ajouter un accessoire"**
-4. Scanne le QR code affiché dans la carte HomeKit du tableau de bord, **OU** entre le code PIN manuellement
+4. Entre le code PIN manuellement (`HOMEKIT_PIN`). `GET /api/homekit` le renvoie aussi, avec l'URI `X-HM://` à transformer en QR code
 
 ### Quels projecteurs sont exposés ?
 
@@ -445,12 +445,12 @@ Thread plafonne à quelques écritures par seconde : une façade simple lui suff
 ### Vue d'ensemble du flux
 
 ```
-            Frontend (React)                              Backend (SmartLightService)
+            Client (API REST + WS)                        Backend (SmartLightService)
 ┌──────────────────────────────────┐                ┌──────────────────────────────────┐
-│ • SmartLightsPanel               │   HTTP/WS      │ • NanoleafClient (HTTP, port 16021)
-│ • ZonePainter (50 swatches)      │  ───────────►  │ • NanoleafStreamer (UDP, port 60222)
-│ • EffectDesigner (4 effets)      │                │ • EffectEngine (30 Hz, 5 effets)
-│ • LayoutEditor3D (Three.js)      │                │ • discovery mDNS (_nanoleafapi._tcp)
+│ • POST /:id/state  (couleur)     │   HTTP/WS      │ • NanoleafClient (HTTP, port 16021)
+│ • POST /:id/zones  (par zone)    │  ───────────►  │ • NanoleafStreamer (UDP, port 60222)
+│ • POST /:id/layout (disposition) │                │ • EffectEngine (30 Hz, 5 effets)
+│ • POST /api/effects/run          │                │ • discovery mDNS (_nanoleafapi._tcp)
 └──────────────────────────────────┘                └────────────────┬─────────────────┘
                                                                      │ HTTP + UDP streaming
                                                      ┌───────────────▼──────────────┐
@@ -463,13 +463,13 @@ Thread plafonne à quelques écritures par seconde : une façade simple lui suff
 
 1. Active l'option **API** dans l'app Nanoleaf (le strip doit être déjà connecté à ton WiFi). Cette option ouvre une fenêtre de 30 s pendant laquelle le pairing est autorisé.
    *Alternative :* maintiens le bouton power du strip ~5–7 s jusqu'à voir la LED pulser.
-2. Dans LightBridge à http://localhost:5173/ → section **Smart Lights**, clique **Scanner** (mDNS) ou saisis l'IP manuellement (`192.168.0.234`).
-3. Clique **Pairer**. Le backend POST `/api/v1/new` au strip, récupère un `auth_token` qui est persisté en DB.
-4. Le strip apparaît comme carte avec sliders couleur, color picker et toggles.
+2. Trouve le strip : `POST /api/smart-lights/discover` (mDNS), ou pars directement de son IP (`192.168.0.234`). `POST /api/smart-lights/probe` indique s'il est bien en mode pairing.
+3. Appaire-le : `POST /api/smart-lights/pair` avec `{ "host": "192.168.0.234" }`. Le backend POST `/api/v1/new` au strip, récupère un `auth_token` qui est persisté en DB.
+4. Le strip apparaît dans `GET /api/smart-lights`, avec son état courant.
 
 ### Latence : HTTP vs UDP streaming
 
-Deux chemins de sortie disponibles via le toggle **Streaming UDP** sur la carte :
+Deux chemins de sortie, choisis lampe par lampe via `POST /api/smart-lights/:id/streaming` :
 
 | Chemin | Latence perçue | Quand l'utiliser |
 |--------|----------------|------------------|
@@ -480,7 +480,7 @@ Le streaming UDP envoie ~30 frames/s via le port 60222 et entre/sort du mode `ex
 
 ### Le strip comme projecteur DMX (une cellule R/G/B par zone)
 
-Le panneau avancé d'une lampe (bouton **Avancé** sur la carte) contient une section **Projecteur DMX par zone**. Un clic sur **Exposer en DMX** crée un projecteur classique dont chaque zone occupe **3 canaux consécutifs — rouge, vert, bleu** :
+`POST /api/smart-lights/:id/dmx-fixture` crée un projecteur classique dont chaque zone occupe **3 canaux consécutifs — rouge, vert, bleu** :
 
 ```
 zone 1 → adresse+0 (R), +1 (G), +2 (B)
@@ -488,55 +488,32 @@ zone 2 → adresse+3 (R), +4 (G), +5 (B)
 …                                          50 zones = 150 canaux
 ```
 
-À partir de là le strip se pilote comme n'importe quel projecteur : sliders de la fixture sheet, scènes, presets, Art-Net entrant depuis QLC+.
+À partir de là le strip se pilote comme n'importe quel projecteur : écritures dans l'univers (`POST /api/universe`), scènes, presets, effets, Art-Net entrant depuis QLC+.
 
-- Laisse le champ **Adresse** vide pour que le backend alloue automatiquement le premier bloc de canaux libre.
+- Sans `startChannel` dans le corps, le backend alloue automatiquement le premier bloc de canaux libre.
 - **Le streaming UDP doit être actif** : les frames par zone partent par ce chemin.
-- Le pilotage local (painter, effets, sliders couleur) et le DMX cohabitent en **LTP** : le dernier qui bouge gagne. Dès qu'un canal du bloc change, le DMX prend la main ; dès qu'on touche au painter ou à un effet, il la rend.
-- **Retirer** supprime le projecteur généré et débranche le mirror.
+- Le pilotage local (couleur par zone, couleur globale, HomeKit) et le DMX cohabitent en **LTP** : le dernier qui bouge gagne. Dès qu'un canal du bloc change, le DMX prend la main ; dès qu'une commande locale arrive, il la rend.
+- `DELETE /api/smart-lights/:id/dmx-fixture` supprime le projecteur généré et débranche le mirror.
 
-### Painter par zone
+### Couleur par zone
 
-Pour les strips à zones addressables (NL72K3 : 50 zones) :
-- **Click + drag** = peint chaque zone avec la couleur de pinceau
-- **Clic droit** = marque une zone comme **spare** (LED non câblée physiquement)
-- **Presets** = 8 couleurs prédéfinies + un pinceau "spare" (hachuré)
-- **Fill all** = applique la couleur courante sur toutes les zones
-- **Appliquer** = envoie la palette via `POST /:id/effect` (kind=`static`) + persiste les zones spare dans le layout
-
-Les zones spare sont :
-- Forcées en noir par l'EffectEngine quels que soient les effets actifs
-- Cachées dans l'éditeur 3D (option Cacher spare)
-- Marquées visuellement par un motif diagonal hachuré dans le painter
+Pour les strips à zones adressables (NL72K3 : 50 zones), `POST /api/smart-lights/:id/zones` applique
+une couleur par zone (`{ "zones": [{ "index": 0, "r": 255, "g": 0, "b": 0 }] }`) ; les zones non citées
+gardent leur valeur. Le streaming UDP s'allume automatiquement si besoin : c'est le seul transport
+capable de porter une couleur par zone.
 
 ### Layout 3D physique
 
-L'éditeur 3D (React Three Fiber, lazy-loaded ~600 KB) permet de définir où chaque zone se trouve physiquement dans l'espace :
+`POST /api/smart-lights/:id/layout` enregistre où chaque zone se trouve dans l'espace (segments 3D,
+en mètres). C'est ce qui permet aux effets de se répartir selon la position réelle des LED :
 
-- **Mode Linked (défaut)** : 51 points (N+1) qui forment une polyline ; chaque segment est une zone
-- **Mode Unlinked** : 100 points (2N) indépendants — pour formes non-connectées
-- **Drag** des sphères dans le plan XZ (Y verrouillé) ou XY (Y libéré via shift)
-- **OrbitControls** : clic droit = rotation, molette = zoom
-- **Reset** : remet en ligne droite (X de -0.5 à +0.5)
-- **Preset U-shape** : génère automatiquement un layout en U autour d'une pièce rectangulaire à partir de 4 nombres (zones par côté : fond / droit / avant / gauche) + largeur × profondeur
+- **Mode Linked (défaut)** : les segments consécutifs forment une polyligne, un segment par zone
+- **Mode Unlinked** : segments indépendants, pour les formes non connectées
+- **`spareZones`** : zones sans LED visible (non câblées, cachées) — forcées en noir par l'EffectEngine
+- **`sides`** : sections nommées (plage de zones) que les effets savent viser
 
-### Preset U-shape (typique pour strip autour d'une pièce)
-
-Le preset construit 4 segments connectés :
-
-```
-       (fond)
-   ◄─────────────►   zones 0..n-1 — jaune
-  ▲                 ▲
-  │                 │
-(gauche)        (droit)  zones distribuées sur chaque côté
-  │                 │
-  ▼                 ▼
-   ◄─────────────►   zones (avant) — bleu
-```
-
-Le sens du parcours est **horaire vu de dessus** : fond (X+) → droit (Z+) → avant (X−) → gauche (Z−).
-Les zones au-delà des actives sont **auto-marquées spare** et placées dans un coin caché.
+Pour décrire une géométrie relevée à la main, `buildPathLayout()` (package partagé) construit le
+layout tronçon par tronçon — voir « Layouts : relevé du chemin réel » dans [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ### Effets position-aware (l'EffectEngine)
 
@@ -544,7 +521,7 @@ Le SmartLightService évalue l'effet courant à 30 Hz et pousse les couleurs par
 
 | Effet | Paramètres | Description |
 |-------|------------|-------------|
-| `static` | palette (50 RgbColor) | Palette figée — alimentée par le ZonePainter |
+| `static` | palette (50 RgbColor) | Palette figée, une couleur par zone |
 | `solid` | color, brightness | Une couleur unie sur toutes les zones |
 | `gradient` | from, to, direction (X/Y/Z), scrollSpeed | Interpole entre 2 couleurs le long d'un axe 3D. ScrollSpeed > 0 = anime |
 | `chase` | color, bgColor, speed, width, bounce | Tête lumineuse qui voyage le long des zones (index) avec falloff |
@@ -554,7 +531,7 @@ Les effets `gradient` et `wave` projettent le **milieu** de chaque zone sur la d
 
 ### DMX-Mirror (lier le strip aux canaux DMX)
 
-Le panneau Avancé d'une carte smart light permet de configurer un mirror DMX :
+Le champ `dmxMirror` d'une lampe (`PUT /api/smart-lights/:id`) la lie à des canaux DMX :
 
 ```
 R: canal 509   G: canal 510   B: canal 511   Dimmer: canal 512
@@ -562,14 +539,7 @@ R: canal 509   G: canal 510   B: canal 511   Dimmer: canal 512
 
 Ces canaux sont alors lus à chaque tick DMX. La conversion RGB → HSV est appliquée et poussée dans `desired`, qui est ensuite flush via HTTP coalescé (ou UDP si streaming actif). Conséquences :
 - Une scène DMX qui touche ces canaux pilote aussi le strip
-- Les sliders du `ChannelGrid` agissent en direct sur le strip
-
-### Effets builtin Nanoleaf
-
-Outre les effets position-aware évalués localement, on peut piloter les effets builtin du device (Cozy Glow, Northern Lights, etc.) :
-
-- Le panneau **Avancé** liste les effets dispo (`GET /:id/effects`)
-- Sélectionner un effet appelle `POST /:id/effects/select` → le device prend la main, on sort du mode streaming UDP
+- Toute écriture sur ces canaux (`POST /api/universe`, Art-Net entrant) agit en direct sur le strip
 
 ---
 
@@ -586,11 +556,10 @@ La bibliothèque QLC+ compte plus de **3000 définitions** de projecteurs de tou
 
 ### Téléchargement automatique
 
-Lors du premier accès à la bibliothèque QXF depuis le tableau de bord, le backend télécharge automatiquement le dépôt QLC+ depuis GitHub et extrait tous les fichiers `.qxf` dans `backend/data/fixtures/`.
+Au premier appel de `GET /api/qxf/library`, le backend télécharge automatiquement le dépôt QLC+ depuis GitHub et extrait tous les fichiers `.qxf` dans `backend/data/fixtures/`.
 
 Pour forcer un re-téléchargement (mise à jour de la bibliothèque) :
-- Dans le panneau QXF, clique sur **"Rafraîchir la bibliothèque"**
-- Ou via l'API : `POST /api/qxf/library/refresh`
+- `POST /api/qxf/library/refresh`
 
 ### Comment ça fonctionne en interne
 

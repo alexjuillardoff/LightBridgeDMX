@@ -9,7 +9,7 @@ import { MerossConfigInputSchema } from "@lightbridgedmx/shared";
 import { ErrorHandler, RouteContext } from "./types";
 
 export const registerMerossRoutes = (app: FastifyInstance, ctx: RouteContext, handleError: ErrorHandler) => {
-  // Statut courant (lecture seule) pour l'UI Reglages.
+  // Statut courant (lecture seule).
   app.get("/api/meross", async () => ctx.meross.getStatus());
 
   // Mise a jour de la config : on persiste (singleton) puis on applique a chaud.

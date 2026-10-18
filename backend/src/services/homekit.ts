@@ -100,7 +100,7 @@ export type HomeKitFixtureStatus = {
   channels: Record<string, number>;
 };
 
-// Statut global du pont HomeKit, renvoye a l'UI (Reglages) : etat, PIN, QR d'appairage, projecteurs.
+// Statut global du pont HomeKit, renvoye a l'UI : etat, PIN, QR d'appairage, projecteurs.
 export type HomeKitStatus = {
   enabled: boolean;
   started: boolean;
@@ -385,8 +385,8 @@ export class HomeKitBridge {
    *  le SmartLightService dans l'amorcage du serveur. */
   attachSmartLights(host: SmartLightHost): void {
     this.smartHost = host;
-    // Une lampe peut changer d'etat sans passer par HomeKit (miroir DMX, onglet
-    // Lampes, application tierce). On repercute alors la valeur vers l'app Maison,
+    // Une lampe peut changer d'etat sans passer par HomeKit (miroir DMX, API
+    // REST, application tierce). On repercute alors la valeur vers l'app Maison,
     // sinon elle afficherait un etat perime jusqu'au prochain appel manuel.
     host.on("light_updated", (light: SmartLight) => this.pushSmartLightState(light));
   }

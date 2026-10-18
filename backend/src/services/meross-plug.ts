@@ -11,7 +11,7 @@
 // "device key" Meross (recuperee une seule fois depuis le compte Meross).
 //
 // La configuration (IP, device key, canal, interrupteur logiciel) est persistee en
-// base via le Store et modifiable a chaud depuis l'UI (Reglages) : reconfigure()
+// base via le Store et modifiable a chaud par l'API (PUT /api/meross) : reconfigure()
 // reconstruit le client sans redemarrer le backend.
 //
 // Place dans le flux : ce service s'abonne a l'evenement "tick" du DmxService

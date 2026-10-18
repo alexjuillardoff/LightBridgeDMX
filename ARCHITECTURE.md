@@ -128,16 +128,16 @@ dernière version est au commit `24c1176`. Reste le socle :
 - `src/App.tsx` : page d'attente.
 
 ### Shared (`packages/shared/`)
-- `src/effect-engine.ts` : la math des effets DMX — `evaluateDmxEffect()`, `spatialPositions()`, `applyCurve()`, `effectLineColor()`. Partagée entre le runner DMX et l'aperçu de la fenêtre Effets, pour que l'aperçu ne puisse pas mentir.
+- `src/effect-engine.ts` : la math des effets DMX — `evaluateDmxEffect()`, `spatialPositions()`, `applyCurve()`, `effectLineColor()`. Partagée entre le runner DMX et un aperçu côté interface, pour que l'aperçu ne puisse pas mentir.
 - `src/effect-cells.ts` : `resolveCells()` — développe une sélection de projecteurs en cellules (un PAR = 1, un bandeau = 1 par zone).
 - `src/index.ts` : types et schémas Zod partagés. Sections :
   - DMX : `Capability`, `FixtureChannel`, `FixtureHomeKit*`, `Fixture`, `Scene`, `SceneStep`, `Preset`, `UniverseState`, `LogEvent`, `WsEvent`
-  - Effets : `EffectForm`, `EffectTarget`, `EffectMatricks`, `EffectSpatial`, `EffectMa`, `SMART_LIGHT_EFFECT_PRESETS`
+  - Effets : `EffectForm`, `EffectTarget`, `EffectMatricks`, `EffectSpatial`, `EffectMa`
   - Smart Lights : `SmartLightBackendType`, `NanoleafHttpConfig`, `SmartLightDmxMirror`, `SmartLightStreaming`, `SmartLightStateInput`, `SmartLightZonePalette`, `NanoleafDiscovered`
   - 3D Layout : `Point3D`, `ZoneSegment`, `SmartLightZoneLayout` (avec `spareZones[]` et `sides[]`)
   - Effets : `RgbColor`, `EffectStatic/Solid/Gradient/Chase/Wave`, `SmartLightEffectConfig`
   - Smart Light agrégé : `SmartLight`, `SmartLightInput`, `SmartLightPairInput`
-  - Helpers pure : `buildLinearLayout(zoneCount)`, `buildUShapeLayout(opts)` — réutilisés frontend + backend
+  - Helpers purs : `buildZoneRgbChannels()`, `buildPathLayout(opts)`, conversions de température de couleur (`kelvinToRgb()`…)
 - `dist/index.js` + `dist/index.d.ts` : build CJS du package partagé.
 
 ## Ops / services persistants (macOS)
@@ -162,18 +162,16 @@ Trois points de conception :
 2. **Réécriture du `Host`.** Vite ≥ 5.4.12 renvoie 403 sur tout `Host` absent de `server.allowedHosts`. Le proxy présente donc à Vite son propre `IP:port` (`header_up Host {upstream_hostport}`) — une IP littérale est toujours acceptée. Le nom réel reste lisible dans `X-Forwarded-Host`.
 3. **Restriction au réseau local.** Un matcher `remote_ip` limite l'accès aux sources privées et renvoie sinon une page 403. La règle porte sur les **plages privées**, pas sur l'IP publique de la box : en hairpin NAT, les clients du LAN arrivent avec l'IP de la box (`192.168.0.254`), pas avec l'IP publique. Le chemin `/.well-known/acme-challenge/*` est exempté, sans quoi le renouvellement Let's Encrypt échouerait.
 
-Conséquence côté frontend : `wsUrl()` doit suivre l'origine de la page. Une URL en dur du type `ws://<host>:5000` casse l'accès HTTPS (blocage Mixed Content, et le port 5000 n'est pas exposé par le proxy).
+Conséquence côté frontend : l'URL du WebSocket doit suivre l'origine de la page. Une URL en dur du type `ws://<host>:5000` casse l'accès HTTPS (blocage Mixed Content, et le port 5000 n'est pas exposé par le proxy).
 
 ## Schéma de flux complet
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                       FRONTEND (React 18 + Vite)                     │
-│  App.tsx → React Query → api.ts → fetch /api/*                      │
-│  useDmxWebsocket → {ws,wss}://<origine de la page>/ws               │
-│  ChannelGrid (sliders DMX) → POST /api/universe/:channel            │
-│  SmartLightsPanel → POST /api/smart-lights/:id/{state,effect,zones} │
-│  LayoutEditor3D (lazy R3F) → POST /api/smart-lights/:id/layout      │
+│                  FRONTEND (Vite, en reconstruction)                 │
+│  Socle Vite seul — l'ancienne UI a été supprimée (commit 24c1176)   │
+│  fetch /api/*  ·  écritures DMX groupées : POST /api/universe       │
+│  WebSocket {ws,wss}://<origine de la page>/ws                       │
 └───────────┬─────────────────────────────────────────────────────────┘
             │ HTTP REST + WebSocket
 ┌───────────▼─────────────────────────────────────────────────────────┐

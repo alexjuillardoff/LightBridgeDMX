@@ -74,7 +74,7 @@ type RuntimeEntry = {
    *  alors a pleine echelle, comme avant l'introduction du master. */
   dmxMaster: number | null;
   /** True quand le bloc DMX par zone a bouge en dernier — le DMX possede alors le bandeau
-   *  (priorite sur l'effet et sur desired.on). Une ecriture locale (painter, effet, couleur)
+   *  (priorite sur l'effet et sur desired.on). Une ecriture locale (palette par zone, effet, couleur)
    *  rend la main jusqu'au prochain mouvement du DMX. */
   dmxZonesOwned: boolean;
   /** Horodatage de la derniere diffusion d'un mouvement de master repercute en
@@ -261,7 +261,7 @@ export class SmartLightService extends EventEmitter {
     // Le reste de LightBridge n'apprend l'etat d'une lampe que par cet evenement.
     // Il n'etait emis que par flushAll, apres un push HTTP reussi — or flushAll
     // saute les lampes en streaming : une couleur posee depuis l'app Maison
-    // changeait bien le bandeau, mais l'onglet Lampes et le pupitre restaient sur
+    // changeait bien le bandeau, mais l'interface et le pupitre restaient sur
     // l'ancienne valeur, sans que rien ne vienne jamais les detromper.
     // On ne diffuse que sur changement reel : une consigne identique repetee
     // (curseur repose au meme endroit) n'a rien a annoncer.
@@ -288,7 +288,7 @@ export class SmartLightService extends EventEmitter {
     return { ...entry.light, state: entry.desired };
   }
 
-  /** Allume le streaming UDP si une ecriture par zone (effet, painter) le reclame et
+  /** Allume le streaming UDP si une ecriture par zone (effet, palette) le reclame et
    *  qu'il est encore eteint.
    *
    *  Sans ca, peindre ou lancer un effet sur un bandeau dont le streaming est coupe ne
@@ -815,7 +815,7 @@ export class SmartLightService extends EventEmitter {
       //
       // Avant, `desired` etait reecrit a chaque tick, 30 fois par seconde : le DMX
       // etait maitre absolu et ecrasait dans les 33 ms toute commande venue
-      // d'ailleurs — app Maison, onglet Lampes, scene. Impossible de piloter la
+      // d'ailleurs — app Maison, API REST, scene. Impossible de piloter la
       // lampe autrement qu'au fader, ce qui n'a aucun sens pour une ampoule
       // egalement exposee dans HomeKit.
       //
@@ -843,10 +843,10 @@ export class SmartLightService extends EventEmitter {
    * (une par zone). Chaque zone occupe 3 canaux consecutifs : rouge, vert, bleu.
    *
    * Politique de priorite (LTP, "latest takes precedence"), pour que configurer ce
-   * miroir ne rende pas le painter et les effets inutilisables :
+   * miroir ne rende pas la palette par zone et les effets inutilisables :
    *   - des que le bloc DMX BOUGE, le DMX prend la main (dmxZonesOwned = true) et
    *     garde le bandeau tant qu'on ne fait pas d'ecriture locale ;
-   *   - une ecriture locale (couleur, painter, effet) rend la main jusqu'au prochain
+   *   - une ecriture locale (couleur, palette par zone, effet) rend la main jusqu'au prochain
    *     mouvement du DMX.
    * Au tout premier tick apres enregistrement, on ne prend la main que si au moins un
    * canal est allume : sinon un bloc DMX a zero eteindrait un effet en cours au demarrage.
@@ -916,7 +916,7 @@ export class SmartLightService extends EventEmitter {
    *
    *  Le master ne peut pas rester un simple multiplicateur applique a tout : laisse
    *  a zero par le pupitre — son etat au repos — il rendait le bandeau totalement
-   *  sourd a HomeKit, au painter et a l'onglet Lampes, dont la sortie etait
+   *  sourd a HomeKit, a la palette par zone et a l'API REST, dont la sortie etait
    *  multipliee par zero sans qu'aucune commande locale ne puisse jamais y remonter.
    *  Il garde pourtant tout son sens de fader d'intensite : quand il bouge alors
    *  qu'une source locale joue, c'est lui qui fixe le niveau — et l'app Maison,
@@ -1044,7 +1044,7 @@ export class SmartLightService extends EventEmitter {
       //
       // Le master DMX n'attenue QUE ce qui vient du DMX. La trame extControl ne
       // transportant que du R/G/B, l'intensite doit bien etre appliquee ici — mais
-      // une source locale (HomeKit, painter, onglet Lampes) porte deja la sienne
+      // une source locale (HomeKit, palette par zone, API REST) porte deja la sienne
       // dans desired.brightness. Multiplier les deux rendait le bandeau muet des
       // que le pupitre laissait son master a zero ; un mouvement de ce fader est
       // desormais repercute en luminosite (voir applyMasterAsBrightness).
@@ -1163,7 +1163,7 @@ export function computeStateDiff(
  *  fait la couleur, pas la teinte. Passer systematiquement par le HSB laissait la
  *  consigne de blanc sans aucun effet — la trame extControl ne transporte que du
  *  R/G/B, et personne ne convertissait les Kelvin. Le curseur de blanc de l'app
- *  Maison bougeait donc dans le vide, en streaming comme au painter. */
+ *  Maison bougeait donc dans le vide, en streaming comme en palette par zone. */
 function desiredRgb(state: SmartLightState): { r: number; g: number; b: number } {
   if (state.colorMode !== "ct" || state.ct === undefined) return hsbToRgb(state);
   const white = kelvinToRgb(state.ct);

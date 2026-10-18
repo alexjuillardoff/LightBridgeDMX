@@ -29,9 +29,8 @@ export const registerSceneRoutes = (app: FastifyInstance, ctx: RouteContext, han
   });
 
   // DELETE : supprime definitivement une scene. Reponse 204 (sans corps).
-  // Sans cette route, la corbeille du pool d'executors ne pouvait que detacher
-  // l'emplacement cote navigateur : la scene restait en base et l'UI la
-  // repositionnait aussitot sur le premier emplacement libre.
+  // Sans elle, une scene retiree cote interface restait en base et revenait au
+  // rechargement suivant.
   app.delete("/api/scenes/:id", async (request, reply) => {
     try {
       await ctx.store.deleteScene((request.params as { id: string }).id);

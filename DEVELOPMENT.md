@@ -11,14 +11,13 @@ Référence technique du projet : architecture, conventions et décisions de con
 2. **Apple HomeKit** (expose les fixtures DMX comme accessoires natifs via `hap-nodejs`)
 3. **Smart Lights WiFi** (Nanoleaf et au-delà — pilotage HTTP + UDP streaming, effets position-aware en 3D, mirror DMX bidirectionnel)
 
-Il fournit un tableau de bord React qui monitore et contrôle l'univers DMX en temps réel, peint chaque zone d'une LED strip à la souris, édite la position 3D des zones et lance des effets dynamiques (chase / wave / gradient).
+Son tableau de bord web est en reconstruction ; en attendant, tout se pilote par l'API REST, le WebSocket et l'app Maison.
 
 **Stack :**
 - Backend : Fastify 4 + TypeScript (Node 18+), port **5000** (verrouillé)
-- Frontend : React 18 + Vite + React Query, port **5173** (proxy vers :5000)
+- Frontend : React 18 + Vite, port **5173** (proxy vers :5000) — socle seul, interface en reconstruction
 - Shared : package `@lightbridgedmx/shared` (types Zod partagés)
 - Base de données : SQLite via Prisma ORM (`backend/prisma/schema.prisma`, DB dans `backend/data/lightbridge.db`)
-- 3D editor : `three` + `@react-three/fiber` v8 + `@react-three/drei` v9 (lazy-loaded)
 - mDNS discovery : `bonjour-service` (pour scanner les Nanoleaf sur le LAN)
 - Monorepo : pnpm workspaces
 
@@ -624,7 +623,7 @@ Pilote des lampes WiFi (Nanoleaf en V1, extensible) avec deux paths de sortie, m
 
 ### DMX Mirror
 
-Si `light.dmxMirror = { rChannel, gChannel, bChannel, briChannel }` est défini, le service écoute `dmx.on("tick")` et lit ces canaux dans l'univers à chaque tick. Conversion RGB → HSV → push dans `desired` (qui sera flush au prochain tick HTTP ou stream). Permet d'inclure une smart light dans les scènes et les sliders du `ChannelGrid` de manière transparente.
+Si `light.dmxMirror = { rChannel, gChannel, bChannel, briChannel }` est défini, le service écoute `dmx.on("tick")` et lit ces canaux dans l'univers à chaque tick. Conversion RGB → HSV → push dans `desired` (qui sera flush au prochain tick HTTP ou stream). Permet d'inclure une smart light dans les scènes et les écritures DMX (`POST /api/universe`) de manière transparente.
 
 ### DMX Mirror par zone (strip = projecteur multi-cellules)
 
@@ -651,7 +650,7 @@ Deux propriétés voulues :
 - le master **ne prend jamais la main** sur le strip (pas de `dmxZonesOwned`) : c'est un fader d'intensité, il atténue ce qui joue sans le remplacer — bouger le master pendant un effet dimme l'effet, il ne le fige pas ;
 - `publishEffectToDmx` republie la frame **non atténuée** : le master a son propre canal, l'atténuer à la publication l'appliquerait une deuxième fois à la relecture du tick suivant, jusqu'au noir.
 
-**Priorité LTP (latest takes precedence)** — pour que configurer ce mirror ne rende pas le painter et les effets inutilisables :
+**Priorité LTP (latest takes precedence)** — pour que configurer ce mirror ne rende pas la palette par zone et les effets inutilisables :
 
 | Événement | Effet |
 |-----------|-------|
@@ -683,9 +682,9 @@ Un effet s'applique à la **sélection courante de projecteurs**, pas à une lam
 | `packages/shared/src/effect-cells.ts` | `resolveCells(fixtureIds, fixtures, smartLights)` — développe une sélection en **cellules** portant leurs canaux DMX absolus. |
 | `backend/.../effects/runner.ts` | `EffectRunner` — évalue à chaque trame de sortie DMX, traduit en écritures, tramage, et restaure à l'arrêt. |
 
-La math et la résolution des cellules vivent dans le **package partagé**, pas côté backend : l'aperçu
-de la fenêtre Effets appelle exactement les mêmes fonctions que le runner. C'est ce qui rend l'aperçu
-non-négociablement honnête — il ne peut pas montrer un chenillard sur 3 pas là où le bandeau en jouera
+La math et la résolution des cellules vivent dans le **package partagé**, pas côté backend : un aperçu
+côté interface peut appeler exactement les mêmes fonctions que le runner. C'est ce qui rend un tel
+aperçu non-négociablement honnête — il ne peut pas montrer un chenillard sur 3 pas là où le bandeau en jouera
 50, ni une couleur que le plateau ne prendra pas. Les tests de ces deux modules restent dans la suite
 Vitest du backend (`backend/src/services/effects/`), seul paquet du dépôt équipé pour les exécuter.
 
@@ -814,8 +813,6 @@ justement à régler l'effet en le regardant. Il conserve `t0`, les cellules et 
 d'avant lancement ; il recalcule la distribution spatiale et vide le report de tramage. La **cible**,
 elle, ne change pas : modifier la sélection, c'est un nouvel effet, pas un réglage.
 
-Le pool de départs vit dans le package partagé (`DMX_EFFECT_PRESETS`), dérivé du pool historique via `maToDmxEffect()` : les 23 presets ont été réglés à l'oreille sur le bandeau du salon, leurs phases et origines spatiales valent mieux qu'une réécriture.
-
 | `setStreaming(id, enabled, zoneCount?)` | Active/désactive le streaming UDP, persiste en DB |
 | `setEffect(id, effect)` | Définit l'effet position-aware courant, persiste en DB |
 | `setLayout(id, layout)` | Sauvegarde la disposition 3D des zones |
@@ -823,7 +820,7 @@ Le pool de départs vit dans le package partagé (`DMX_EFFECT_PRESETS`), dériv�
 
 ### Pairing Nanoleaf
 
-Le strip doit être en mode pairing (tenir le bouton power ~5–7 s jusqu'à pulsation LED, ou activer une option dans l'app Nanoleaf — fenêtre 30 s). Le UI propose un bouton "Pairer" qui POST `/api/smart-lights/pair`. En cas de 409 (pas en pairing), message clair retourné. Pour éviter le timing serré, le frontend peut polling toutes les 500 ms.
+Le strip doit être en mode pairing (tenir le bouton power ~5–7 s jusqu'à pulsation LED, ou activer une option dans l'app Nanoleaf — fenêtre 30 s). Le pairing passe par `POST /api/smart-lights/pair`. En cas de 409 (pas en pairing), message clair retourné. Pour éviter le timing serré, un client peut réessayer toutes les 500 ms.
 
 ### Streaming UDP extControl
 
@@ -1075,7 +1072,6 @@ Les avertissements `Unnecessary header_up X-Forwarded-*` au chargement sont atte
 ### Gestion d'erreurs
 - Routes backend : throw → `errors.ts` gère la réponse HTTP
 - `StoreError` (depuis `store.ts`) : erreur métier avec code HTTP
-- Frontend : React Query gère les états loading/error
 
 ### Validation
 - Toutes les entrées API passent par des schémas Zod (dans `shared/src/index.ts`)
@@ -1170,36 +1166,26 @@ retenues : un effet limité aux niches se répartit sur les niches, pas sur un r
 qu'un tiers. Une étiquette inconnue ne filtre rien — un effet qui ne fait rien du tout est un pire
 mode de défaillance qu'un effet trop large.
 
-Le pool `SMART_LIGHT_EFFECT_PRESETS` (dans `shared/`) livre 26 points de départ nommés, groupés par
-famille : 12 en distribution par rang (`pupitre`), 6 en 3D générique (`3d`), 9 taillés pour la
-géométrie relevée du meuble TV (`meuble`). Il est partagé backend/frontend pour ne pas dupliquer la
-liste.
-
 **Un effet est une source DMX.** Quand la lampe a un miroir DMX par zone, le moteur publie sa trame
-sur ces canaux : l'effet devient visible dans la Fader View et la DMX Sheet, et un « all out » le
+sur ces canaux : l'effet devient visible dans l'univers DMX (`universe_tick`), et un « all out » le
 reprend. Pour que le miroir ne relise pas la trame comme une commande venue du pupitre — ce qui lui
 ferait voler le bandeau à l'effet à la trame suivante — `DmxService` retient **qui a écrit chaque
 canal en dernier**, et à quel rang d'écriture. Le moteur vérifie avant chaque trame que personne ne
 lui est passé dessus depuis la précédente ; ce contrôle-là ne peut pas se faire à la lecture du tick,
 car entre deux ticks l'effet a le temps de recouvrir un blackout.
 
-### 8ter. Layouts : formes types et relevés
+### 8ter. Layouts : relevé du chemin réel
 
-`buildLinearLayout`, `buildUShapeLayout` et `buildRoomLoopLayout` génèrent des **formes types** à
-partir de quelques nombres. Une géométrie réelle n'entre pas toujours dans une forme type : le
-bandeau du salon suit le contour d'un meuble TV, avec trois niches, des passages cachés entre elles
-et deux longueurs de côté différentes.
+Une géométrie réelle n'entre pas dans une forme type : le bandeau du salon suit le contour d'un
+meuble TV, avec trois niches, des passages cachés entre elles et deux longueurs de côté différentes.
 
 `buildPathLayout({ legs, spareZones })` couvre ce cas : on décrit le **chemin réel du ruban**,
 tronçon par tronçon (nom, nombre de zones, extrémités 3D), et les zones de chaque tronçon se
 répartissent régulièrement entre ses extrémités. Un tronçon nommé devient une section (`sides`) que
-les effets savent viser. Le relevé lui-même se fait au ZonePainter (peindre une couleur par section,
-appliquer, puis lire le bloc miroir DMX).
+les effets savent viser. Le relevé lui-même se fait en peignant une couleur par section
+(`POST /api/smart-lights/:id/zones`), puis en lisant le bloc miroir DMX.
 
-### 9. Lazy-loading du 3D editor
-Le `LayoutEditor3D` (React Three Fiber + drei + three) pèse ~600 KB minifié. Il est chargé en lazy via `React.lazy(() => import("./smart-lights/LayoutEditor3D"))` + `Suspense` — seul l'utilisateur qui clique sur "📐 Layout 3D" paie le coût de chargement.
-
-### 10. Refresh smart lights : seulement si quiescent
+### 9. Refresh smart lights : seulement si quiescent
 Le refresh périodique (5 s) ne fire que si `now - lastLocalWriteAt > 2 s` ET `computeStateDiff(lastPushed, desired) === null`. Évite d'écraser un slider que l'utilisateur déplace en direct, mais resynchronise dès qu'il s'arrête. Skip aussi quand streaming actif (le streamer owns le device).
 
 ---
@@ -1310,12 +1296,10 @@ pnpm -C backend test --coverage  # avec couverture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          FRONTEND (React 18)                         │
-│  App.tsx → React Query → api.ts → fetch /api/*                      │
-│  useDmxWebsocket → {ws,wss}://<origine de la page>/ws               │
-│  ChannelGrid (sliders) → POST /api/universe/:channel                │
-│  SmartLightsPanel → POST /api/smart-lights/:id/{state,effect,zones} │
-│  LayoutEditor3D (R3F lazy) → POST /api/smart-lights/:id/layout      │
+│                     FRONTEND (en reconstruction)                    │
+│  Socle Vite seul — l'ancienne UI a été supprimée (commit 24c1176)   │
+│  fetch /api/*  ·  écritures DMX groupées : POST /api/universe       │
+│  WebSocket {ws,wss}://<origine de la page>/ws                       │
 └────────────┬─────────────────────────────────────────┬──────────────┘
              │ HTTP REST + WebSocket                    │
 ┌────────────▼─────────────────────────────────────────▼──────────────┐

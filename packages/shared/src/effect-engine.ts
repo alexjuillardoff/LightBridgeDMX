@@ -11,8 +11,8 @@
 // projecteur de la selection ou une zone d'un bandeau multi-cellules : le moteur
 // ne fait pas la difference, ce qui est exactement le but.
 //
-// Ce module vit dans le package PARTAGE : la fenetre Effets s'en sert pour animer
-// son apercu, le runner pour ecrire dans l'univers. Une seule math pour les deux,
+// Ce module vit dans le package PARTAGE : une interface peut s'en servir pour
+// animer un apercu, le runner pour ecrire dans l'univers. Une seule math pour les deux,
 // donc un apercu qui ne peut pas mentir sur ce que le plateau va faire.
 // =============================================================================
 import type {
@@ -275,8 +275,8 @@ export function applyCurve(v: number, curve: DmxEffect["curve"]): number {
  * Renvoie null quand l'attribut n'a rien a dire au trio R/G/B (pan, tilt, ou une
  * composante isolee) : la cellule ne sait alors pas jouer cette ligne.
  *
- * Partage entre le runner (qui l'ecrit sur le plateau) et l'apercu de la fenetre
- * Effets (qui la peint a l'ecran) : les deux montrent forcement la meme chose.
+ * Partage entre le runner (qui l'ecrit sur le plateau) et un apercu cote
+ * interface (qui la peint a l'ecran) : les deux montrent forcement la meme chose.
  */
 export function effectLineColor(
   effect: DmxEffect,

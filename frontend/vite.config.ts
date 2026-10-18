@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 // On resout le package partage vers sa SOURCE TypeScript (et non son dist/index.js compile en
 // CommonJS). Raison : au build, rollup n'arrive pas a detecter les exports de fonctions du dist
-// CJS (ex. buildUShapeLayout), ce qui cassait `vite build`. En pointant sur la source ESM, tous
+// CJS (ex. buildPathLayout), ce qui cassait `vite build`. En pointant sur la source ESM, tous
 // les exports nommes sont resolus proprement, et c'est coherent avec le backend (tsconfig-paths
 // resout aussi vers src). Bonus : plus besoin que `packages/shared` soit compile avant le frontend.
 const sharedSource = fileURLToPath(new URL("../packages/shared/src/index.ts", import.meta.url));

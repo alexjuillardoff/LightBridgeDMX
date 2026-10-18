@@ -13,8 +13,8 @@
 // selection : selectionner la lyre puis le bandeau met la lyre en phase 0 et etale
 // le reste du cycle sur les 50 zones.
 //
-// Ce module vit dans le package PARTAGE, et pas cote backend : l'apercu de la
-// fenetre Effets doit developper la selection exactement comme le moteur le fera,
+// Ce module vit dans le package PARTAGE, et pas cote backend : un apercu cote
+// interface doit developper la selection exactement comme le moteur le fera,
 // sinon il annonce un chenillard sur 3 pas la ou le bandeau en jouera 50.
 // =============================================================================
 import type {
