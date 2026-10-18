@@ -119,63 +119,13 @@ de lampe (`backend/src/services/smart-lights/homekit-thread-client.ts`).
 
 ### Frontend (`frontend/`)
 
-L'interface est un **pupitre grandMA2** : 3 vues (Live, Patch, Setup), routing par hash URL,
-barre de vues desktop/tablet + bottom nav iOS mobile. La vue Live n'est pas une page qui défile mais un
-**plan de travail** de fenêtres déplaçables. **Patch** regroupe tout ce qui définit le plateau — le patch
-DMX *et* le réseau — en trois volets adressables (`#patch`, `#patch/inventaire`, `#patch/lampes`) ;
-l'ancienne vue *Réseau* y a fondu, ses liens (`#reseau`, `#appareils`, `#lampes`) ouvrant le bon volet.
+**En reconstruction.** L'ancienne interface (pupitre grandMA2) a été supprimée le 2026-10-18 ; sa
+dernière version est au commit `24c1176`. Reste le socle :
 
-- `package.json` : scripts Vite (`dev`, `build`, `preview`), deps React 18 + React Query + qrcode.react + three / @react-three/fiber v8 / @react-three/drei v9 + **lucide-react** (icônes).
-- `vite.config.ts` : proxy API/WS vers `http://localhost:5000`, serveur dev `host: true`, port 5173.
-- `src/main.tsx` : bootstrap React/Vite + QueryClient.
-- `src/App.tsx` : empile les providers dans l'ordre imposé par leurs dépendances — `AppData` → `Selection` → `Console` → `Command` → `AppShell`.
-- `src/shell/` : châssis du pupitre
-  - `AppShell.tsx` — `StatusBar` + `TabBar` + vue active (lazy `LivePage`) + `KeypadRail` + `CommandLine` + `BottomNav` ; met à jour `document.title` selon la vue
-  - `StatusBar.tsx` — barre d'état haute (univers, sortie DMX, canaux actifs, projecteurs, sélection, LED Link/HomeKit, horloge, Blackout)
-  - `TabBar.tsx` — barre de vues numérotées desktop/tablet (cachée <640px), icônes lucide
-  - `BottomNav.tsx` — bottom nav iOS-style mobile (cachée ≥640px), `safe-area-inset-bottom`
-  - `KeypadRail.tsx` — rail de touches ≥1280px : Fixture/Group/All, Thru/+/At, pavé numérique, **Store/Go/Off**, Please, B.O., raccourcis de vues, compteurs des pools
-  - `CommandLine.tsx` — ligne de commande turquoise (ligne de retour + saisie + touches rapides)
-  - `tabs.ts` — source unique des 3 `TabDef` + des 3 `PatchPaneDef` (volets de Patch) + `resolveRoute()` qui traduit un hash (`#patch`, `#patch/lampes`) ou un ancien hash (`#dashboard`, `#projecteurs`, `#reseau`, `#lampes`, `#appareils`, `#reglages`) vers une `Route` `{ tab, pane? }`, et `routeToHash()` / `routeLabel()` pour le chemin inverse
-  - `useHashTab.ts` — routing hash URL (`useState` + `hashchange` listener), rend une `Route` (vue **et** volet), fallback `#live`
-  - `navigate.ts` — `setActiveTabHash(route | mot)` pour liens internes et commande `GOTO` ; résout le mot tapé et renvoie la `Route` atteinte (ou `null`)
-- `src/contexts/` : state partagé entre vues
-  - `AppDataContext.tsx` — provider central (queries, mutations, WS handlers, wsBadge, logMessage, logHistory, handleBlackout). Value mémoïzée pour absorber les ticks 30 Hz sans re-render des consommateurs.
-  - `SelectionContext.tsx` — le *programmer* : sélection de projecteurs, conservée d'une vue à l'autre. **Refuse les projecteurs verrouillés** (`lib/fixtureGuard`), donc sheet / `ALL` / groupes / encodeurs / ligne de commande héritent du garde-fou sans le réimplémenter.
-  - `ConsoleContext.tsx` — les pools du pupitre : groupes, executors, playbacks, presets. STORE (capture → `POST /api/scenes`), GO (`/activate`), OFF, faders master. Persistance partagée : scènes et presets côté backend, groupes / slots / disposition en `localStorage`.
-  - `CommandContext.tsx` — saisie et exécution de la ligne de commande, partagée par la barre du bas, le rail de touches et les tuiles des pools (via `report`).
-  - `UniverseStateContext.tsx` — expose **deux** accès : `useUniverseState()` (valeur qui change à chaque tick 30 Hz — pour les faders et cellules de sheet uniquement) et `useUniverseValuesRef()` (ref stable, **aucun** re-render — pour lire l'univers dans un handler, ex. STORE).
-- `src/pages/` : une page par vue
-  - `LivePage.tsx` (lazy via React.lazy) — rend `Workspace`
-  - `PatchPage.tsx` — le plateau, câblé et sans fil, en trois volets pilotés par le hash : *Projecteurs* (`FixturesTable` en premier + `FixtureForm` + `QxfLibraryPanel`), *Inventaire réseau* (`DeviceInventory`), *Lampes connectées* (`patch/SmartLightsPane`)
-  - `patch/SmartLightsPane.tsx` — pastilles de backend + `SmartLightsPanel` ; isole l'état du filtre pour que changer de marque ne re-rende pas la table du patch
-  - `SetupPage.tsx` — `HomeKitCard` + `MerossCard` + cartes Système / Variables backend / Maintenance
-- `src/components/console/` : le pupitre proprement dit
-  - `Workspace.tsx` — gestionnaire de fenêtres : Views rappelables, ajout/fermeture, ordre d'empilement, Reset, persistance `localStorage`. Sous 1024 px, les fenêtres sont empilées en cartes.
-  - `ConsoleWindow.tsx` — cadre de fenêtre : glisser la barre de titre déplace, glisser le coin bas-droit redimensionne (Pointer Events, accrochage grille, géométrie locale pendant le geste)
-  - `windows/registry.tsx` — `WindowKind` → composant de contenu. **Seul endroit à toucher** pour ajouter une fenêtre.
-  - `windows/` — `ExecutorsWindow` (Store/Go/Off/libérer), `PlaybacksWindow` (faders master), `GroupsWindow`, `PresetsWindow`, `LogWindow`
-  - `windows/effects/` — la fenêtre Effets, calquée sur l'Effect Editor d'un grandMA2 : pool de départs, aperçu animé (mêmes fonctions que le runner DMX), tableau des lignes, vitesse/MAtricks/couleurs/rendu, et retouche à chaud de l'effet en cours
-- `src/lib/console/` :
-  - `layout.ts` — modèle de disposition : grille 24 colonnes × rangées de 30 px, bornes, 4 Views d'origine (Programmer / Playback / DMX / Effets), libellés des fenêtres
-  - `scenes.ts` — `captureScene()` (STORE) et `applySceneAtLevel()` (rappel à niveau). Un master **n'atténue que** `intensity/r/g/b/w/uv` : pan, tilt, gobo et roue de couleurs sont rejoués tels quels, sinon baisser un playback ferait dériver la lyre à mi-course.
-- `src/lib/api.ts` : client REST (fetch JSON) + `wsUrl()` + namespaces `fixtures` / `scenes` / `presets` / `universe` / `qxf` / `homekit` / `devices` / `meross` / `system` / `rooms` / `smartLights`. `wsUrl()` suit **l'origine de la page** (`wss://` si la page est en HTTPS, `host` avec son port) et passe donc par le même proxy `/ws` que les appels `/api` — indispensable derrière un reverse proxy TLS, cf. [Exposition réseau](#exposition-réseau-reverse-proxy).
-- `src/lib/fixtureGuard.ts` : projecteurs **verrouillés** (chambre) — liste blanche par pièce / nom / id. Visibles mais non sélectionnables, exclus des scènes à l'enregistrement comme au rappel. À distinguer de `hiddenFixtures.ts`, filtre purement cosmétique.
-- `src/lib/commandLine.ts` : parser pur texte → `ParsedCommand`. Verbes `FIX`/`CH`/`AT`/`FULL`/`OUT`/`ALL`/`CLEAR`/`BLACKOUT`/`GOTO` + `STORE`/`GO`/`OFF`/`GROUP`/`PRESET`.
-- `src/lib/programmer.ts` : traduction attribut ↔ canaux DMX absolus (groupes d'encodeurs, lecture HTP, écriture sur la sélection).
-- `src/lib/localStore.ts`, `feedback.ts`, `fixtures.ts`, `fixtureTemplates.ts`, `math.ts` : helpers UI.
-- `src/hooks/useDmxWebsocket.ts` : hook WS — écoute `universe_tick`, `fixture_updated`, `smart_light_updated`, `scene_activated`, `log` ; expose `logHistory: LogEntry[]` (rolling 10).
-- `src/hooks/useMediaQuery.ts` : suit une media query — bascule plan de travail / pile mobile sans dupliquer le point de rupture entre la CSS et le JS.
-- `src/components/` :
-  - `FixtureSheet.tsx` (cellules groupées par pièce, sélection, cadenas des verrouillés), `EncoderBar.tsx` (groupes d'attributs, molettes, valeurs rapides), `ChannelGrid.tsx` (fader view 32 canaux/page), `UniverseMonitor.tsx` (DMX sheet 512 canaux)
-  - `ma/MaFader.tsx`, `ma/MaKnob.tsx` : fader et molette maison aux Pointer Events (pas d'`<input type="range">` : rendu identique partout)
-  - `FixtureForm.tsx`, `FixturesTable.tsx` (avec `data-label` pour stacked cards mobile), `QxfLibraryPanel.tsx`, `HomeKitCard.tsx`, `MerossCard.tsx`, `DeviceInventory.tsx`
-  - `SmartLightsPanel.tsx` : accepte `backendFilter` + `hideSectionTitle` (PairCard + cartes par lampe + onglets Painter/Effets/Layout 3D)
-  - `smart-lights/backendRegistry.ts` : registre des backends UI (Nanoleaf aujourd'hui, Hue/Matter futur — ajouter une entrée suffit)
-  - `smart-lights/ZonePainter.tsx` : 50 swatches paintable click+drag, brush color + spare, presets, fill all
-  - `smart-lights/EffectDesigner.tsx` : onglets solid/gradient/chase/wave + sliders live (chaque changement = PUT effet)
-  - `smart-lights/LayoutEditor3D.tsx` : éditeur 3D React Three Fiber (sphères draggables, OrbitControls, modes linked/unlinked, preset U-shape, hide spare)
-- `src/styles.css` : feuille unique sans framework — thème pupitre (fond noir, liseré ambre `--edge`, barres de titre bleues, ligne de commande turquoise, zéro arrondi), fenêtres du plan de travail, pools, breakpoints `<640px` / `640-1023px` / `≥1024px` (plan de travail) / `≥1280px` (rail), `.channels` adaptatif (16 → 12 → 8 → 4 colonnes), `.table` en cartes empilées sur mobile.
+- `package.json` : scripts Vite (`dev`, `build`, `preview`).
+- `vite.config.ts` : proxy API/WS vers `http://localhost:5000`, serveur dev `host: true`, port 5173, alias `@lightbridgedmx/shared` → source TypeScript.
+- `index.html`, `src/main.tsx` : bootstrap React.
+- `src/App.tsx` : page d'attente.
 
 ### Shared (`packages/shared/`)
 - `src/effect-engine.ts` : la math des effets DMX — `evaluateDmxEffect()`, `spatialPositions()`, `applyCurve()`, `effectLineColor()`. Partagée entre le runner DMX et l'aperçu de la fenêtre Effets, pour que l'aperçu ne puisse pas mentir.

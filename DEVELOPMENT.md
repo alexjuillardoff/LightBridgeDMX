@@ -72,87 +72,13 @@ LightBridgeDMX/
 │   │       ├── universe.ts            ← POST /api/universe/:channel, test fixture
 │   │       └── smart-lights.ts        ← /api/smart-lights (CRUD, pair, state, streaming, effect, layout, discover)
 │   └── .homekit/                      ← stockage HAP (pairage, identifiants)
-├── frontend/
+├── frontend/                          ← interface en reconstruction (socle seul)
 │   ├── package.json
 │   ├── vite.config.ts                 ← proxy /api et /ws vers :5000
-│   ├── src/
-│   │   ├── main.tsx                   ← bootstrap React + QueryClient
-│   │   ├── App.tsx                    ← empile AppData → Selection → Console → Command → AppShell
-│   │   ├── shell/                     ← châssis du pupitre (barre d'état, vues, rail, cmdline)
-│   │   │   ├── AppShell.tsx           ← layout racine : StatusBar + TabBar + vue active + KeypadRail + CommandLine
-│   │   │   ├── StatusBar.tsx          ← barre d'état haute (univers, sortie DMX, LED, horloge, Blackout)
-│   │   │   ├── TabBar.tsx             ← barre de vues numérotées, cachée <640px
-│   │   │   ├── BottomNav.tsx          ← bottom nav iOS-style mobile, cachée ≥640px, safe-area-inset
-│   │   │   ├── tabs.ts                ← source unique des 3 vues + des volets de Patch + traduction des anciens hashs
-│   │   │   ├── CommandLine.tsx        ← ligne de commande turquoise (saisie + ligne de retour)
-│   │   │   ├── KeypadRail.tsx         ← rail droit : Fixture/Group/Thru/At, pavé, Store/Go/Off, Please, B.O.
-│   │   │   ├── useHashTab.ts          ← hook routing par hash URL (#live, #patch, #patch/lampes, #setup)
-│   │   │   └── navigate.ts            ← helper setActiveTabHash() pour liens internes
-│   │   ├── contexts/
-│   │   │   ├── AppDataContext.tsx     ← provider central — queries, mutations, WS handlers, log history
-│   │   │   ├── SelectionContext.tsx   ← le "programmer" — sélection de fixtures + refus des verrouillés
-│   │   │   ├── ConsoleContext.tsx     ← pools : groupes, executors, playbacks, presets (STORE/GO/OFF)
-│   │   │   ├── CommandContext.tsx     ← saisie + exécution des commandes (partagée cmdline/rail)
-│   │   │   └── UniverseStateContext.tsx ← universeState 30 Hz + ref stable sans abonnement
-│   │   ├── pages/                     ← une page par vue (consomment les contextes)
-│   │   │   ├── LivePage.tsx           ← le plan de travail (Workspace), lazy
-│   │   │   ├── PatchPage.tsx          ← volets Projecteurs / Inventaire réseau / Lampes connectées
-│   │   │   ├── patch/SmartLightsPane.tsx ← volet Lampes : pastilles de backend + SmartLightsPanel
-│   │   │   └── SetupPage.tsx          ← HomeKitCard + MerossCard + Système / Variables / Maintenance
-│   │   ├── components/
-│   │   │   ├── console/               ← le pupitre proprement dit
-│   │   │   │   ├── Workspace.tsx      ← gestionnaire de fenêtres + barre des Views + menu « + Fenêtre »
-│   │   │   │   ├── ConsoleWindow.tsx  ← cadre de fenêtre : glisser la barre de titre, redimensionner le coin
-│   │   │   │   └── windows/
-│   │   │   │       ├── registry.tsx        ← WindowKind → composant de contenu
-│   │   │   │       ├── ExecutorsWindow.tsx ← pool d'executors (Store / Go / Off / libérer)
-│   │   │   │       ├── PlaybacksWindow.tsx ← rangée de faders master
-│   │   │   │       ├── GroupsWindow.tsx    ← pool de groupes de sélection
-│   │   │   │       ├── PresetsWindow.tsx   ← pool de presets (canal → valeur)
-│   │   │   │       ├── LogWindow.tsx       ← journal des événements backend
-│   │   │   │       └── effects/            ← fenêtre Effets (éditeur type grandMA2)
-│   │   │   │           ├── EffectsWindow.tsx  ← orchestration : sélection, brouillon, effet suivi
-│   │   │   │           ├── EffectPool.tsx     ← les 23 départs en tuiles numérotées
-│   │   │   │           ├── EffectPreview.tsx  ← aperçu animé (mêmes fonctions que le runner DMX)
-│   │   │   │           ├── EffectLines.tsx    ← tableau des lignes (un attribut par ligne)
-│   │   │   │           ├── EffectMasters.tsx  ← vitesse, MAtricks, couleurs, rendu
-│   │   │   │           └── labels.ts          ← libellés FR des clés de schéma + conversions
-│   │   │   ├── FixtureSheet.tsx       ← cellules fixtures groupées par pièce + sélection + cadenas
-│   │   │   ├── EncoderBar.tsx         ← onglets de groupe + molettes + valeurs rapides (0/25/50/75/FL)
-│   │   │   ├── UniverseMonitor.tsx    ← DMX sheet 512 canaux en lecture seule
-│   │   │   ├── ma/MaFader.tsx         ← fader maison (pointeur + clavier), vertical ou horizontal
-│   │   │   ├── ma/MaKnob.tsx          ← molette d'encodeur (drag relatif, arc de niveau)
-│   │   │   ├── FixtureForm.tsx        ← ajout d'une SÉRIE de fixtures (quantité, adresses auto, pièce)
-│   │   │   ├── patch/FixtureSchedule.tsx ← table du patch éditable (renommage, tri, conflits, actions groupées)
-│   │   │   ├── patch/FixtureEditor.tsx   ← fiche d'édition d'un projecteur (adresse, canaux, pièce, HomeKit)
-│   │   │   ├── ChannelGrid.tsx        ← fader view 32 canaux/page (16 → 12 → 8 → 4 colonnes)
-│   │   │   ├── DeviceInventory.tsx    ← inventaire réseau unifié (ex-DevicesPage)
-│   │   │   ├── QxfLibraryPanel.tsx    ← navigateur bibliothèque QXF + import
-│   │   │   ├── HomeKitCard.tsx        ← statut HomeKit + QR code + PIN
-│   │   │   ├── MerossCard.tsx         ← config + métrologie de la prise Meross
-│   │   │   ├── SmartLightsPanel.tsx   ← accepte `backendFilter` + `hideSectionTitle` (extensible)
-│   │   │   └── smart-lights/
-│   │   │       ├── backendRegistry.ts     ← registre extensible (Nanoleaf + futurs Hue/Matter)
-│   │   │       ├── ZonePainter.tsx        ← 50 swatches paintable click+drag, presets, fill
-│   │   │       ├── EffectDesigner.tsx     ← onglets solid/gradient/chase/wave + sliders live
-│   │   │       └── LayoutEditor3D.tsx     ← React Three Fiber, sphères 3D draggables, lazy-loaded
-│   │   ├── hooks/
-│   │   │   ├── useDmxWebsocket.ts     ← hook WS (universe_tick, fixture_updated, smart_light_updated) + logHistory rolling 10
-│   │   │   └── useMediaQuery.ts       ← suit une media query (bascule plan de travail / pile mobile)
-│   │   └── lib/
-│   │       ├── api.ts                 ← client fetch + wsUrl()
-│   │       ├── console/layout.ts      ← modèle de disposition (grille 24 col.) + Views d'origine
-│   │       ├── console/scenes.ts      ← capture (STORE) et rappel à niveau (playback master)
-│   │       ├── feedback.ts            ← ActionResult partagé (ok/warn/fail/info)
-│   │       ├── fixtureGuard.ts        ← projecteurs VERROUILLÉS (chambre) — garde-fou structurel
-│   │       ├── hiddenFixtures.ts      ← projecteurs masqués de l'UI (filtre cosmétique)
-│   │       ├── localStore.ts          ← persistance locale (disposition, groupes, slots d'executors)
-│   │       ├── fixtures.ts            ← couleurs par fixture, canaux visibles, canaux actifs
-│   │       ├── programmer.ts          ← attributs ↔ canaux DMX (groupes, lecture/écriture sélection)
-│   │       ├── commandLine.ts         ← parser de la ligne de commande (texte → intention typée)
-│   │       ├── fixtureTemplates.ts    ← templates prédéfinis (rgb, rgbw, dimmer)
-│   │       ├── patch.ts               ← calculs du patch (encombrement, conflits, adresses libres, tri)
-│   │       └── math.ts                ← clamp(), addAlpha()
+│   ├── index.html
+│   └── src/
+│       ├── main.tsx                   ← bootstrap React
+│       └── App.tsx                    ← page d'attente
 └── packages/
     └── shared/
         └── src/
@@ -162,227 +88,27 @@ LightBridgeDMX/
 ---
 ## Architecture UI (frontend)
 
-L'interface est un **pupitre grandMA2** : fond noir, fenêtres à liseré ambre et barre de titre bleue,
-ligne de commande turquoise en bas, rail de touches à droite. Elle reste responsive (desktop / tablet /
-mobile <640px) et le routing se fait par hash URL, sans dépendance de routeur.
+> 🚧 **Interface en reconstruction.** L'ancienne UI (pupitre grandMA2, ~15 000 lignes) a été supprimée
+> le 2026-10-18 ; sa dernière version est au commit `24c1176`. `frontend/` ne contient plus que le socle :
+> `vite.config.ts` (port 5173, proxy `/api` + `/ws`, alias vers la source de `shared`), `index.html`,
+> `src/main.tsx` et une page d'attente `src/App.tsx`.
 
-### Châssis (`shell/AppShell.tsx`)
+### Leçons de l'ancienne UI à reporter dans la nouvelle
 
-```
-┌ StatusBar ── univers · sortie DMX · canaux · projecteurs · sélection · LED · horloge · Blackout ┐
-│ TabBar ──── Live / Patch / Setup (masquée <640px)                                               │
-│ ma-body ─── écran (la vue active)                    │ KeypadRail (≥1280px)                     │
-│ CommandLine ─ ligne de retour + saisie + touches rapides                                        │
-└ BottomNav ── navigation mobile (<640px uniquement)                                              ┘
-```
+Ces règles ne tiennent pas au look de l'ancienne interface mais au matériel et au backend :
 
-Le `body` est en `overflow: hidden` : c'est l'écran (`.ma-screen`) qui défile, pas la page — le châssis
-reste donc fixe comme sur un vrai pupitre.
-
-### 3 vues
-
-Le découpage suit l'usage d'un pupitre, pas l'organisation du code :
-
-| Vue | Hash | Composant page | Contenu |
-|-----|------|----------------|---------|
-| **Live** | `#live` | `pages/LivePage.tsx` (lazy) | Le plan de travail : fenêtres déplaçables + barre des Views |
-| **Patch** | `#patch` | `pages/PatchPage.tsx` | Le plateau, câblé et sans fil, en trois volets (voir ci-dessous) |
-| **Setup** | `#setup` | `pages/SetupPage.tsx` | `HomeKitCard` + `MerossCard` + Système / Variables backend / Maintenance |
-
-Les volets de **Patch** sont adressables et gardés dans l'URL, donc un lien partagé rouvre le bon :
-
-| Volet | Hash | Contenu |
-|-------|------|---------|
-| *Projecteurs* | `#patch` | `FixturesTable` (en premier) + `FixtureForm` + `QxfLibraryPanel` |
-| *Inventaire réseau* | `#patch/inventaire` | `DeviceInventory` — ce que le LAN expose, pilotable ou non |
-| *Lampes connectées* | `#patch/lampes` | `patch/SmartLightsPane` — pastilles de backend + `SmartLightsPanel` |
-
-> **Historique.** Il y avait auparavant six onglets. « Tableau de bord » ne faisait que répéter la barre
-> d'état (fps, canaux actifs, nombre de projecteurs) et renvoyait ailleurs par des liens ; « Appareils »
-> et « Lampes connectées » coupaient en deux un même geste (découvrir puis piloter).
-> L'ancien Mode Dance, lui, apparaissait à la fois sur le tableau de bord et dans Live.
-> Il a depuis été retiré : c'était un chenillard codé en dur, remplacé par le pool d'effets
-> paramétriques de la fenêtre **Effets** (voir plus bas).
- Puis la vue « Réseau » a fondu dans
-> « Patch » : découvrir une Nanoleaf, l'appairer et lui donner une adresse DMX est un seul geste, et
-> « de quoi est fait le plateau ? » une seule question — elle survit comme deux volets. Les anciens
-> hashs (`#dashboard`, `#projecteurs`, `#reseau`, `#lampes`, `#appareils`, `#reglages`) restent valides
-> et sont traduits par `resolveRoute()` dans `shell/tabs.ts`, vers le volet qui a repris leur contenu :
-> un signet ou un raccourci d'écran d'accueil continue de marcher.
-
-### Le plan de travail (`components/console/`)
-
-La vue Live n'est **pas** une page qui défile. Un pupitre ne défile pas : sélection, encodeurs et
-executors se regardent en même temps. C'est donc un plan sur lequel on pose des fenêtres.
-
-- `lib/console/layout.ts` — le modèle. Repère en **grille** : `x`/`w` en colonnes sur 24, `y`/`h` en
-  rangées de `ROW_PX` (30 px). La disposition suit donc la largeur de l'écran au lieu de se décaler, et
-  les fenêtres s'accrochent entre elles. Quatre **Views** d'origine : `Programmer`, `Playback`, `DMX`,
-  `Effets`.
-- `components/console/ConsoleWindow.tsx` — le cadre. Deux gestes : glisser la barre de titre déplace,
-  glisser le coin bas-droit redimensionne. Pointer Events (souris / tactile / stylet, même code),
-  `touch-action: none` sur les poignées, géométrie en cours de glissement dans un état **local** — le
-  plan n'est re-rendu qu'au relâchement.
-- `components/console/Workspace.tsx` — le gestionnaire : Views, ajout/fermeture de fenêtres, ordre
-  d'empilement, Reset. Sous **1024 px** les fenêtres sont empilées en cartes (`.ma-win-static`) : on ne
-  déplace pas des fenêtres au pouce.
-- `components/console/windows/registry.tsx` — `WindowKind` → composant. **Un seul endroit à toucher**
-  pour ajouter une fenêtre : déclarer le type dans `layout.ts`, ajouter l'entrée ici.
-
-Types de fenêtres : `fixtures`, `encoders`, `executors`, `playbacks`, `groups`, `presets`, `faders`,
-`dmx`, `effects`, `log`.
-
-La disposition est persistée dans `localStorage` (`lib/localStore.ts`) : elle décrit le **poste de
-travail**, pas le spectacle.
-
-### Les pools (`contexts/ConsoleContext.tsx`)
-
-C'est la couche qui manquait. Le backend savait déjà enregistrer une scène (`POST /api/scenes`), la
-rejouer (`/activate`) et appliquer un preset (`/api/presets/:id/apply`) — **aucune UI ne s'en servait**.
-La rangée d'executors était un décor : douze tuiles non cliquables, et aucun moyen d'enregistrer quoi
-que ce soit depuis l'écran.
-
-| Geste | Effet |
-|-------|-------|
-| `STORE n` | Photographie le programmer dans une scène et l'affecte à l'emplacement `n`. Sélection vide = tout le plateau. |
-| `GO n` | Rejoue l'emplacement **côté backend** : tous les écrans connectés suivent. |
-| `OFF n` | Met à zéro les seuls canaux que cette scène pilote. |
-| Fader | Rejoue la scène à un niveau intermédiaire (master d'intensité). |
-| `STORE GROUP n` / `GROUP n` | Fige / rappelle une sélection de projecteurs. |
-| `STORE PRESET n` / `PRESET n` | Fige / applique une carte canal → valeur. |
-
-Deux points de conception à ne pas défaire :
-
-- **Un master n'atténue que la lumière.** `lib/console/scenes.ts` ne met à l'échelle que les capabilities
-  `intensity`, `r`, `g`, `b`, `w`, `uv` ; pan, tilt, gobo et roue de couleurs sont rejoués à leur valeur
-  mémorisée. Baisser un playback baisse l'intensité, il ne fait pas dériver la lyre à mi-course.
-- **Les écritures de fader sont regroupées par frame.** Sans ça, glisser un playback émettrait un
-  `POST /api/universe/:channel` par canal **et** par événement pointeur : sur une scène contenant le
-  strip Nanoleaf (150 canaux), un seul geste noierait le backend. `setLevel` ne garde que la dernière
-  valeur demandée et l'applique une fois par `requestAnimationFrame`.
-
-Répartition de la persistance : **scènes et presets → backend** (ils appartiennent au spectacle) ;
-**groupes, numéro d'emplacement d'un executor, disposition des fenêtres → localStorage** (ils
-appartiennent au poste). Conséquence assumée : les groupes ne suivent pas d'un navigateur à l'autre.
-Les rendre partagés demanderait une table `Group` côté Prisma.
-
-### Projecteurs verrouillés (`lib/fixtureGuard.ts`)
-
-Garde-fou de sécurité : certains projecteurs ne doivent **jamais** être allumés (le PAR de la chambre
-quand quelqu'un y dort). Les masquer serait un mauvais garde-fou — un projecteur invisible finit par être
-rallumé « par accident » depuis la ligne de commande ou une scène rappelée.
-
-Ils sont donc **visibles mais verrouillés** : cadenas dans la fixture sheet, cellule hachurée, clic sans
-effet. Le blocage vit dans `SelectionContext` (un verrouillé ne peut pas entrer dans le programmer), donc
-la fixture sheet, `ALL`, les groupes, les encodeurs et la ligne de commande en héritent sans y penser.
-`captureScene` et `applySceneAtLevel` les écartent aussi, à l'enregistrement comme au rappel.
-
-Règle : **liste blanche**. Verrouillage par pièce (`chambre`), par nom (`/\bchambre\b/i`) ou par id.
-À ne pas confondre avec `lib/hiddenFixtures.ts`, qui est un filtre purement cosmétique.
-
-### Navigation responsive
-
-- **Desktop / tablet (≥640px)** : `shell/TabBar.tsx` — barre de vues numérotées (icônes lucide-react).
-- **Mobile (<640px)** : `shell/BottomNav.tsx` — nav basse avec `env(safe-area-inset-bottom)`.
-- **Rail de touches** : `shell/KeypadRail.tsx`, affiché seulement ≥1280px.
-- **Plan de travail** : fenêtres déplaçables ≥1024px, empilées en dessous (`hooks/useMediaQuery.ts`).
-- Routing : `shell/useHashTab.ts`. Deep-link `#live` rendu au premier paint (hash lu en synchrone).
-
-### Sélection et ligne de commande
-
-Trois briques, qui parlent d'**attributs** (Dimmer, Red, Pan…) et jamais de numéros de canaux :
-
-- `contexts/SelectionContext.tsx` — la sélection courante (le *programmer*). Elle survit aux changements
-  de vue, et refuse les projecteurs verrouillés.
-- `lib/programmer.ts` — traduit un attribut en canaux DMX absolus (`channelsForAttr`), lit une valeur
-  (`readAttr`, convention HTP sur une sélection multiple) et écrit (`applyAttr`). Le dimmer retombe sur
-  les canaux r/g/b quand la fixture n'a pas de canal d'intensité dédié — cas des PAR RGB.
-- `lib/commandLine.ts` — parser pur : texte → intention typée (`ParsedCommand`), sans jamais lever
-  d'exception. L'exécution vit dans `contexts/CommandContext.tsx`, partagé par la barre du bas, le rail
-  de touches et les tuiles des pools (via `report`).
-
-Syntaxe supportée (valeurs en **pourcent** par défaut, suffixe `d`/`dmx` pour du brut 0-255) :
-
-| Commande | Effet |
-|----------|-------|
-| `FIX 1 THRU 3` / `1 + 4` | sélectionne des fixtures par leur numéro d'affichage dans la sheet |
-| `FIX 1 AT 50` | sélectionne puis règle le dimmer |
-| `AT 50` · `FULL` · `OUT` | règle le dimmer de la sélection courante |
-| `RED 100` · `PAN 51D` | règle un attribut de la sélection |
-| `CH 12 THRU 20 AT 75` | écrit directement des canaux de l'univers |
-| `ALL` · `CLEAR` | sélectionne tout (hors verrouillés) / vide la sélection |
-| `STORE 1 Ambiance` | mémorise le programmer dans l'executor 1 |
-| `GO 1` · `OFF 1` | rejoue / éteint un executor |
-| `STORE GROUP 2 Salon` · `GROUP 2` | mémorise / rappelle un groupe de sélection |
-| `STORE PRESET 3 Bleu` · `PRESET 3` | mémorise / applique un preset |
-| `BLACKOUT` | remet les 512 canaux à zéro |
-| `GOTO PATCH` | change de vue (`live`, `patch`, `setup`) ; `goto reseau` / `appareils` / `lampes` ouvrent le volet correspondant de Patch |
-
-Les mots-clés existent aussi en français (`projecteur`, `canal`, `rouge`, `couleur`, `groupe`…) et les
-accents sont ignorés. `OFF` seul reste le raccourci « dimmer à zéro » ; c'est la présence d'un numéro
-(`OFF 3`) qui en fait un Off d'executor.
-
-### State management
-
-Deux contexts pour **isoler les re-renders haute fréquence** :
-
-- `contexts/AppDataContext.tsx` — Provider central. Queries (`fixtures`, `scenes`, `library`,
-  `homekit`), mutations, handlers WS, `wsBadge`, `logHistory` (rolling 10), `handleBlackout`. Value
-  mémoïzée pour ne pas réagir aux ticks `universe_tick`.
-- `contexts/UniverseStateContext.tsx` — expose **deux** choses :
-  - `useUniverseState()` : la valeur qui change à chaque tick (30 Hz). S'y abonner fait re-rendre
-    30 fois par seconde — c'est voulu pour un fader ou une cellule de sheet, et seulement pour eux.
-  - `useUniverseValuesRef()` : une **ref stable** vers le dernier tableau de valeurs, qui ne déclenche
-    jamais de rendu. C'est ce qu'utilise `ConsoleContext` pour lire l'univers au moment d'un STORE sans
-    se réveiller à chaque trame. À n'utiliser que dans un gestionnaire d'événement, jamais au rendu.
-- WebSocket monté **une seule fois** dans `AppDataProvider` → survit aux changements de vue.
-
-Ordre des providers (imposé par les dépendances) : `AppData` → `Selection` → `Console` → `Command`.
-
-### Extensibilité Smart Lights
-
-`components/smart-lights/backendRegistry.ts` — registre central des backends affichables :
-
-```ts
-export const SMART_LIGHT_BACKENDS = [
-  { id: "nanoleaf-http", label: "Nanoleaf", icon: Lightbulb, description: "…" }
-  // Ajout futur : { id: "hue", label: "Philips Hue", icon: ..., ... }
-];
-```
-
-`SmartLightsPanel` accepte une prop `backendFilter` ; le volet *Lampes connectées* de Patch
-(`pages/patch/SmartLightsPane.tsx`) consomme `SMART_LIGHT_BACKENDS` pour rendre les pastilles de filtre. Ajouter une ampoule Hue / Matter = ajouter une entrée + un nouveau type
-dans `SmartLight.config.type` (union discriminée dans `shared/`).
-
-### CSS (`frontend/src/styles.css`)
-
-Feuille unique, sans framework, organisée en sections commentées (variables → châssis → fenêtres →
-boutons → formulaires → tables → faders → sheet → **plan de travail et pools** → blocs spécifiques →
-responsive).
-
-- **Thème** : tokens `--edge` (ambre, le liseré signature), `--blue` (barres de titre), `--teal` (ligne
-  de commande), `--yellow` (sélection, valeurs). Aucun arrondi : `border-radius: 0` partout.
-- **Fenêtres du plan de travail** (`.ma-win`) : positionnées en `%` de colonne et en pixels de rangée.
-  `.ma-win-title` porte `touch-action: none` (sans quoi le tactile ferait défiler au lieu de déplacer).
-  Un panneau conçu comme une carte autonome posé dans une fenêtre perd son cadre : `.ma-win-body .card`
-  neutralise fond, bordure et barre de titre pour éviter deux cadres imbriqués.
-- **Cartes classiques** (`.card`, hors plan de travail) : le `<h2>` devient la barre de titre bleue
-  pleine largeur (marges négatives) avec la bille jaune en `::before`. Mettre le `<h2>` en enfant direct
-  de la `.card`.
-- **Pools** (`.pool-tile`) : code couleur par pool — executors rouge sombre, groupes bleu, presets
-  violet ; emplacement libre en liseré pointillé.
-- Breakpoints : `<640px` (mobile) / `640-1023px` (tablet) / `≥1024px` (plan de travail) / `≥1280px`
-  (rail de touches).
-- `.channels` : `repeat(16, …)` → `repeat(12, …)` → `repeat(8, …)` → `repeat(4, …)`.
-- `.table` se transforme en cartes empilées sur mobile via `data-label="…"` + pseudo-elements.
-
-> Les faders et molettes ne sont **pas** des `<input type="range">` : `ma/MaFader.tsx` et `ma/MaKnob.tsx`
-> sont pilotés aux Pointer Events, avec `role="slider"` et raccourcis clavier.
-
-### Dépendances frontend
-
-- `lucide-react` — icônes (dont `LayoutGrid`, `GripHorizontal`, `Play`, `Square`, `Save`, `Lock`).
-- React Query 4, three.js + @react-three/fiber/drei (lazy dans `LayoutEditor3D`), qrcode.react.
+- **Projecteurs de la chambre verrouillés** — l'ancienne garde (`lib/fixtureGuard.ts`) vivait **côté
+  frontend** : liste blanche par pièce `chambre`, nom `/\bchambre\b/i` ou id ; visibles mais non
+  sélectionnables, exclus des scènes à l'enregistrement comme au rappel. La nouvelle UI doit la
+  réimplémenter avant de pouvoir piloter quoi que ce soit — ou mieux, la porter dans le backend.
+- **Un master n'atténue que** `intensity/r/g/b/w/uv` : pan, tilt, gobo et roue de couleurs sont rejoués
+  tels quels, sinon baisser un playback fait dériver la lyre à mi-course.
+- **Regrouper les écritures DMX** (un envoi par `requestAnimationFrame`) : un POST par mouvement de
+  fader sur une scène contenant le bandeau (150 canaux) sature le navigateur.
+- **Isoler l'univers DMX** (ticks WebSocket à 30 Hz) du reste de l'état, pour ne pas re-rendre toute
+  l'application à chaque tick.
+- **URL WebSocket dérivée de l'origine de la page** (`wss://` en HTTPS, `location.host` avec le port),
+  jamais codée en dur — indispensable derrière Caddy, cf. [Exposition réseau](#exposition-réseau-reverse-proxy).
 
 ## État applicatif
 
@@ -665,7 +391,7 @@ manuelles à deux clics. Voir `tools/homekit-thread/README.md` pour la procédur
 
 **Connexion :** `ws://localhost:5000/ws` en direct sur le backend.
 
-Le frontend, lui, ne code jamais cette URL en dur : `wsUrl()` (`frontend/src/lib/api.ts`) dérive l'URL de **l'origine de la page** — `wss://` si la page est servie en HTTPS, et `window.location.host` (port inclus). Il emprunte donc le proxy `/ws` exactement comme les appels `/api` : Vite en dev, reverse proxy en façade. Voir [Exposition réseau](#exposition-réseau-reverse-proxy).
+Le frontend, lui, ne doit jamais coder cette URL en dur : il dérive l'URL de **l'origine de la page** — `wss://` si la page est servie en HTTPS, et `window.location.host` (port inclus). Il emprunte donc le proxy `/ws` exactement comme les appels `/api` : Vite en dev, reverse proxy en façade. Voir [Exposition réseau](#exposition-réseau-reverse-proxy).
 
 > ⚠️ Ne pas « optimiser » en visant `ws://<host>:5000` en dur. Derrière une façade HTTPS, le navigateur bloque la connexion (Mixed Content) et le port 5000 n'est de toute façon pas exposé par le proxy — l'erreur remonte jusqu'à `AppDataProvider` et vide l'interface.
 
@@ -1080,40 +806,6 @@ elle, ne change pas : modifier la sélection, c'est un nouvel effet, pas un rég
 
 Le pool de départs vit dans le package partagé (`DMX_EFFECT_PRESETS`), dérivé du pool historique via `maToDmxEffect()` : les 23 presets ont été réglés à l'oreille sur le bandeau du salon, leurs phases et origines spatiales valent mieux qu'une réécriture.
 
-### La fenêtre Effets (`frontend/src/components/console/windows/effects/`)
-
-Reprise de la grammaire de l'Effect Editor d'un grandMA2, dans l'ordre du geste : **cible → pool →
-aperçu → lignes → réglages → GO**.
-
-| Fichier | Rôle |
-|---------|------|
-| `EffectsWindow.tsx` | Orchestration : sélection, brouillon, effet suivi, mutations |
-| `EffectPool.tsx` | Les 23 départs en tuiles numérotées, par onglet de groupe |
-| `EffectPreview.tsx` | Rangée de cellules animée + forme d'onde de la ligne éditée |
-| `EffectLines.tsx` | Le tableau des lignes — un attribut par ligne |
-| `EffectMasters.tsx` | Vitesse, MAtricks, couleurs, rendu |
-| `labels.ts` | Traduction des clés de schéma, conversions hex ↔ RGB |
-
-Quatre décisions qui font l'ergonomie :
-
-- **L'aperçu ne peut pas mentir.** Il développe la sélection avec `resolveCells()` et l'anime avec
-  `evaluateDmxEffect()` — les fonctions du runner, pas une imitation. Sélection vide : il tourne sur
-  12 cellules fictives et le dit, parce qu'explorer le pool avant d'avoir sélectionné est un usage
-  légitime.
-- **Toutes les lignes sont éditables.** L'ancienne fenêtre n'éditait que la première et annonçait les
-  autres en note de bas de page : un cercle de lyre (pan + tilt déphasés de 90°) était affiché mais
-  inréglable.
-- **Un champ qui n'agit pas est grisé, pas muet.** Width / Attack / Decay / Seed ne veulent rien dire
-  hors des formes à fronts durs (créneau, aléatoire) — c'est aussi la règle du pupitre. Même logique
-  pour les tuiles du pool qui supposent une géométrie 3D : elles s'éteignent quand la sélection n'en a
-  pas, au lieu de lancer un effet silencieux.
-- **Un effet lancé suit l'éditeur.** Tant que la fenêtre pilote un effet en cours (voyant « Suivi »),
-  chaque réglage part en `PUT` après 150 ms — la phase ne repart pas de zéro. C'est ce qui permet de
-  régler en regardant le plateau plutôt qu'en devinant.
-
-Les champs qui n'avaient aucune UI auparavant sont désormais atteignables : `curve`, `dither`, les
-couleurs (`color`, `bgColor`, `colorTo`, `hueFrom/hueTo/saturation`), le nom de l'effet, et l'ajout
-ou la suppression de lignes.
 | `setStreaming(id, enabled, zoneCount?)` | Active/désactive le streaming UDP, persiste en DB |
 | `setEffect(id, effect)` | Définit l'effet position-aware courant, persiste en DB |
 | `setLayout(id, layout)` | Sauvegarde la disposition 3D des zones |
@@ -1582,7 +1274,7 @@ zone** (3 canaux RVB × N zones) au miroir uniforme. Il parle le même langage q
 sans conversion intermédiaire, et c'est lui qui rend les 30 Hz exploitables depuis la console.
 
 ### WebSocket derrière un reverse proxy HTTPS — Mixed Content
-Si `wsUrl()` produit une URL `ws://` en dur (ou vise le port 5000 directement), une page servie en HTTPS échoue avec `SecurityError: Failed to construct 'WebSocket'` + `Mixed Content: ... attempted to connect to the insecure WebSocket endpoint`. L'exception remonte jusqu'à `AppDataProvider` et l'interface reste vide. `wsUrl()` doit **suivre l'origine de la page** : `wss` si `location.protocol === "https:"`, et `location.host` (avec son port) — jamais `location.hostname` seul. Voir [WebSocket](#websocket).
+Si le client WebSocket produit une URL `ws://` en dur (ou vise le port 5000 directement), une page servie en HTTPS échoue avec `SecurityError: Failed to construct 'WebSocket'` + `Mixed Content: ... attempted to connect to the insecure WebSocket endpoint`. L'exception peut laisser toute l'interface vide. L'URL doit **suivre l'origine de la page** : `wss` si `location.protocol === "https:"`, et `location.host` (avec son port) — jamais `location.hostname` seul. Voir [WebSocket](#websocket).
 
 ### Forward references dans le schéma Zod partagé
 Les schémas qui s'utilisent l'un l'autre (ex: `SmartLightSchema` référence `SmartLightZoneLayoutSchema`) **doivent** être déclarés dans l'ordre topologique dans `packages/shared/src/index.ts`. Le type-check passe mais le runtime crash avec `ReferenceError`. Si tu ajoutes un nouveau type composé, mets ses dépendances AU-DESSUS de lui.
