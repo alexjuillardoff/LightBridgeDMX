@@ -491,6 +491,16 @@ et il en manquait deux :
   `Showtec LED Par 56 (6 Channel)` déclenchaient l'avertissement HAP « invalid Name characteristic ».
   Le pupitre garde le nom tel quel : seul le miroir HomeKit est nettoyé.
 - Les lampes connectées suivent la même règle (`syncSmartLights` recrée l'accessoire au renommage).
+- **L'app Maison reconnaît un accessoire ponté à son AID, pas à son UUID.** hap-nodejs traduit
+  UUID → AID via `.homekit/IdentifierCache.<username>.json` ; un UUID stable ne protège donc que si
+  l'AID l'est aussi. Deux règles en découlent :
+  1. tous les accessoires sont attachés **avant** `bridge.publish()` : les lampes connectées sont lues
+     en base et passées à `homekit.start(fixtures, smartLights)`, leur état arrive ensuite ;
+  2. `bridge.disableUnusedIDPurge()` : par défaut, hap-nodejs oublie l'AID de tout accessoire absent
+     au moment d'une attribution d'identifiants. Revenu, il en reçoit un neuf, et Maison le prend pour
+     un nouvel appareil (pièce, scènes et automatisations perdues). Les lampes, ajoutées autrefois
+     350 ms après la publication, changeaient ainsi d'AID à chaque redémarrage — `|nextAID` était
+     monté à 929 pour 26 accessoires.
 
 > **Limite Apple.** Le nom d'un accessoire appartient à la maison de l'utilisateur, pas à l'accessoire :
 > iOS le retient au premier ajout, le synchronise entre appareils, et l'accessoire ne peut plus jamais

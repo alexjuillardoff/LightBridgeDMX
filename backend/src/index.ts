@@ -242,7 +242,10 @@ const start = async () => {
     }
     await dmx.start();
     const fixtures = await store.listFixtures();
-    await homekit.start(fixtures);
+    // Le pont recoit les lampes connectees des sa creation, lues en base : il ne doit
+    // jamais etre publie sans elles (voir HomeKitBridge.start). Leur etat, lui,
+    // arrive plus bas, une fois le SmartLightService demarre.
+    await homekit.start(fixtures, await store.listSmartLights());
     // Pilotage de la prise Meross : surveille les changements DMX des projecteurs cibles.
     // MEROSS_SEED n'amorce la config que si la base est vide (1er lancement).
     await meross.start(fixtures, MEROSS_SEED);
@@ -251,8 +254,8 @@ const start = async () => {
       () => store.listFixtures(),
       () => smartLights.listWithState()
     );
-    // Les accessoires de lampes ne peuvent etre crees qu'une fois le service demarre
-    // (c'est lui qui porte l'etat) et le pont publie.
+    // Le pont connait deja les lampes : cet appel ne fait que lui pousser leur etat
+    // courant, maintenant que le SmartLightService le porte.
     homekit.syncSmartLights(smartLights.listWithState());
     await app.listen({ port: PORT, host: "0.0.0.0" });
 

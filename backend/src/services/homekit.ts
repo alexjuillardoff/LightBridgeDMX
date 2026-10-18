@@ -182,10 +182,17 @@ export class HomeKitBridge {
     };
   }
 
-  // Demarre le pont : prepare le stockage, cree le Bridge, attache les accessoires,
-  // branche le miroir DMX, puis publie le pont sur le reseau pour l'appairage HomeKit.
-  async start(fixtures: Fixture[]) {
+  // Demarre le pont : prepare le stockage, cree le Bridge, attache TOUS les accessoires
+  // (projecteurs et lampes connectees), branche le miroir DMX, puis publie le pont.
+  //
+  // Les lampes arrivent ici, lues en base, et non apres la publication : un pont
+  // publie sans elles faisait perdre leur AID (hap-nodejs purge du cache les
+  // identifiants absents a cet instant). Elles revenaient 350 ms plus tard avec un
+  // AID neuf, et l'app Maison voyait a chaque redemarrage les lampes disparaitre
+  // puis de « nouveaux » appareils apparaitre — pieces, scenes et automatisations perdues.
+  async start(fixtures: Fixture[], smartLights: SmartLight[] = []) {
     this.cachedFixtures = fixtures;
+    this.cachedSmartLights = smartLights;
     if (!this.options.enabled) {
       this.logger.info("HomeKit bridge disabled (HOMEKIT_ENABLED not set)");
       return;
@@ -198,6 +205,12 @@ export class HomeKitBridge {
       // L'UUID du pont est derive du username (MAC) : il reste stable d'un demarrage a l'autre,
       // ce qui evite que l'app Maison re-decouvre un pont "neuf" a chaque relance.
       this.bridge = new Bridge(this.options.name, uuid.generate(`lightbridgedmx:bridge:${this.options.username}`));
+      // Un AID attribue l'est pour de bon. Par defaut hap-nodejs oublie celui de tout
+      // accessoire absent lors d'une attribution d'identifiants ; s'il revient, il en
+      // recoit un neuf et HomeKit le prend pour un autre appareil. Garder le cache
+      // entier coute quelques lignes de JSON et couvre les absences passageres
+      // (facade decochee puis recochee, lampe supprimee puis recreee...).
+      this.bridge.disableUnusedIDPurge();
       this.bridge.getService(Service.AccessoryInformation)?.setCharacteristic(Characteristic.Manufacturer, "LightBridgeDMX");
       this.bridge
         .getService(Service.AccessoryInformation)
@@ -222,7 +235,12 @@ export class HomeKitBridge {
 
       this.started = true;
       this.logger.info(
-        { pin: this.options.pin, username: this.options.username, accessories: this.channelFixtures.size },
+        {
+          pin: this.options.pin,
+          username: this.options.username,
+          accessories: this.channelFixtures.size,
+          smartLights: this.smartLights.size
+        },
         "HomeKit bridge started"
       );
     } catch (err) {
